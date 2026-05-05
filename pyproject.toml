@@ -1,0 +1,115 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pd-ocr-synth"
+version = "0.0.1"
+description = "Synthetic OCR training-data generator (recipe-driven)."
+readme = "README.md"
+requires-python = ">=3.13"
+license = "Unlicense"
+authors = [
+    { name = "ConcaveTrillion", email = "ConcaveTrillion@gmail.com" },
+]
+keywords = ["OCR", "synthetic-data", "training", "gaelic", "typography"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Image Processing",
+]
+
+# Implementation lands in M02+; M01 is dev tooling only. Real runtime
+# deps will include: pyyaml, pydantic, httpx, beautifulsoup4, lxml,
+# datasets, huggingface_hub, pillow, uharfbuzz, freetype-py, numpy,
+# opencv-python, tqdm.
+dependencies = []
+
+[project.optional-dependencies]
+ui = [
+    "nicegui>=2.0",
+]
+
+[dependency-groups]
+test = [
+    "pytest>=8.4",
+    "pytest-xdist>=3.8",
+    "pytest-cov>=7.0",
+]
+lint = [
+    "ruff>=0.13",
+    "pre-commit>=4.3",
+]
+dev = [
+    {include-group = "test"},
+    {include-group = "lint"},
+]
+all-dev = [
+    {include-group = "dev"},
+]
+
+[project.scripts]
+pd-ocr-synth = "pd_ocr_synth.cli:main"
+
+# Extension entry-point groups — see docs/specs/09-extending.md
+[project.entry-points."pd_ocr_synth.corpus_providers"]
+# my_provider = "my_pkg.providers:MyProvider"
+
+[project.entry-points."pd_ocr_synth.text_transforms"]
+# my_transform = "my_pkg.transforms:my_transform"
+
+[project.entry-points."pd_ocr_synth.degradation_stages"]
+# my_stage = "my_pkg.degradation:my_stage"
+
+[project.urls]
+Repository = "https://github.com/ConcaveTrillion/pd-ocr-synth"
+Issues = "https://github.com/ConcaveTrillion/pd-ocr-synth/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pd_ocr_synth"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+pythonpath = ["src"]
+markers = [
+    "unit: fast in-process tests",
+    "integration: tests touching disk / network",
+    "slow: long-running tests",
+]
+
+[tool.coverage.run]
+source = ["pd_ocr_synth"]
+branch = true
+omit = ["*/tests/*", "*/.venv/*", "*/site-packages/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
+fail_under = 0
+precision = 1
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["pd_ocr_synth"]

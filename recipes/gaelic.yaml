@@ -1,0 +1,271 @@
+# Gaelic recipe: Cló Gaelach + pre-reform Irish orthography
+#
+# This is the worked example referenced by docs/specs/03-tutorial-writing-a-recipe.md.
+# Heavily commented; trim aggressively for production use.
+
+schema_version: 1
+name: gaelic
+description: |
+  Cló Gaelach (insular Irish typography) and pre-reform Irish orthography.
+  Produces recognition word-crops for fine-tuning a DocTR recognition model
+  via pd-ocr-trainer profile `gaelic`.
+seed: 42
+
+# ----------------------------------------------------------------------------
+# Output: where the dataset lands and how big it is.
+# Format and mode follow the pd-ocr-trainer/v1 contract (spec 08).
+# ----------------------------------------------------------------------------
+output:
+  format: pd-ocr-trainer/v1
+  mode: recognition
+  destination: ${PD_ML_MODELS}/ml-recognition/gaelic/recognition
+  count: 50000
+
+# ----------------------------------------------------------------------------
+# Corpus: text sources, each with on-disk caching. First fetch is online;
+# subsequent runs are offline-friendly.
+# Run `pd-ocr-synth fetch gaelic` once to warm the cache.
+# ----------------------------------------------------------------------------
+corpus:
+  # Public-domain Irish-language texts from CELT (UCC).
+  # URL pattern: https://celt.ucc.ie/published/<ID>.html  (note: bare ID, no
+  # nested folder). Verify each ID at https://celt.ucc.ie/irlpage.html before
+  # adding. Respect CELT's terms of use (attribution required).
+  - type: web
+    url: https://celt.ucc.ie/published/G100001A.html   # Annals of Ulster
+    parser: html-text
+    cache: true
+
+  - type: web
+    url: https://celt.ucc.ie/published/G100002.html    # Annals of Tigernach
+    parser: html-text
+    cache: true
+
+  - type: web
+    url: https://celt.ucc.ie/published/G102030.html    # Cáin Lánamna
+    parser: html-text
+    cache: true
+
+  # Wikisource pages. The ga.wikisource.org subdomain redirects to the
+  # multilingual wikisource.org for Irish texts, so use `language: mul`
+  # and the canonical title.
+  - type: wikisource
+    language: mul
+    titles:
+      - "Séadna"
+      - "Mo Sgéal Féin"
+    cache: true
+
+  # A small hand-curated word list bundled with the recipe — guarantees
+  # coverage of rare / important codepoints (⁊, ſ, dotted consonants) even
+  # if the upstream corpora drift.
+  - type: local
+    path: ./gaelic/seed-words.txt
+
+# ----------------------------------------------------------------------------
+# Text transforms: applied in order, before tokenization.
+# ----------------------------------------------------------------------------
+text_transforms:
+  - normalize_whitespace
+
+  # Strip stray characters not covered by any of our fonts.
+  - keep_only:
+      chars: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZáéíóúÁÉÍÓÚḃċḋḟġṁṗṡṫḂĊḊḞĠṀṖṠṪſ⁊ '-.,;:!?"
+
+  # If the corpus is in modern h-spelling, convert to dotted.
+  # Use `aggressive` for monolingual Irish corpora; `conservative` if mixed
+  # with English.
+  - apply_lenition_dots:
+      mode: aggressive
+      probability: 1.0
+
+  # Tironian et for "agus"/"and" some of the time — keeps the dataset mixed.
+  - tironian_et:
+      replace_words: ["agus", "and"]
+      probability: 0.7
+      case_sensitive: false
+
+  # Word-medial long-s.
+  - long_s_medial:
+      probability: 0.85
+
+# ----------------------------------------------------------------------------
+# Fonts: weighted sample. Paths are relative to this recipe file.
+# Run `pd-ocr-synth validate gaelic` to confirm each font covers the
+# transformed corpus's codepoints.
+#
+# All four families below are FREE for this project (non-commercial,
+# Celtic-language). NONE are bundled in the repo — Gaelchló's license
+# does not permit redistribution. The simplest way to get them all:
+#
+#   ./scripts/fetch-fonts-gaelic.sh
+#
+# The script fetches each font directly from its upstream URL; it does
+# not mirror or redistribute. See docs/specs/fonts-gaelic.md for full
+# license details and direct URLs.
+# ----------------------------------------------------------------------------
+fonts:
+  # Paths below match the layout produced by ./scripts/fetch-fonts-gaelic.sh.
+  # If you place fonts manually, mirror that layout under ./gaelic/fonts/.
+
+  # Vincent Morley's Gaelchló — Bunchló GC (regular). Permitted here on
+  # two independent grounds: Celtic-language use AND non-commercial use.
+  # Source: https://www.gaelchlo.com/bungc.zip
+  - path: ./gaelic/fonts/bungc/bungc.otf
+    weight: 0.20
+    license: gaelchlo-celtic-free
+    source: https://www.gaelchlo.com/bungc.zip
+    features:
+      liga: true
+      calt: true
+
+  # Bunchló GC italic — for sampling italic variation.
+  - path: ./gaelic/fonts/bungc/bunigc.otf
+    weight: 0.05
+    license: gaelchlo-celtic-free
+    source: https://www.gaelchlo.com/bungc.zip
+    features:
+      liga: true
+      calt: true
+
+  # Seanchló GC — older / heavier Cló Gaelach style.
+  # Source: https://www.gaelchlo.com/seangc.zip
+  - path: ./gaelic/fonts/seangc/seangc.otf
+    weight: 0.20
+    license: gaelchlo-celtic-free
+    source: https://www.gaelchlo.com/seangc.zip
+    features:
+      liga: true
+      calt: true
+
+  # Glanchló GC — cleaner, more modern insular feel.
+  # Source: https://www.gaelchlo.com/glangc.zip
+  - path: ./gaelic/fonts/glangc/glangc.otf
+    weight: 0.15
+    license: gaelchlo-celtic-free
+    source: https://www.gaelchlo.com/glangc.zip
+    features:
+      liga: true
+      calt: true
+
+  # Úrchló GC — newer style.
+  # Source: https://www.gaelchlo.com/urgc.zip
+  - path: ./gaelic/fonts/urgc/urgc.otf
+    weight: 0.10
+    license: gaelchlo-celtic-free
+    source: https://www.gaelchlo.com/urgc.zip
+    features:
+      liga: true
+      calt: true
+
+  # Gadelica (Séamas Ó Brógáin) — rounded 17th-c. minuscule style, marked
+  # free; designer asks no modification, no charging for redistribution.
+  # Source: https://www.gaelchlo.com/Gadelica%20Ultima.zip
+  - path: ./gaelic/fonts/Gadelica Ultima/Gadelica.otf
+    weight: 0.10
+    license: free-no-charge
+    source: https://www.gaelchlo.com/Gadelica%20Ultima.zip
+    features:
+      liga: true
+
+  # Cianchló (Feòrag NicBhrìde) — free Cló Gaelach variant for additional
+  # stylistic variation.
+  # Source: https://www.gaelchlo.com/Cianchlo.zip
+  - path: ./gaelic/fonts/Cianchlo/cianchlo.otf
+    weight: 0.10
+    license: free
+    source: https://www.gaelchlo.com/Cianchlo.zip
+    features:
+      liga: true
+
+  # Gaedhilge (Seán de Búrca) — SIL OFL 1.1, the cleanest license. Ships
+  # as FontForge source; the fetch script compiles it if `fontforge` is
+  # installed. If not, build manually:
+  #   fontforge -lang=ff -c 'Open($1); Generate($2)' \
+  #     gaedhilge.sfd Gaedhilge.otf
+  # Source: https://github.com/leftmostcat/gaedhilge-fonts
+  - path: ./gaelic/fonts/Gaedhilge.otf
+    weight: 0.10
+    license: OFL-1.1
+    source: https://github.com/leftmostcat/gaedhilge-fonts
+    optional: true     # may be missing if fontforge isn't installed
+    features:
+      liga: true
+
+# ----------------------------------------------------------------------------
+# Rendering: shaping engine + per-sample scalar/range knobs.
+# ----------------------------------------------------------------------------
+rendering:
+  shaping_engine: harfbuzz
+  font_size_pt: { min: 12, max: 22 }
+  dpi: { min: 200, max: 400 }
+  ink_color:
+    r: { min: 5, max: 50 }
+    g: { min: 5, max: 50 }
+    b: { min: 5, max: 50 }
+  background_color:
+    r: { min: 215, max: 250 }
+    g: { min: 210, max: 245 }
+    b: { min: 195, max: 235 }
+  antialiasing: true
+
+# ----------------------------------------------------------------------------
+# Layout: word_crops is the recognition default.
+# ----------------------------------------------------------------------------
+layout:
+  mode: word_crops
+  padding_px: { min: 4, max: 14 }
+  baseline_jitter_px: { min: -2, max: 2 }
+
+# ----------------------------------------------------------------------------
+# Degradation: ordered pipeline. Geometric stages first, JPEG last.
+# ----------------------------------------------------------------------------
+degradation:
+  - kind: skew
+    probability: 0.6
+    angle_deg: { min: -2, max: 2 }
+    fill: background
+
+  - kind: blur
+    probability: 0.5
+    filter: gaussian
+    sigma: { min: 0.0, max: 1.2 }
+
+  - kind: ink_bleed
+    probability: 0.3
+    iterations: { min: 1, max: 2 }
+
+  - kind: paper_texture
+    probability: 0.5
+    directory: ./gaelic/textures/aged-paper/
+    blend: multiply
+    opacity: { min: 0.2, max: 0.6 }
+
+  - kind: foxing
+    probability: 0.2
+    count: { min: 0, max: 4 }
+    radius_px: { min: 2, max: 6 }
+    color: [120, 60, 30]
+    opacity: { min: 0.2, max: 0.4 }
+
+  - kind: noise
+    probability: 0.5
+    noise_kind: gaussian
+    stddev: { min: 0, max: 8 }
+
+  - kind: jpeg
+    probability: 0.4
+    quality: { min: 60, max: 95 }
+
+# ----------------------------------------------------------------------------
+# Publish: optional defaults for `pd-ocr-synth publish gaelic`. Edit the
+# repo to your namespace before publishing. See docs/specs/10-publishing.md
+# and the workspace-level DATASETS.md for the dataset contract.
+# ----------------------------------------------------------------------------
+publish:
+  hf_dataset:
+    repo: CHANGE-ME/pd-ocr-synth-gaelic
+    private: false
+    license: cc-by-4.0
+    tags: [ocr, gaelic, irish, pd-ocr, synthetic]
+    language: [ga]
