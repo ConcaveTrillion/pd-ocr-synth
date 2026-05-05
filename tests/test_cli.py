@@ -32,9 +32,9 @@ ALL_SUBCOMMANDS = [
     "clean",
 ]
 
-# Subcommands still stubbed after M03. Render, publish, clean, preview
-# belong to later milestones; fetch landed in M03.
-STILL_STUBBED = ["preview", "render", "clean"]
+# Subcommands still stubbed after M04. Render, publish, preview belong
+# to later milestones; fetch + clean landed in M03/M04 follow-up.
+STILL_STUBBED = ["preview", "render"]
 
 
 # ---------------------------------------------------------------------------

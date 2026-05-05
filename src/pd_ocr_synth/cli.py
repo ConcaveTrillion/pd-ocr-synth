@@ -136,6 +136,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_clean = subparsers.add_parser("clean", help="remove cached corpora for a recipe")
     _add_recipe_arg(p_clean)
+    p_clean.add_argument(
+        "--cache-dir",
+        help="cache root (default: $PD_OCR_SYNTH_CACHE or ~/.cache/pd-ocr-synth)",
+    )
 
     return parser
 
@@ -334,6 +338,69 @@ def _cmd_fetch(recipe_arg: str, *, cache_dir: str | None, no_cache: bool) -> int
     return 0
 
 
+def _cmd_clean(recipe_arg: str, *, cache_dir: str | None) -> int:
+    """Remove cache entries owned by the given recipe.
+
+    For each corpus entry we look up the provider, ask it for its
+    ``cache_key(options)``, and remove the on-disk pair. Entries
+    whose providers are unknown (e.g. provider not yet implemented)
+    are surfaced as warnings — they aren't fatal because the
+    recipe might still be usable for other purposes.
+    """
+
+    from pd_ocr_synth.corpus import (
+        CacheStore,
+        CorpusError,
+        default_cache_root,
+        default_registry,
+    )
+    from pd_ocr_synth.recipe import RecipeLoadError, load_recipe
+    from pd_ocr_synth.recipe_search import RecipeNotFoundError, resolve_recipe
+
+    try:
+        path = resolve_recipe(recipe_arg)
+    except RecipeNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return VALIDATION_EXIT
+
+    try:
+        recipe = load_recipe(path)
+    except RecipeLoadError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return VALIDATION_EXIT
+
+    cache_root = Path(cache_dir).expanduser() if cache_dir else default_cache_root()
+    cache = CacheStore(root=cache_root)
+    registry = default_registry()
+
+    print(f"recipe: {recipe.name} ({path})")
+    print(f"cache:  {cache_root}")
+    print()
+
+    removed = 0
+    skipped = 0
+    for index, entry in enumerate(recipe.corpus):
+        options = entry.model_dump(mode="python")
+        try:
+            provider = registry.get(entry.type)
+        except CorpusError:
+            print(
+                f"  corpus[{index}] {entry.type}: SKIP (provider not registered)",
+                file=sys.stderr,
+            )
+            skipped += 1
+            continue
+        cache_key = provider.cache_key(options)
+        if cache.remove(provider.type_name, cache_key):
+            print(f"  corpus[{index}] {entry.type}: removed {cache_key}")
+            removed += 1
+        else:
+            print(f"  corpus[{index}] {entry.type}: nothing to remove ({cache_key})")
+    print()
+    print(f"removed: {removed}  skipped: {skipped}")
+    return 0
+
+
 def _cmd_schema(output: str | None) -> int:
     from pd_ocr_synth.recipe.models import Recipe
 
@@ -365,6 +432,7 @@ _IMPLEMENTED_DISPATCH = {
         cache_dir=args.cache_dir,
         no_cache=args.no_cache,
     ),
+    "clean": lambda args: _cmd_clean(args.recipe, cache_dir=args.cache_dir),
 }
 
 
