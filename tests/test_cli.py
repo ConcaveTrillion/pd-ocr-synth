@@ -149,8 +149,8 @@ layout:
 """
 
 
-def _make_good_recipe(tmp_path: Path) -> Path:
-    (tmp_path / "fake.otf").write_bytes(b"")
+def _make_good_recipe(tmp_path: Path, font_bytes: bytes) -> Path:
+    (tmp_path / "fake.otf").write_bytes(font_bytes)
     (tmp_path / "seed.txt").write_text("hi\n", encoding="utf-8")
     rp = tmp_path / "recipe.yaml"
     rp.write_text(_GOOD_RECIPE, encoding="utf-8")
@@ -158,9 +158,9 @@ def _make_good_recipe(tmp_path: Path) -> Path:
 
 
 def test_validate_clean_recipe_exits_zero(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, writable_font_bytes: bytes, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    rp = _make_good_recipe(tmp_path)
+    rp = _make_good_recipe(tmp_path, writable_font_bytes)
     rc = main(["validate", str(rp)])
     assert rc == 0, capsys.readouterr().err
 
@@ -194,9 +194,9 @@ def test_validate_unknown_recipe_exits_three(
 
 
 def test_describe_text_format_prints_summary(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, writable_font_bytes: bytes, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    rp = _make_good_recipe(tmp_path)
+    rp = _make_good_recipe(tmp_path, writable_font_bytes)
     rc = main(["describe", str(rp), "--format", "text"])
     assert rc == 0
     out = capsys.readouterr().out
@@ -205,9 +205,9 @@ def test_describe_text_format_prints_summary(
 
 
 def test_describe_json_format_emits_valid_json(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, writable_font_bytes: bytes, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    rp = _make_good_recipe(tmp_path)
+    rp = _make_good_recipe(tmp_path, writable_font_bytes)
     rc = main(["describe", str(rp), "--format", "json"])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)

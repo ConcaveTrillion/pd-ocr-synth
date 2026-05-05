@@ -48,10 +48,10 @@ layout:
 
 
 @pytest.fixture
-def good_recipe(tmp_path: Path):
+def good_recipe(tmp_path: Path, writable_font_bytes: bytes):
     """Build an in-memory recipe whose paths all exist + dest is writable."""
     font = tmp_path / "fake.otf"
-    font.write_bytes(b"")
+    font.write_bytes(writable_font_bytes)
     corpus = tmp_path / "seed.txt"
     corpus.write_text("hello world\n", encoding="utf-8")
     dest = tmp_path / "out"

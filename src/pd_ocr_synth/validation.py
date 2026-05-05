@@ -173,23 +173,50 @@ def _check_output(recipe: Recipe) -> list[ValidationIssue]:
 def _check_fonts(recipe: Recipe) -> list[ValidationIssue]:
     out: list[ValidationIssue] = []
     for i, font in enumerate(recipe.fonts):
-        if font.path.exists():
-            continue
-        if font.optional:
-            out.append(
-                ValidationIssue(
-                    severity="warning",
-                    code="optional_font_missing",
-                    message=f"optional font not present at {font.path}; will be skipped at render time",
-                    location=f"fonts[{i}].path",
+        if not font.path.exists():
+            if font.optional:
+                out.append(
+                    ValidationIssue(
+                        severity="warning",
+                        code="optional_font_missing",
+                        message=(
+                            f"optional font not present at {font.path}; "
+                            "will be skipped at render time"
+                        ),
+                        location=f"fonts[{i}].path",
+                    )
                 )
-            )
-        else:
+            else:
+                out.append(
+                    ValidationIssue(
+                        severity="error",
+                        code="font_missing",
+                        message=f"font file does not exist: {font.path}",
+                        location=f"fonts[{i}].path",
+                    )
+                )
+            continue
+        # File exists — try to inspect it.
+        from pd_ocr_synth.fonts import FontOpenError, open_font
+
+        try:
+            info = open_font(font.path)
+        except FontOpenError as exc:
             out.append(
                 ValidationIssue(
                     severity="error",
-                    code="font_missing",
-                    message=f"font file does not exist: {font.path}",
+                    code="font_unreadable",
+                    message=f"could not open font {font.path}: {exc}",
+                    location=f"fonts[{i}].path",
+                )
+            )
+            continue
+        if info.num_glyphs == 0 or not info.codepoints:
+            out.append(
+                ValidationIssue(
+                    severity="error",
+                    code="font_empty",
+                    message=f"font {font.path} reports zero glyphs or empty cmap",
                     location=f"fonts[{i}].path",
                 )
             )
