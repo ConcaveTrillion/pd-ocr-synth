@@ -1,0 +1,785 @@
+{
+  "$defs": {
+    "ColorSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "r": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "$ref": "#/$defs/Range_int_"
+            },
+            {
+              "items": {
+                "$ref": "#/$defs/WeightedChoice_int_"
+              },
+              "type": "array"
+            }
+          ],
+          "title": "R"
+        },
+        "g": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "$ref": "#/$defs/Range_int_"
+            },
+            {
+              "items": {
+                "$ref": "#/$defs/WeightedChoice_int_"
+              },
+              "type": "array"
+            }
+          ],
+          "title": "G"
+        },
+        "b": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "$ref": "#/$defs/Range_int_"
+            },
+            {
+              "items": {
+                "$ref": "#/$defs/WeightedChoice_int_"
+              },
+              "type": "array"
+            }
+          ],
+          "title": "B"
+        }
+      },
+      "required": [
+        "r",
+        "g",
+        "b"
+      ],
+      "title": "ColorSpec",
+      "type": "object"
+    },
+    "DegradationStage": {
+      "additionalProperties": true,
+      "description": "One stage in the degradation pipeline.\n\nStage-specific options vary by ``kind`` (blur takes ``sigma``,\npaper_texture takes ``directory``/``blend``/``opacity``, etc.). The\nschema here intentionally allows extras; the validation pass is\nwhere we enforce known kinds and known keys per kind.",
+      "properties": {
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "probability": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Probability",
+          "type": "number"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "DegradationStage",
+      "type": "object"
+    },
+    "Font": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "format": "path",
+          "title": "Path",
+          "type": "string"
+        },
+        "weight": {
+          "default": 1.0,
+          "title": "Weight",
+          "type": "number"
+        },
+        "license": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "License"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        },
+        "optional": {
+          "default": false,
+          "title": "Optional",
+          "type": "boolean"
+        },
+        "features": {
+          "additionalProperties": {
+            "type": "boolean"
+          },
+          "title": "Features",
+          "type": "object"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "Font",
+      "type": "object"
+    },
+    "HFDatasetCorpus": {
+      "additionalProperties": false,
+      "properties": {
+        "cache": {
+          "default": true,
+          "title": "Cache",
+          "type": "boolean"
+        },
+        "type": {
+          "const": "hf_dataset",
+          "title": "Type",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "split": {
+          "default": "train",
+          "title": "Split",
+          "type": "string"
+        },
+        "field": {
+          "default": "text",
+          "title": "Field",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ],
+      "title": "HFDatasetCorpus",
+      "type": "object"
+    },
+    "HFDatasetPublishConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "repo": {
+          "title": "Repo",
+          "type": "string"
+        },
+        "private": {
+          "default": false,
+          "title": "Private",
+          "type": "boolean"
+        },
+        "license": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "License"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        },
+        "language": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Language",
+          "type": "array"
+        },
+        "description_file": {
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description File"
+        }
+      },
+      "required": [
+        "repo"
+      ],
+      "title": "HFDatasetPublishConfig",
+      "type": "object"
+    },
+    "Layout": {
+      "additionalProperties": false,
+      "description": "Layout block.\n\nDifferent ``mode`` values legally use different keys. Pydantic only\naccepts known keys (``extra=\"forbid\"``); semantic checks for\nmode-specific consistency live in :mod:`pd_ocr_synth.validation`.",
+      "properties": {
+        "mode": {
+          "enum": [
+            "word_crops",
+            "lines",
+            "paragraphs",
+            "pages"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "padding_px": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "$ref": "#/$defs/Range_int_"
+            },
+            {
+              "items": {
+                "$ref": "#/$defs/WeightedChoice_int_"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Padding Px"
+        },
+        "baseline_jitter_px": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "$ref": "#/$defs/Range_int_"
+            },
+            {
+              "items": {
+                "$ref": "#/$defs/WeightedChoice_int_"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Baseline Jitter Px"
+        },
+        "max_width_px": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Width Px"
+        },
+        "line_spacing": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "#/$defs/Range_float_"
+            },
+            {
+              "items": {
+                "$ref": "#/$defs/WeightedChoice_float_"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Line Spacing"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "title": "Layout",
+      "type": "object"
+    },
+    "LocalCorpus": {
+      "additionalProperties": false,
+      "properties": {
+        "cache": {
+          "default": true,
+          "title": "Cache",
+          "type": "boolean"
+        },
+        "type": {
+          "const": "local",
+          "title": "Type",
+          "type": "string"
+        },
+        "path": {
+          "format": "path",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "path"
+      ],
+      "title": "LocalCorpus",
+      "type": "object"
+    },
+    "OutputBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "format": {
+          "title": "Format",
+          "type": "string"
+        },
+        "mode": {
+          "enum": [
+            "recognition",
+            "detection"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "destination": {
+          "format": "path",
+          "title": "Destination",
+          "type": "string"
+        },
+        "count": {
+          "exclusiveMinimum": 0,
+          "title": "Count",
+          "type": "integer"
+        },
+        "manifest": {
+          "default": "manifest.jsonl",
+          "title": "Manifest",
+          "type": "string"
+        }
+      },
+      "required": [
+        "format",
+        "mode",
+        "destination",
+        "count"
+      ],
+      "title": "OutputBlock",
+      "type": "object"
+    },
+    "PublishBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "hf_dataset": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HFDatasetPublishConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "PublishBlock",
+      "type": "object"
+    },
+    "Range_float_": {
+      "additionalProperties": false,
+      "properties": {
+        "min": {
+          "title": "Min",
+          "type": "number"
+        },
+        "max": {
+          "title": "Max",
+          "type": "number"
+        }
+      },
+      "required": [
+        "min",
+        "max"
+      ],
+      "title": "Range[float]",
+      "type": "object"
+    },
+    "Range_int_": {
+      "additionalProperties": false,
+      "properties": {
+        "min": {
+          "title": "Min",
+          "type": "integer"
+        },
+        "max": {
+          "title": "Max",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "min",
+        "max"
+      ],
+      "title": "Range[int]",
+      "type": "object"
+    },
+    "Rendering": {
+      "additionalProperties": false,
+      "properties": {
+        "shaping_engine": {
+          "default": "harfbuzz",
+          "enum": [
+            "harfbuzz",
+            "pillow"
+          ],
+          "title": "Shaping Engine",
+          "type": "string"
+        },
+        "font_size_pt": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "$ref": "#/$defs/Range_int_"
+            },
+            {
+              "items": {
+                "$ref": "#/$defs/WeightedChoice_int_"
+              },
+              "type": "array"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "#/$defs/Range_float_"
+            },
+            {
+              "items": {
+                "$ref": "#/$defs/WeightedChoice_float_"
+              },
+              "type": "array"
+            }
+          ],
+          "title": "Font Size Pt"
+        },
+        "dpi": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "$ref": "#/$defs/Range_int_"
+            },
+            {
+              "items": {
+                "$ref": "#/$defs/WeightedChoice_int_"
+              },
+              "type": "array"
+            }
+          ],
+          "title": "Dpi"
+        },
+        "ink_color": {
+          "$ref": "#/$defs/ColorSpec"
+        },
+        "background_color": {
+          "$ref": "#/$defs/ColorSpec"
+        },
+        "antialiasing": {
+          "default": true,
+          "title": "Antialiasing",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "font_size_pt",
+        "dpi",
+        "ink_color",
+        "background_color"
+      ],
+      "title": "Rendering",
+      "type": "object"
+    },
+    "TextTransform": {
+      "additionalProperties": false,
+      "description": "A named text transform with optional keyword-style options.\n\nThe recipe YAML accepts two forms::\n\n    text_transforms:\n      - normalize_whitespace             # bare name\n      - tironian_et:                     # single-key mapping\n          replace_words: [\"agus\", \"and\"]",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "options": {
+          "additionalProperties": true,
+          "title": "Options",
+          "type": "object"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "TextTransform",
+      "type": "object"
+    },
+    "WebCorpus": {
+      "additionalProperties": false,
+      "properties": {
+        "cache": {
+          "default": true,
+          "title": "Cache",
+          "type": "boolean"
+        },
+        "type": {
+          "const": "web",
+          "title": "Type",
+          "type": "string"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        },
+        "parser": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parser"
+        }
+      },
+      "required": [
+        "type",
+        "url"
+      ],
+      "title": "WebCorpus",
+      "type": "object"
+    },
+    "WeightedChoice_float_": {
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "title": "Value",
+          "type": "number"
+        },
+        "weight": {
+          "default": 1.0,
+          "title": "Weight",
+          "type": "number"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "title": "WeightedChoice[float]",
+      "type": "object"
+    },
+    "WeightedChoice_int_": {
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "title": "Value",
+          "type": "integer"
+        },
+        "weight": {
+          "default": 1.0,
+          "title": "Weight",
+          "type": "number"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "title": "WeightedChoice[int]",
+      "type": "object"
+    },
+    "WikisourceCorpus": {
+      "additionalProperties": false,
+      "properties": {
+        "cache": {
+          "default": true,
+          "title": "Cache",
+          "type": "boolean"
+        },
+        "type": {
+          "const": "wikisource",
+          "title": "Type",
+          "type": "string"
+        },
+        "language": {
+          "title": "Language",
+          "type": "string"
+        },
+        "titles": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Titles",
+          "type": "array"
+        }
+      },
+      "required": [
+        "type",
+        "language",
+        "titles"
+      ],
+      "title": "WikisourceCorpus",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "seed": {
+      "default": 0,
+      "title": "Seed",
+      "type": "integer"
+    },
+    "output": {
+      "$ref": "#/$defs/OutputBlock"
+    },
+    "corpus": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "hf_dataset": "#/$defs/HFDatasetCorpus",
+            "local": "#/$defs/LocalCorpus",
+            "web": "#/$defs/WebCorpus",
+            "wikisource": "#/$defs/WikisourceCorpus"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/WebCorpus"
+          },
+          {
+            "$ref": "#/$defs/LocalCorpus"
+          },
+          {
+            "$ref": "#/$defs/HFDatasetCorpus"
+          },
+          {
+            "$ref": "#/$defs/WikisourceCorpus"
+          }
+        ]
+      },
+      "title": "Corpus",
+      "type": "array"
+    },
+    "text_transforms": {
+      "items": {
+        "$ref": "#/$defs/TextTransform"
+      },
+      "title": "Text Transforms",
+      "type": "array"
+    },
+    "fonts": {
+      "items": {
+        "$ref": "#/$defs/Font"
+      },
+      "title": "Fonts",
+      "type": "array"
+    },
+    "rendering": {
+      "$ref": "#/$defs/Rendering"
+    },
+    "layout": {
+      "$ref": "#/$defs/Layout"
+    },
+    "degradation": {
+      "items": {
+        "$ref": "#/$defs/DegradationStage"
+      },
+      "title": "Degradation",
+      "type": "array"
+    },
+    "publish": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PublishBlock"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "source_path": {
+      "anyOf": [
+        {
+          "format": "path",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source Path"
+    }
+  },
+  "required": [
+    "schema_version",
+    "name",
+    "output",
+    "corpus",
+    "fonts",
+    "rendering",
+    "layout"
+  ],
+  "title": "Recipe",
+  "type": "object"
+}

@@ -138,6 +138,9 @@ build: ## Build distribution packages (wheel and sdist)
 # Project-specific targets
 # ---------------------------------------------------------------------------
 
+schema: ## Regenerate docs/specs/recipe.schema.json from the pydantic models
+	uv run pd-ocr-synth schema -o docs/specs/recipe.schema.json
+
 fetch-fonts: ## Download free Gaelic fonts from upstream sources (interactive license confirm)
 	./scripts/fetch-fonts-gaelic.sh
 
