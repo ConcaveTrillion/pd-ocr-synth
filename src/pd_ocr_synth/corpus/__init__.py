@@ -25,6 +25,7 @@ from __future__ import annotations
 from pd_ocr_synth.corpus.cache import CacheMeta, CacheMissError, CacheStore, default_cache_root
 from pd_ocr_synth.corpus.context import ProviderContext
 from pd_ocr_synth.corpus.exceptions import CorpusError, OfflineCacheMissError, ProviderError
+from pd_ocr_synth.corpus.filters import CorpusFilter, apply_filter
 from pd_ocr_synth.corpus.providers.local import LocalProvider
 from pd_ocr_synth.corpus.providers.web import WebProvider
 from pd_ocr_synth.corpus.providers.wikisource import WikisourceProvider
@@ -35,6 +36,7 @@ __all__ = [
     "CacheMissError",
     "CacheStore",
     "CorpusError",
+    "CorpusFilter",
     "LocalProvider",
     "OfflineCacheMissError",
     "Provider",
@@ -43,6 +45,7 @@ __all__ = [
     "Registry",
     "WebProvider",
     "WikisourceProvider",
+    "apply_filter",
     "default_cache_root",
     "default_registry",
 ]

@@ -63,6 +63,43 @@
       "title": "ColorSpec",
       "type": "object"
     },
+    "CorpusFilterConfig": {
+      "additionalProperties": false,
+      "description": "Provider-level filter applied per corpus entry.\n\nIndependent of recipe-level ``text_transforms``; this stage cleans\neach provider's *source* data before it joins the pool. See\n``docs/specs/04-corpus-providers.md``.",
+      "properties": {
+        "drop_lines_matching": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Drop Lines Matching"
+        },
+        "keep_only_lines_matching": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Keep Only Lines Matching"
+        },
+        "min_line_chars": {
+          "default": 0,
+          "title": "Min Line Chars",
+          "type": "integer"
+        }
+      },
+      "title": "CorpusFilterConfig",
+      "type": "object"
+    },
     "DegradationStage": {
       "additionalProperties": true,
       "description": "One stage in the degradation pipeline.\n\nStage-specific options vary by ``kind`` (blur takes ``sigma``,\npaper_texture takes ``directory``/``blend``/``opacity``, etc.). The\nschema here intentionally allows extras; the validation pass is\nwhere we enforce known kinds and known keys per kind.",
@@ -148,6 +185,46 @@
           "default": true,
           "title": "Cache",
           "type": "boolean"
+        },
+        "max_chars": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Chars"
+        },
+        "min_word_length": {
+          "default": 1,
+          "title": "Min Word Length",
+          "type": "integer"
+        },
+        "language": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Language"
+        },
+        "filter": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CorpusFilterConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "type": {
           "const": "hf_dataset",
@@ -337,6 +414,46 @@
           "default": true,
           "title": "Cache",
           "type": "boolean"
+        },
+        "max_chars": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Chars"
+        },
+        "min_word_length": {
+          "default": 1,
+          "title": "Min Word Length",
+          "type": "integer"
+        },
+        "language": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Language"
+        },
+        "filter": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CorpusFilterConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "type": {
           "const": "local",
@@ -559,6 +676,46 @@
           "title": "Cache",
           "type": "boolean"
         },
+        "max_chars": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Chars"
+        },
+        "min_word_length": {
+          "default": 1,
+          "title": "Min Word Length",
+          "type": "integer"
+        },
+        "language": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Language"
+        },
+        "filter": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CorpusFilterConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "type": {
           "const": "web",
           "title": "Type",
@@ -634,13 +791,41 @@
           "title": "Cache",
           "type": "boolean"
         },
-        "type": {
-          "const": "wikisource",
-          "title": "Type",
-          "type": "string"
+        "max_chars": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Chars"
+        },
+        "min_word_length": {
+          "default": 1,
+          "title": "Min Word Length",
+          "type": "integer"
         },
         "language": {
           "title": "Language",
+          "type": "string"
+        },
+        "filter": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CorpusFilterConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "type": {
+          "const": "wikisource",
+          "title": "Type",
           "type": "string"
         },
         "titles": {
@@ -652,8 +837,8 @@
         }
       },
       "required": [
-        "type",
         "language",
+        "type",
         "titles"
       ],
       "title": "WikisourceCorpus",

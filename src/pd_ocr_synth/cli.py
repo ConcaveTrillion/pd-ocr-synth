@@ -251,6 +251,89 @@ def _cmd_init(name: str, *, dir_: str, force: bool) -> int:
     return 0
 
 
+def _cmd_fetch(recipe_arg: str, *, cache_dir: str | None, no_cache: bool) -> int:
+    import time
+
+    from pd_ocr_synth.corpus import (
+        CacheStore,
+        CorpusError,
+        ProviderContext,
+        default_cache_root,
+        default_registry,
+    )
+    from pd_ocr_synth.corpus.filters import apply_filter
+    from pd_ocr_synth.recipe import RecipeLoadError, load_recipe
+    from pd_ocr_synth.recipe_search import RecipeNotFoundError, resolve_recipe
+
+    try:
+        path = resolve_recipe(recipe_arg)
+    except RecipeNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return VALIDATION_EXIT
+
+    try:
+        recipe = load_recipe(path)
+    except RecipeLoadError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return VALIDATION_EXIT
+
+    cache_root = Path(cache_dir).expanduser() if cache_dir else default_cache_root()
+    cache = CacheStore(root=cache_root)
+    ctx = ProviderContext(recipe_dir=path.parent, cache=cache)
+    registry = default_registry()
+
+    print(f"recipe: {recipe.name} ({path})")
+    print(f"cache:  {cache_root}")
+    print()
+
+    total_chars = 0
+    failures = 0
+    for index, entry in enumerate(recipe.corpus):
+        options = entry.model_dump(mode="python")
+        if no_cache:
+            options["cache"] = False
+
+        try:
+            provider = registry.get(entry.type)
+        except CorpusError as exc:
+            failures += 1
+            print(
+                f"  corpus[{index}] {entry.type}: ERROR {exc}",
+                file=sys.stderr,
+            )
+            continue
+
+        cache_key = provider.cache_key(options)
+        was_cached = cache.has(provider.type_name, cache_key)
+        started = time.monotonic()
+        try:
+            chunks = list(provider.fetch(ctx, options))
+        except CorpusError as exc:
+            failures += 1
+            print(
+                f"  corpus[{index}] {entry.type}: ERROR {exc}",
+                file=sys.stderr,
+            )
+            continue
+        elapsed = time.monotonic() - started
+
+        text = apply_filter("\n".join(chunks), options.get("filter"))
+        chars = len(text)
+        total_chars += chars
+        marker = "cache" if was_cached and not no_cache else "fetch"
+        print(
+            f"  corpus[{index}] {entry.type}: {marker} "
+            f"{chars:>9d} chars  {elapsed:>5.2f}s  ({cache_key})"
+        )
+
+    print()
+    print(f"total: {total_chars:,} chars across {len(recipe.corpus)} entries")
+    if failures:
+        print(f"failures: {failures}", file=sys.stderr)
+        return 4  # CORPUS_EXIT per docs/specs/01-cli.md
+    return 0
+
+
 def _cmd_schema(output: str | None) -> int:
     from pd_ocr_synth.recipe.models import Recipe
 
@@ -277,6 +360,11 @@ _IMPLEMENTED_DISPATCH = {
     "describe": lambda args: _cmd_describe(args.recipe, output_format=args.format),
     "init": lambda args: _cmd_init(args.name, dir_=args.dir, force=args.force),
     "schema": lambda args: _cmd_schema(args.output),
+    "fetch": lambda args: _cmd_fetch(
+        args.recipe,
+        cache_dir=args.cache_dir,
+        no_cache=args.no_cache,
+    ),
 }
 
 

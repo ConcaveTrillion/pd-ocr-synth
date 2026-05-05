@@ -82,8 +82,25 @@ class OutputBlock(_Frozen):
 # ---------------------------------------------------------------------------
 
 
+class CorpusFilterConfig(_Frozen):
+    """Provider-level filter applied per corpus entry.
+
+    Independent of recipe-level ``text_transforms``; this stage cleans
+    each provider's *source* data before it joins the pool. See
+    ``docs/specs/04-corpus-providers.md``.
+    """
+
+    drop_lines_matching: str | None = None
+    keep_only_lines_matching: str | None = None
+    min_line_chars: int = 0
+
+
 class _CorpusBase(_Frozen):
     cache: bool = True
+    max_chars: int | None = None
+    min_word_length: int = 1
+    language: str | None = None
+    filter: CorpusFilterConfig | None = None
 
 
 class WebCorpus(_CorpusBase):

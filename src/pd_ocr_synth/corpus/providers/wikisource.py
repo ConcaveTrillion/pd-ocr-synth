@@ -114,7 +114,10 @@ def _fetch_title(
     retries: int,
     rate_limiter: HostRateLimiter | None,
 ) -> str:
-    api_url = f"https://{language}.wikisource.org/w/api.php"
+    # The multilingual Wikisource lives at wikisource.org (no
+    # subdomain). All other language editions are at <lang>.wikisource.org.
+    host = "wikisource.org" if language == "mul" else f"{language}.wikisource.org"
+    api_url = f"https://{host}/w/api.php"
     params = {
         "action": "parse",
         "page": title,
@@ -134,7 +137,13 @@ def _fetch_title(
     except httpx.HTTPError as exc:
         raise ProviderError(f"wikisource fetch failed for {language}/{title}: {exc}") from exc
 
-    payload = response.json()
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        snippet = response.text[:120].replace("\n", " ")
+        raise ProviderError(
+            f"wikisource: non-JSON response for {language}/{title}: {snippet!r}"
+        ) from exc
     if "error" in payload:
         info = payload["error"].get("info", "unknown error")
         raise ProviderError(f"wikisource API error for {language}/{title}: {info}")
