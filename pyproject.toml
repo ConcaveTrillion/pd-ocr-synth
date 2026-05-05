@@ -33,6 +33,9 @@ dependencies = [
     "httpx>=0.27",
     "beautifulsoup4>=4.12",
     "freetype-py>=2.4",
+    "uharfbuzz>=0.39",
+    "pillow>=10.0",
+    "numpy>=1.26",
 ]
 
 [project.optional-dependencies]
