@@ -98,7 +98,9 @@ def default_registry() -> Registry:
         # Built-ins. Imported here to avoid an import cycle with the
         # package __init__.
         from pd_ocr_synth.corpus.providers.local import LocalProvider
+        from pd_ocr_synth.corpus.providers.web import WebProvider
 
         registry.register(LocalProvider())
+        registry.register(WebProvider())
         _DEFAULT_REGISTRY = registry
     return _DEFAULT_REGISTRY
