@@ -232,3 +232,62 @@ def test_inverted_range_raises(write_recipe) -> None:
     yaml_text = MINIMAL_RECIPE.replace("font_size_pt: 14", "font_size_pt: { min: 30, max: 10 }")
     with pytest.raises(Exception, match=">= min"):
         load_recipe(write_recipe(yaml_text))
+
+
+# ---------------------------------------------------------------------------
+# degradation_presets
+# ---------------------------------------------------------------------------
+
+
+_PRESET_BLOCK = """
+degradation_presets:
+  light:
+    - { kind: blur, probability: 0.5, sigma: { min: 0.0, max: 0.8 } }
+    - { kind: jpeg, probability: 0.3, quality: { min: 80, max: 95 } }
+  heavy:
+    - { kind: noise, probability: 0.5, noise_kind: gaussian, stddev: { min: 2, max: 8 } }
+
+degradation:
+  - { kind: skew, probability: 0.4, angle_deg: { min: -1, max: 1 } }
+  - preset: light
+  - preset: heavy
+  - { kind: grayscale, probability: 0.1 }
+"""
+
+
+def test_degradation_presets_expand_inline_in_order(write_recipe) -> None:
+    recipe = load_recipe(write_recipe(MINIMAL_RECIPE + _PRESET_BLOCK))
+
+    kinds = [stage.kind for stage in recipe.degradation]
+    # skew, then light's [blur, jpeg], then heavy's [noise], then grayscale.
+    assert kinds == ["skew", "blur", "jpeg", "noise", "grayscale"]
+    # Original presets dict is preserved on the model for round-tripping.
+    assert "light" in recipe.degradation_presets
+    assert {s.kind for s in recipe.degradation_presets["light"]} == {"blur", "jpeg"}
+
+
+def test_degradation_preset_unknown_name_raises(write_recipe) -> None:
+    yaml_text = MINIMAL_RECIPE + "\ndegradation:\n  - preset: does_not_exist\n"
+    with pytest.raises(RecipeLoadError, match="unknown preset"):
+        load_recipe(write_recipe(yaml_text))
+
+
+def test_degradation_preset_paths_resolved_relative_to_recipe(write_recipe, tmp_path) -> None:
+    # A preset that references a paper_texture directory must have its
+    # ``directory`` resolved relative to the recipe file, not CWD.
+    textures = tmp_path / "tex"
+    textures.mkdir()
+    yaml_text = MINIMAL_RECIPE + (
+        "\ndegradation_presets:\n"
+        "  paper:\n"
+        "    - { kind: paper_texture, probability: 0.5, "
+        "directory: ./tex, blend: multiply, opacity: { min: 0.2, max: 0.5 } }\n"
+        "\ndegradation:\n"
+        "  - preset: paper\n"
+    )
+    recipe = load_recipe(write_recipe(yaml_text))
+    stage = recipe.degradation[0]
+    resolved = (stage.model_extra or {}).get("directory")
+    assert resolved is not None
+    # Resolution against the recipe directory (which is tmp_path here).
+    assert Path(resolved).resolve() == textures.resolve()

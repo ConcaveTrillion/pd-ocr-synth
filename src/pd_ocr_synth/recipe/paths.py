@@ -57,6 +57,20 @@ def _resolve_at(d: MutableMapping[str, Any], key: str, base_dir: Path) -> None:
         d[key] = expand_path(val, base_dir)
 
 
+def _resolve_degradation_stage_list(stages: Any, base_dir: Path) -> None:
+    """Walk a list of degradation stages (raw dicts) and resolve known path keys."""
+
+    if not isinstance(stages, list):
+        return
+    for stage in stages:
+        if not isinstance(stage, MutableMapping):
+            continue
+        kind = stage.get("kind")
+        if isinstance(kind, str):
+            for key in _DEGRADATION_PATH_KEYS_BY_KIND.get(kind, ()):
+                _resolve_at(stage, key, base_dir)
+
+
 def resolve_paths(data: MutableMapping[str, Any], base_dir: Path) -> MutableMapping[str, Any]:
     """Walk the parsed recipe dict in place and resolve path-bearing keys.
 
@@ -84,15 +98,12 @@ def resolve_paths(data: MutableMapping[str, Any], base_dir: Path) -> MutableMapp
                 for key in _LOCAL_CORPUS_PATH_KEYS:
                     _resolve_at(entry, key, base_dir)
 
-    degradation = data.get("degradation")
-    if isinstance(degradation, list):
-        for stage in degradation:
-            if not isinstance(stage, MutableMapping):
-                continue
-            kind = stage.get("kind")
-            if isinstance(kind, str):
-                for key in _DEGRADATION_PATH_KEYS_BY_KIND.get(kind, ()):
-                    _resolve_at(stage, key, base_dir)
+    _resolve_degradation_stage_list(data.get("degradation"), base_dir)
+
+    presets = data.get("degradation_presets")
+    if isinstance(presets, MutableMapping):
+        for stages in presets.values():
+            _resolve_degradation_stage_list(stages, base_dir)
 
     publish = data.get("publish")
     if isinstance(publish, MutableMapping):

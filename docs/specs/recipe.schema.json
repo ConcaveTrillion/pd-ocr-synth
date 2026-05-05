@@ -924,6 +924,16 @@
     "layout": {
       "$ref": "#/$defs/Layout"
     },
+    "degradation_presets": {
+      "additionalProperties": {
+        "items": {
+          "$ref": "#/$defs/DegradationStage"
+        },
+        "type": "array"
+      },
+      "title": "Degradation Presets",
+      "type": "object"
+    },
     "degradation": {
       "items": {
         "$ref": "#/$defs/DegradationStage"

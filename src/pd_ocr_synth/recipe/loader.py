@@ -58,6 +58,58 @@ def load_recipe(path: str | Path) -> Recipe:
         raise RecipeLoadError(f"recipe root must be a mapping, got {type(data).__name__}: {p}")
 
     resolve_paths(data, base_dir=p.parent)
+    _expand_degradation_presets(data, source=p)
 
     recipe = Recipe.model_validate(data)
     return recipe.model_copy(update={"source_path": p})
+
+
+def _expand_degradation_presets(data: dict[str, Any], *, source: Path) -> None:
+    """Inline ``- preset: <name>`` entries inside ``degradation``.
+
+    Per ``docs/specs/07-degradation.md``: a recipe may declare named
+    groups under ``degradation_presets``, then reference them from the
+    ordered ``degradation`` list. Resolution rules:
+
+    - ``- preset: <name>`` expands to the list of stages declared
+      under ``degradation_presets[<name>]``, in order, at the
+      reference site.
+    - Presets are local to one recipe (no cross-recipe lookup).
+    - Presets cannot reference other presets — the expansion is a
+      single pass, not recursive. This keeps the spec tractable and
+      prevents accidental cycles.
+    - Unknown preset names raise ``RecipeLoadError`` so the user gets
+      a load-time failure instead of silently dropping stages.
+    """
+
+    degradation = data.get("degradation")
+    presets = data.get("degradation_presets") or {}
+    if not isinstance(degradation, list):
+        return
+    if not isinstance(presets, dict):
+        raise RecipeLoadError(
+            f"degradation_presets must be a mapping in {source}, got {type(presets).__name__}"
+        )
+
+    expanded: list[Any] = []
+    for entry in degradation:
+        if isinstance(entry, dict) and "preset" in entry and "kind" not in entry:
+            name = entry["preset"]
+            if not isinstance(name, str):
+                raise RecipeLoadError(
+                    f"degradation preset reference must be a string name; got {name!r} in {source}"
+                )
+            if name not in presets:
+                raise RecipeLoadError(
+                    f"degradation references unknown preset {name!r} in {source}; "
+                    f"declared presets: {sorted(presets) or '[]'}"
+                )
+            stages = presets[name]
+            if not isinstance(stages, list):
+                raise RecipeLoadError(
+                    f"degradation_presets[{name!r}] must be a list of stages in {source}"
+                )
+            expanded.extend(stages)
+            continue
+        expanded.append(entry)
+    data["degradation"] = expanded

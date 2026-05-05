@@ -278,6 +278,13 @@ class Recipe(_Frozen):
     fonts: list[Font]
     rendering: Rendering
     layout: Layout
+    # Named groups of degradation stages that can be expanded inline
+    # via a ``- preset: <name>`` entry in ``degradation``. The loader
+    # performs the expansion at load time, so by the time runtime code
+    # walks ``degradation`` there are no ``preset`` entries left. This
+    # block is preserved on the model purely for round-tripping /
+    # introspection (``pd-ocr-synth describe``).
+    degradation_presets: dict[str, list[DegradationStage]] = Field(default_factory=dict)
     degradation: list[DegradationStage] = Field(default_factory=list)
     publish: PublishBlock | None = None
 
