@@ -1,8 +1,11 @@
-# M04 — Text transforms
+# M04 — Text transforms (mostly complete)
 
-**Goal:** every transform documented in spec 05 works, is deterministic
-under a fixed seed, and is independently testable. The `python:` inline
-extension form also works.
+**Status:** ✅ every transform the bundled gaelic recipe needs is
+landed. Antique-conventions transforms and the ``python:`` inline
+loader are deferred — see below.
+
+**Goal:** every transform documented in spec 05 works, is
+deterministic under a fixed seed, and is independently testable.
 
 Spec: [`05-text-transforms.md`](../specs/05-text-transforms.md).
 
@@ -10,86 +13,91 @@ Spec: [`05-text-transforms.md`](../specs/05-text-transforms.md).
 
 ### Transform interface
 
-- [ ] `Transform` protocol: `(text: str, options: dict, rng: Random) -> str`.
-- [ ] Registry with built-ins and `python:` inline loader.
-- [ ] Recipe loader resolves transform names → callables at load time.
+- [x] ``Transform`` protocol: ``(text: str, options: dict, rng: Random) -> str``.
+- [x] ``Registry`` with eager built-ins + lazy entry-point loading
+      (``pd_ocr_synth.text_transforms`` group).
+- [x] ``apply_pipeline(text, steps, *, seed)`` derives a stable
+      per-step RNG from the recipe seed so order changes don't
+      destabilize earlier steps.
 
 ### Generic built-ins
 
-- [ ] `normalize_whitespace`
-- [ ] `lowercase`, `uppercase`
-- [ ] `strip_punctuation`
-- [ ] `nfc`, `nfd`, `nfkc`, `nfkd`
-- [ ] `regex_replace` (pattern, replacement, flags)
-- [ ] `keep_only` (chars allowlist)
-- [ ] `min_token_length`, `max_token_length` (corpus filters)
+- [x] ``normalize_whitespace`` (preserves paragraph breaks).
+- [x] ``lowercase`` / ``uppercase``.
+- [x] ``strip_punctuation`` (Unicode P-categories).
+- [x] ``nfc`` / ``nfd`` / ``nfkc`` / ``nfkd``.
+- [x] ``regex_replace`` (pattern, replacement, flags).
+- [x] ``keep_only`` (chars allowlist).
+- [x] ``min_token_length`` / ``max_token_length`` (whitespace-token
+      filters; paragraph breaks preserved).
 
 ### Gaelic / pre-reform Irish built-ins
 
-- [ ] `apply_lenition_dots` with `mode: aggressive | conservative`
-      and a probability knob.
-- [ ] `tironian_et` with `replace_words` list and probability.
-- [ ] `long_s_medial` with probability.
-- [ ] `seimhiu_to_dot` / `dot_to_seimhiu` (bidirectional alias of the
-      lenition transform).
+- [x] ``apply_lenition_dots`` with ``mode: aggressive |
+      conservative`` and a probability knob. Conservative mode
+      requires the next character to be a vowel.
+- [x] ``tironian_et`` with ``replace_words``, ``probability``,
+      ``case_sensitive``. Word-boundary aware via ``\b``.
+- [x] ``long_s_medial`` with ``probability``. Skips word-final and
+      ``s`` immediately before another ``s`` or ``h``. Word-initial
+      lowercase ``s`` is allowed (early-modern practice). Uppercase
+      ``S`` is preserved.
+- [x] ``seimhiu_to_dot`` (alias of ``apply_lenition_dots``) +
+      ``dot_to_seimhiu`` (reverse mapping for round-trip tests).
 
-### Antique-conventions built-ins (deferred-OK if scope is tight)
+### Antique-conventions built-ins
 
-- [ ] `u_v_swap` / `i_j_swap`
-- [ ] `ct_st_ligature_marker` (no visible character change; sets
-      internal markers consumed by the renderer in M05).
+- [ ] ``u_v_swap`` / ``i_j_swap`` (deferred — gaelic does not use
+      them; trivial to add when a recipe demands).
+- [ ] ``ct_st_ligature_marker`` (deferred — depends on the M05
+      renderer recognizing markers).
 
-### `python:` inline loader
+### ``python:`` inline loader
 
-- [ ] Load module from path relative to recipe directory.
-- [ ] Validate the callable signature matches the protocol.
-- [ ] Sandboxing: refuse to import modules outside `recipe_dir` (mild
-      hygiene; not a security boundary).
+- [ ] Path-relative module loader (deferred). The entry-point hook
+      already covers reusable transforms; inline loading is a
+      one-off-recipe convenience.
 
 ### Tests
 
-- [ ] One round-trip test per transform with hand-picked input/output
-      pairs.
-- [ ] Determinism: same seed → identical output across runs.
-- [ ] `apply_lenition_dots` aggressive vs conservative on a known
-      mixed-language sample.
-- [ ] `long_s_medial` never modifies word-final or `ss`/`sh` clusters.
-- [ ] `tironian_et` honors case-sensitivity and word boundaries.
-- [ ] Inline `python:` loader: load a fixture, run the transform, drop
-      the loaded module from `sys.modules`.
+- [x] One round-trip test per implemented transform.
+- [x] Determinism: same seed → identical output across runs (covered
+      for lenition probability, tironian probability, full pipeline).
+- [x] ``apply_lenition_dots`` aggressive vs conservative.
+- [x] ``long_s_medial`` skips word-final + ``ss``/``sh`` clusters,
+      allows word-initial.
+- [x] ``tironian_et`` honors case-sensitivity + word boundaries.
+- [x] Pipeline integration: ``collect_corpus_text`` runs providers
+      then transforms end-to-end.
+- [ ] Inline ``python:`` loader test (deferred with the feature).
 
 ## Validation criteria
 
-A throwaway pipeline:
+The throwaway pipeline from the original roadmap now works:
 
 ```python
-from pd_ocr_synth.text_transforms import pipeline
-out = pipeline(
-    "agus do ḃí an fear bocht...",
-    [{"name": "tironian_et", "options": {"probability": 1.0}},
-     {"name": "long_s_medial", "options": {"probability": 1.0}}],
+from pd_ocr_synth.text_transforms import apply_pipeline
+out = apply_pipeline(
+    "agus do bhi an fear bocht...",
+    [
+        {"name": "tironian_et", "options": {"probability": 1.0}},
+        {"name": "apply_lenition_dots", "options": {"mode": "aggressive"}},
+        {"name": "long_s_medial", "options": {"probability": 1.0}},
+    ],
     seed=0,
 )
-assert "⁊" in out
-assert "ſ" in out  # if any medial s exists
+# → "⁊ do ḃi an fear boċt..." (with ſ wherever an eligible 's' exists)
 ```
 
-The Gaelic recipe loads with all transforms registered; running
-`pd-ocr-synth describe gaelic` after M04 prints the post-transform
-token count.
+The Gaelic recipe loads with all five of its transforms registered
+and ``collect_corpus_text(recipe, ctx)`` returns the
+post-transform text ready for tokenization.
 
-## Out of scope
+## Closeout notes
 
-- Tokenization (still in M05 with layout).
-- Glyph-level handling of dotted consonants — that's a font/render
-  concern (M05), not a transform concern.
-
-## Risks / open items
-
-- **Lenition rule completeness.** Pre-reform Irish has edge cases the
-  digraph rules don't capture (e.g., `bhf` for eclipsed `f`). Cover
-  the 95% case in v1; carve-outs go in `keep_only` or a
-  recipe-specific transform.
-- **Probability semantics.** Per-token vs per-occurrence? Match the
-  spec — per-match for codepoint-level transforms, per-token for
-  word-level transforms. Document in tests.
+- The ``describe`` corpus-stats extension named in spec 05 / M03
+  still hangs on tokenization choices — keep that with M05 (render).
+- ``conservative`` lenition mode here is a "vowel-follows" rule, not
+  a full English-digraph aware rule. Recipes that mix English and
+  Irish should rely on ``keep_only`` plus per-recipe regex rather
+  than this transform's English-detection.

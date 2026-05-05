@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from pd_ocr_synth.corpus import CacheStore, ProviderContext
-from pd_ocr_synth.corpus.runner import run_providers
+from pd_ocr_synth.corpus.runner import collect_corpus_text, run_providers
 from pd_ocr_synth.recipe import load_recipe
 
 _RECIPE = """\
@@ -64,6 +64,88 @@ def test_runner_applies_filter_per_entry(tmp_path: Path, loaded_recipe) -> None:
     # Entry 1 has a filter that drops the line "drop".
     assert "drop" not in results[1].text
     assert "keep" in results[1].text
+
+
+def test_collect_corpus_text_threads_through_text_transforms(tmp_path: Path) -> None:
+    (tmp_path / "src.txt").write_text("agus bhi siubhal\n", encoding="utf-8")
+    (tmp_path / "fake.otf").write_bytes(b"")
+    rp = tmp_path / "recipe.yaml"
+    rp.write_text(
+        """\
+schema_version: 1
+name: pipeline
+seed: 99
+output:
+  format: pd-ocr-trainer/v1
+  mode: recognition
+  destination: ./out
+  count: 1
+corpus:
+  - type: local
+    path: ./src.txt
+text_transforms:
+  - tironian_et:
+      probability: 1.0
+  - apply_lenition_dots:
+      mode: aggressive
+      probability: 1.0
+  - long_s_medial:
+      probability: 1.0
+fonts:
+  - path: ./fake.otf
+rendering:
+  font_size_pt: 12
+  dpi: 300
+  ink_color: {r: 0, g: 0, b: 0}
+  background_color: {r: 255, g: 255, b: 255}
+layout:
+  mode: word_crops
+  padding_px: 4
+""",
+        encoding="utf-8",
+    )
+    recipe = load_recipe(rp)
+    ctx = ProviderContext(recipe_dir=tmp_path, cache=CacheStore(root=tmp_path / "cache"))
+    out = collect_corpus_text(recipe, ctx=ctx)
+    assert "⁊" in out
+    assert "ḃ" in out
+    assert "ſ" in out
+    assert "agus" not in out
+
+
+def test_collect_corpus_text_no_transforms_returns_raw(tmp_path: Path) -> None:
+    (tmp_path / "src.txt").write_text("hello world\n", encoding="utf-8")
+    (tmp_path / "fake.otf").write_bytes(b"")
+    rp = tmp_path / "recipe.yaml"
+    rp.write_text(
+        """\
+schema_version: 1
+name: bare
+output:
+  format: pd-ocr-trainer/v1
+  mode: recognition
+  destination: ./out
+  count: 1
+corpus:
+  - type: local
+    path: ./src.txt
+fonts:
+  - path: ./fake.otf
+rendering:
+  font_size_pt: 12
+  dpi: 300
+  ink_color: {r: 0, g: 0, b: 0}
+  background_color: {r: 255, g: 255, b: 255}
+layout:
+  mode: word_crops
+  padding_px: 4
+""",
+        encoding="utf-8",
+    )
+    recipe = load_recipe(rp)
+    ctx = ProviderContext(recipe_dir=tmp_path, cache=CacheStore(root=tmp_path / "cache"))
+    out = collect_corpus_text(recipe, ctx=ctx)
+    assert "hello world" in out
 
 
 def test_runner_marks_cache_hits(tmp_path: Path, loaded_recipe) -> None:

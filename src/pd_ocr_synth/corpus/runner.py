@@ -7,6 +7,10 @@ filter, and yields one ``ProviderRunResult`` per entry. Used by:
 - ``pd-ocr-synth fetch`` to warm the cache up front.
 - ``pd-ocr-synth describe`` (in M03+) to compute corpus statistics.
 - The render pipeline (M05+) to gather text before tokenization.
+
+``collect_corpus_text`` is the higher-level convenience: it runs the
+providers, joins per-entry text, and pipes the result through
+``recipe.text_transforms`` (M04) using the recipe's seed.
 """
 
 from __future__ import annotations
@@ -78,3 +82,33 @@ def _options_for(entry: object) -> dict:
     """
 
     return entry.model_dump(mode="python")  # type: ignore[attr-defined]
+
+
+def collect_corpus_text(
+    recipe: Recipe,
+    *,
+    ctx: ProviderContext,
+) -> str:
+    """Run providers, join their text, then apply ``recipe.text_transforms``.
+
+    Per-provider filters run inside ``run_providers``. Entries are
+    joined with a blank-line separator so paragraph-aware transforms
+    see distinct provider boundaries. The recipe's ``seed`` drives
+    the text-transform RNG.
+
+    This is the entry point M05 (render) will call to materialize the
+    full pre-tokenization corpus.
+    """
+
+    # Imported here so the corpus package stays usable in environments
+    # that haven't installed the text_transforms layer (e.g. tests of
+    # individual providers).
+    from pd_ocr_synth.text_transforms import PipelineStep, apply_pipeline
+
+    chunks = [r.text for r in run_providers(recipe, ctx=ctx)]
+    text = "\n\n".join(c for c in chunks if c)
+
+    steps = [PipelineStep(name=t.name, options=dict(t.options)) for t in recipe.text_transforms]
+    if not steps:
+        return text
+    return apply_pipeline(text, steps, seed=recipe.seed)
