@@ -16,11 +16,12 @@ upstream are preserved end-to-end.
 from __future__ import annotations
 
 import io
+from pathlib import Path
 from random import Random
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from PIL import Image, ImageEnhance, ImageFilter
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
 
 from pd_ocr_synth.degradation.pipeline import (
     register_geometry_stage,
@@ -200,8 +201,7 @@ def _gamma(image: Image.Image, options: dict[str, Any], rng: Random) -> Image.Im
 
 
 # ---------------------------------------------------------------------------
-# Print / paper (ink only — paper_texture + foxing land alongside the
-# bundled CC0 textures in commit C)
+# Print / paper
 # ---------------------------------------------------------------------------
 
 
@@ -237,6 +237,145 @@ def _ink_thin(image: Image.Image, options: dict[str, Any], rng: Random) -> Image
     for _ in range(iterations):
         out = out.filter(ImageFilter.MaxFilter(size))
     return out
+
+
+# ``paper_texture`` reads PNG/JPEG textures from disk. We cache the
+# directory listing so repeated samples don't ``listdir`` every call.
+# Cleared if the recipe author re-points ``directory`` (cache key is
+# the resolved string).
+_TEXTURE_DIR_CACHE: dict[str, list[Path]] = {}
+
+
+_VALID_TEXTURE_EXT = frozenset({".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".tif"})
+
+
+def _list_textures(directory: Path) -> list[Path]:
+    key = str(directory.resolve())
+    cached = _TEXTURE_DIR_CACHE.get(key)
+    if cached is not None:
+        return cached
+    if not directory.is_dir():
+        raise ValueError(f"paper_texture: directory does not exist: {directory}")
+    found = sorted(p for p in directory.iterdir() if p.suffix.lower() in _VALID_TEXTURE_EXT)
+    _TEXTURE_DIR_CACHE[key] = found
+    return found
+
+
+def _blend_layers(base: np.ndarray, overlay: np.ndarray, blend: str) -> np.ndarray:
+    """Composite overlay over base in [0, 1] float space using a named blend.
+
+    See spec 07: ``multiply | overlay | screen | hard_light``.
+    """
+
+    a = base
+    b = overlay
+    if blend == "multiply":
+        return a * b
+    if blend == "screen":
+        return 1.0 - (1.0 - a) * (1.0 - b)
+    if blend == "overlay":
+        return np.where(a < 0.5, 2.0 * a * b, 1.0 - 2.0 * (1.0 - a) * (1.0 - b))
+    if blend == "hard_light":
+        return np.where(b < 0.5, 2.0 * a * b, 1.0 - 2.0 * (1.0 - a) * (1.0 - b))
+    raise ValueError(f"paper_texture: unknown blend {blend!r}")
+
+
+def _paper_texture(image: Image.Image, options: dict[str, Any], rng: Random) -> Image.Image:
+    directory = options.get("directory")
+    if directory is None:
+        raise ValueError("paper_texture: 'directory' is required")
+    blend = str(options.get("blend", "multiply"))
+    opacity = _draw(options.get("opacity", 0.5), rng)
+    scale = _draw(options.get("scale", 1.0), rng) if "scale" in options else 1.0
+    rotate_deg = _draw(options.get("rotate_deg", 0.0), rng) if "rotate_deg" in options else 0.0
+
+    if opacity <= 0:
+        return image
+
+    textures = _list_textures(Path(str(directory)))
+    if not textures:
+        raise ValueError(f"paper_texture: no usable images in {directory}")
+
+    tex_path = rng.choice(textures)
+    tex = Image.open(tex_path).convert("RGB")
+
+    # Optionally scale + rotate the texture before tiling onto the
+    # render-sized canvas.
+    if scale != 1.0:
+        tw = max(1, int(round(tex.width * scale)))
+        th = max(1, int(round(tex.height * scale)))
+        tex = tex.resize((tw, th), resample=Image.Resampling.BILINEAR)
+    if rotate_deg != 0.0:
+        tex = tex.rotate(
+            rotate_deg,
+            resample=Image.Resampling.BILINEAR,
+            expand=False,
+        )
+
+    # Random crop / tile the texture to match the canvas size.
+    img = _to_rgb(image)
+    iw, ih = img.size
+    tw, th = tex.size
+    if tw < iw or th < ih:
+        # Tile by simple repetition.
+        tiled = Image.new("RGB", (iw, ih))
+        for ty in range(0, ih, th):
+            for tx in range(0, iw, tw):
+                tiled.paste(tex, (tx, ty))
+        tex_crop = tiled
+    else:
+        ox = rng.randint(0, tw - iw)
+        oy = rng.randint(0, th - ih)
+        tex_crop = tex.crop((ox, oy, ox + iw, oy + ih))
+
+    a = np.asarray(img, dtype=np.float32) / 255.0
+    b = np.asarray(tex_crop, dtype=np.float32) / 255.0
+    blended = _blend_layers(a, b, blend)
+    out = a * (1.0 - opacity) + blended * opacity
+    out = (np.clip(out, 0, 1) * 255.0).astype(np.uint8)
+    return Image.fromarray(out, mode="RGB")
+
+
+def _foxing(image: Image.Image, options: dict[str, Any], rng: Random) -> Image.Image:
+    """Add a few reddish-brown spots characteristic of aged paper.
+
+    Drawn with a soft ellipse-and-blur on a transparent layer, then
+    blended additively onto the base image. ``count`` of zero is a
+    cheap exit (no allocation).
+    """
+
+    count = _draw_int(options.get("count", 0), rng)
+    if count <= 0:
+        return image
+    color = options.get("color", [120, 60, 30])
+    if not (isinstance(color, list | tuple) and len(color) == 3):
+        raise ValueError(f"foxing: color must be [r, g, b], got {color!r}")
+    color_t = (int(color[0]), int(color[1]), int(color[2]))
+
+    img = _to_rgb(image)
+    iw, ih = img.size
+
+    # Build a single-channel "spot" mask we'll multiply by the color.
+    spot_mask = Image.new("L", (iw, ih), color=0)
+    draw = ImageDraw.Draw(spot_mask)
+    for _ in range(count):
+        cx = rng.randint(0, iw - 1)
+        cy = rng.randint(0, ih - 1)
+        radius = max(1, _draw_int(options.get("radius_px", 4), rng))
+        intensity = int(round(255 * _draw(options.get("opacity", 0.3), rng)))
+        draw.ellipse(
+            (cx - radius, cy - radius, cx + radius, cy + radius),
+            fill=intensity,
+        )
+    # Soften edges so spots look like stains rather than crisp circles.
+    spot_mask = spot_mask.filter(ImageFilter.GaussianBlur(radius=1.5))
+
+    base_arr = np.asarray(img, dtype=np.float32)
+    mask_arr = np.asarray(spot_mask, dtype=np.float32) / 255.0  # [0, 1]
+    color_arr = np.array(color_t, dtype=np.float32)
+    # Linear blend toward the foxing color, weighted per-pixel by the mask.
+    out = base_arr * (1.0 - mask_arr[..., None]) + color_arr * mask_arr[..., None]
+    return Image.fromarray(np.clip(out, 0, 255).astype(np.uint8), mode="RGB")
 
 
 # ---------------------------------------------------------------------------
@@ -394,6 +533,8 @@ register_pixel_stage("contrast", _contrast)
 register_pixel_stage("gamma", _gamma)
 register_pixel_stage("ink_bleed", _ink_bleed)
 register_pixel_stage("ink_thin", _ink_thin)
+register_pixel_stage("paper_texture", _paper_texture)
+register_pixel_stage("foxing", _foxing)
 register_pixel_stage("jpeg", _jpeg)
 register_pixel_stage("webp", _webp)
 register_pixel_stage("grayscale", _grayscale)

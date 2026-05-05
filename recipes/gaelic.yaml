@@ -218,44 +218,40 @@ layout:
   baseline_jitter_px: { min: -2, max: 2 }
 
 # ----------------------------------------------------------------------------
-# Degradation: ordered pipeline. Geometric stages first, JPEG last.
+# Degradation presets: named groups of stages that ``degradation:`` below
+# can reference inline. Per docs/specs/07-degradation.md, presets are
+# expanded at recipe-load time, in order, at the reference site.
+# ----------------------------------------------------------------------------
+degradation_presets:
+  light_book_scan:
+    - { kind: skew, probability: 0.4, angle_deg: { min: -1, max: 1 } }
+    - { kind: blur, probability: 0.4, filter: gaussian, sigma: { min: 0.0, max: 0.8 } }
+    - { kind: jpeg, probability: 0.3, quality: { min: 80, max: 95 } }
+
+  heavy_19c_print:
+    - { kind: skew, probability: 0.7, angle_deg: { min: -3, max: 3 } }
+    - { kind: ink_bleed, probability: 0.5, iterations: { min: 1, max: 2 } }
+    - kind: paper_texture
+      probability: 0.7
+      directory: ./gaelic/textures/aged-paper/
+      blend: multiply
+      opacity: { min: 0.3, max: 0.6 }
+    - kind: foxing
+      probability: 0.3
+      count: { min: 0, max: 4 }
+      radius_px: { min: 2, max: 6 }
+      color: [120, 60, 30]
+      opacity: { min: 0.2, max: 0.4 }
+    - { kind: noise, probability: 0.5, noise_kind: gaussian, stddev: { min: 2, max: 8 } }
+    - { kind: jpeg, probability: 0.4, quality: { min: 60, max: 90 } }
+
+# ----------------------------------------------------------------------------
+# Degradation: ordered pipeline. The two named presets above expand inline
+# here in declaration order. Add ad-hoc stages after the preset reference if
+# you want to extend the chain without redefining the whole thing.
 # ----------------------------------------------------------------------------
 degradation:
-  - kind: skew
-    probability: 0.6
-    angle_deg: { min: -2, max: 2 }
-    fill: background
-
-  - kind: blur
-    probability: 0.5
-    filter: gaussian
-    sigma: { min: 0.0, max: 1.2 }
-
-  - kind: ink_bleed
-    probability: 0.3
-    iterations: { min: 1, max: 2 }
-
-  - kind: paper_texture
-    probability: 0.5
-    directory: ./gaelic/textures/aged-paper/
-    blend: multiply
-    opacity: { min: 0.2, max: 0.6 }
-
-  - kind: foxing
-    probability: 0.2
-    count: { min: 0, max: 4 }
-    radius_px: { min: 2, max: 6 }
-    color: [120, 60, 30]
-    opacity: { min: 0.2, max: 0.4 }
-
-  - kind: noise
-    probability: 0.5
-    noise_kind: gaussian
-    stddev: { min: 0, max: 8 }
-
-  - kind: jpeg
-    probability: 0.4
-    quality: { min: 60, max: 95 }
+  - preset: heavy_19c_print
 
 # ----------------------------------------------------------------------------
 # Publish: optional defaults for `pd-ocr-synth publish gaelic`. Edit the

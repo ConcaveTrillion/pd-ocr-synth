@@ -17,6 +17,7 @@ renderer's output is just a PIL Image plus metadata.
 from __future__ import annotations
 
 import io
+from pathlib import Path
 from random import Random
 
 import numpy as np
@@ -273,6 +274,94 @@ def test_pipeline_probability_honored_across_many_seeds() -> None:
             applied += 1
     rate = applied / n
     assert 0.40 <= rate <= 0.60, f"applied rate {rate:.3f} not within [0.40, 0.60]"
+
+
+def test_paper_texture_blends_with_directory(tmp_path) -> None:
+    # Build two synthetic textures so paper_texture has something to pick.
+    tex_dir = tmp_path / "textures"
+    tex_dir.mkdir()
+    rng_np = np.random.default_rng(0)
+    for i in range(2):
+        arr = (rng_np.random((64, 64, 3)) * 200 + 30).astype(np.uint8)
+        Image.fromarray(arr, mode="RGB").save(tex_dir / f"t{i}.png")
+
+    base = _make_sample(width=80, height=40)
+    stage = _stage(
+        "paper_texture",
+        probability=1.0,
+        directory=str(tex_dir),
+        blend="multiply",
+        opacity=0.4,
+    )
+
+    out_a = apply_degradation(base, [stage], rng=Random(7))
+    out_b = apply_degradation(base, [stage], rng=Random(7))
+
+    # Shape preserved; image is changed; deterministic.
+    assert out_a.image.size == base.image.size
+    assert _png_bytes(out_a.image) != _png_bytes(base.image)
+    assert _png_bytes(out_a.image) == _png_bytes(out_b.image)
+
+
+def test_paper_texture_uses_bundled_aged_paper() -> None:
+    """Smoke: the bundled CC0 textures load and blend without errors."""
+
+    bundled = (
+        Path(__file__).resolve().parent.parent / "recipes" / "gaelic" / "textures" / "aged-paper"
+    )
+    if not bundled.exists() or not any(bundled.glob("*.png")):
+        pytest.skip("Bundled paper textures not present.")
+    base = _make_sample()
+    stage = _stage(
+        "paper_texture",
+        probability=1.0,
+        directory=str(bundled),
+        blend="multiply",
+        opacity={"min": 0.2, "max": 0.6},
+        scale={"min": 0.5, "max": 1.5},
+        rotate_deg={"min": -180, "max": 180},
+    )
+    out = apply_degradation(base, [stage], rng=Random(42))
+    assert out.image.size == base.image.size
+    assert _png_bytes(out.image) != _png_bytes(base.image)
+
+
+def test_paper_texture_missing_directory_raises(tmp_path) -> None:
+    base = _make_sample()
+    stage = _stage(
+        "paper_texture",
+        probability=1.0,
+        directory=str(tmp_path / "nope"),
+        blend="multiply",
+        opacity=0.4,
+    )
+    with pytest.raises(ValueError, match="directory does not exist"):
+        apply_degradation(base, [stage], rng=Random(0))
+
+
+def test_foxing_zero_count_is_noop() -> None:
+    base = _make_sample()
+    stage = _stage("foxing", probability=1.0, count=0, radius_px=4, opacity=0.3)
+    out = apply_degradation(base, [stage], rng=Random(0))
+    assert _png_bytes(out.image) == _png_bytes(base.image)
+
+
+def test_foxing_adds_visible_spots() -> None:
+    base = _make_sample(width=120, height=80)
+    stage = _stage(
+        "foxing",
+        probability=1.0,
+        count=5,
+        radius_px=4,
+        color=[120, 60, 30],
+        opacity=0.5,
+    )
+    out_a = apply_degradation(base, [stage], rng=Random(11))
+    out_b = apply_degradation(base, [stage], rng=Random(11))
+
+    assert out_a.image.size == base.image.size
+    assert _png_bytes(out_a.image) != _png_bytes(base.image)
+    assert _png_bytes(out_a.image) == _png_bytes(out_b.image)
 
 
 def test_pipeline_is_deterministic_under_seed() -> None:
