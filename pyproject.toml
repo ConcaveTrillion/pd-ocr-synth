@@ -23,11 +23,14 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Image Processing",
 ]
 
-# Implementation lands in M02+; M01 is dev tooling only. Real runtime
-# deps will include: pyyaml, pydantic, httpx, beautifulsoup4, lxml,
-# datasets, huggingface_hub, pillow, uharfbuzz, freetype-py, numpy,
-# opencv-python, tqdm.
-dependencies = []
+# Implementation lands milestone-by-milestone. M02 introduces recipe
+# loading and validation, hence pydantic + pyyaml. Future milestones
+# will add: httpx, beautifulsoup4, lxml, datasets, huggingface_hub,
+# pillow, uharfbuzz, freetype-py, numpy, opencv-python, tqdm.
+dependencies = [
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+]
 
 [project.optional-dependencies]
 ui = [
