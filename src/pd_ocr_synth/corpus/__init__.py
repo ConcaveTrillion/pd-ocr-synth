@@ -27,6 +27,7 @@ from pd_ocr_synth.corpus.context import ProviderContext
 from pd_ocr_synth.corpus.exceptions import CorpusError, OfflineCacheMissError, ProviderError
 from pd_ocr_synth.corpus.providers.local import LocalProvider
 from pd_ocr_synth.corpus.providers.web import WebProvider
+from pd_ocr_synth.corpus.providers.wikisource import WikisourceProvider
 from pd_ocr_synth.corpus.registry import Provider, Registry, default_registry
 
 __all__ = [
@@ -41,6 +42,7 @@ __all__ = [
     "ProviderError",
     "Registry",
     "WebProvider",
+    "WikisourceProvider",
     "default_cache_root",
     "default_registry",
 ]

@@ -99,8 +99,10 @@ def default_registry() -> Registry:
         # package __init__.
         from pd_ocr_synth.corpus.providers.local import LocalProvider
         from pd_ocr_synth.corpus.providers.web import WebProvider
+        from pd_ocr_synth.corpus.providers.wikisource import WikisourceProvider
 
         registry.register(LocalProvider())
         registry.register(WebProvider())
+        registry.register(WikisourceProvider())
         _DEFAULT_REGISTRY = registry
     return _DEFAULT_REGISTRY

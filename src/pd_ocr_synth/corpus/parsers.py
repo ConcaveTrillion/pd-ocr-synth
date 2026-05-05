@@ -68,12 +68,17 @@ def parse_tei_text(body: str) -> str:
     if a producer ships strict-XML-only documents we can revisit.
     """
 
+    import warnings
+
     try:
-        from bs4 import BeautifulSoup
+        from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
     except ImportError as exc:  # pragma: no cover
         raise ProviderError("the 'tei-text' parser requires beautifulsoup4") from exc
 
-    soup = BeautifulSoup(body, "html.parser")
+    # We deliberately use html.parser on TEI XML (see docstring).
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", XMLParsedAsHTMLWarning)
+        soup = BeautifulSoup(body, "html.parser")
     # Drop <teiheader> contents — front-matter, not corpus material.
     for tag in soup.find_all("teiheader"):
         tag.decompose()
