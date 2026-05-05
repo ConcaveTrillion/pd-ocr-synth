@@ -117,6 +117,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_preview = subparsers.add_parser("preview", help="render N samples to a preview directory")
     _add_recipe_arg(p_preview)
     _add_common_render_args(p_preview)
+    p_preview.add_argument(
+        "--no-degrade",
+        action="store_true",
+        help="skip the recipe's degradation pipeline; output raw render only",
+    )
 
     p_render = subparsers.add_parser("render", help="render the full dataset for a recipe")
     _add_recipe_arg(p_render)
@@ -349,13 +354,17 @@ def _cmd_preview(
     seed: int | None,
     cache_dir: str | None,
     workers: int | None,
+    no_degrade: bool,
 ) -> int:
-    """Render N samples to a preview directory (no degradation; M05).
+    """Render N samples to a preview directory.
 
     Default count: ``DEFAULT_PREVIEW_COUNT`` (50).
     Default output: ``./preview/<recipe-name>/``.
     Default workers: ``max(1, min(cpu_count - 1, 8))`` — see
     :func:`pd_ocr_synth.render.preview.resolve_workers`.
+
+    Degradation: applied by default (M06). Pass ``--no-degrade`` to
+    skip the pipeline and inspect raw render output.
     """
 
     from pd_ocr_synth.recipe import RecipeLoadError, load_recipe
@@ -409,6 +418,7 @@ def _cmd_preview(
             seed=seed,
             cache_dir=cache_root,
             workers=worker_count,
+            apply_degrade=not no_degrade,
         )
     except RenderError as exc:
         print(f"error: render failed: {exc}", file=sys.stderr)
@@ -525,6 +535,7 @@ _IMPLEMENTED_DISPATCH = {
         seed=args.seed,
         cache_dir=args.cache_dir,
         workers=args.workers,
+        no_degrade=args.no_degrade,
     ),
     "clean": lambda args: _cmd_clean(args.recipe, cache_dir=args.cache_dir),
 }

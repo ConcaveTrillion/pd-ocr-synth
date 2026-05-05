@@ -10,26 +10,26 @@ Spec: [`07-degradation.md`](../specs/07-degradation.md).
 
 ### Stage interface
 
-- [ ] `Stage` protocol: `(image, options, rng) -> image` for pixel-only
+- [x] `Stage` protocol: `(image, options, rng) -> image` for pixel-only
       stages.
-- [ ] Extended `Stage` for geometry-aware stages: `(sample, options,
+- [x] Extended `Stage` for geometry-aware stages: `(sample, options,
       rng) -> sample` where `sample` carries the image plus bbox
       metadata. (Word-crops have only one bbox; lines/pages have many.)
-- [ ] Pipeline runner: walk the ordered list, draw probability per
+- [x] Pipeline runner: walk the ordered list, draw probability per
       sample, apply or skip.
 
 ### Built-in stages (M06 minimum for recognition)
 
-- [ ] `skew` — affine rotation; updates bbox.
-- [ ] `blur` — gaussian / motion / defocus.
-- [ ] `noise` — gaussian / salt_pepper / poisson / speckle.
-- [ ] `brightness`, `contrast`, `gamma`.
-- [ ] `ink_bleed` (dilate), `ink_thin` (erode).
-- [ ] `paper_texture` (multiply / overlay / screen / hard_light).
-- [ ] `foxing`.
-- [ ] `noise` salt-pepper.
-- [ ] `jpeg`, `webp`.
-- [ ] `grayscale`.
+- [x] `skew` — affine rotation; updates bbox.
+- [x] `blur` — gaussian / motion / defocus.
+- [x] `noise` — gaussian / salt_pepper / poisson / speckle.
+- [x] `brightness`, `contrast`, `gamma`.
+- [x] `ink_bleed` (dilate), `ink_thin` (erode).
+- [x] `paper_texture` (multiply / overlay / screen / hard_light).
+- [x] `foxing`.
+- [x] `noise` salt-pepper.
+- [x] `jpeg`, `webp`.
+- [x] `grayscale`.
 
 ### Built-ins that can slip to M09
 
@@ -42,18 +42,18 @@ Spec: [`07-degradation.md`](../specs/07-degradation.md).
 
 ### Composition presets
 
-- [ ] `degradation_presets` block in the recipe expands inline at load
+- [x] `degradation_presets` block in the recipe expands inline at load
       time (per spec 07).
-- [ ] Ship two named presets: `light_book_scan`, `heavy_19c_print`.
+- [x] Ship two named presets: `light_book_scan`, `heavy_19c_print`.
       Reference them from `recipes/gaelic.yaml`.
 
 ### Tests
 
-- [ ] One per stage: input shape preserved (or transformed correctly
+- [x] One per stage: input shape preserved (or transformed correctly
       for geometric), determinism under seed.
-- [ ] Pipeline composition: stages run in order, probabilities honored
+- [x] Pipeline composition: stages run in order, probabilities honored
       across many seeds.
-- [ ] Bbox round-trip on `skew`: rendered text remains inside the
+- [x] Bbox round-trip on `skew`: rendered text remains inside the
       reported bbox after rotation.
 
 ## Validation criteria

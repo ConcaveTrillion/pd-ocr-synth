@@ -57,13 +57,31 @@ layout:
   padding_px: 4
 """
 
+_DEGRADE_RECIPE_TEMPLATE = (
+    _RECIPE_TEMPLATE
+    + """\
+degradation:
+  - kind: skew
+    probability: 1.0
+    angle_deg: {{ min: -2, max: 2 }}
+  - kind: blur
+    probability: 1.0
+    filter: gaussian
+    sigma: {{ min: 0.5, max: 1.0 }}
+  - kind: jpeg
+    probability: 1.0
+    quality: {{ min: 70, max: 90 }}
+"""
+)
+
 _SEED_WORDS = "\n".join(["ḃeaḋ", "ċeann", "ḋuine", "ḟear", "ġloine", "ṁaṫair"]) + "\n"
 
 
-def _setup(tmp_path: Path) -> Path:
+def _setup(tmp_path: Path, *, with_degrade: bool = False) -> Path:
     font = _require_font()
     rp = tmp_path / "recipe.yaml"
-    rp.write_text(_RECIPE_TEMPLATE.format(font_path=font), encoding="utf-8")
+    template = _DEGRADE_RECIPE_TEMPLATE if with_degrade else _RECIPE_TEMPLATE
+    rp.write_text(template.format(font_path=font), encoding="utf-8")
     (tmp_path / "seed-words.txt").write_text(_SEED_WORDS, encoding="utf-8")
     return rp
 
@@ -265,3 +283,118 @@ def test_preview_parallel_matches_serial_byte_for_byte(
     serial_stats.pop("output_dir")
     parallel_stats.pop("output_dir")
     assert serial_stats == parallel_stats
+
+
+# ---------------------------------------------------------------------------
+# Degradation integration (M06)
+# ---------------------------------------------------------------------------
+
+
+def test_preview_applies_degradation_by_default(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A recipe with degradation stages must produce different bytes than
+    the same recipe re-run with --no-degrade.
+    """
+
+    rp = _setup(tmp_path, with_degrade=True)
+
+    out_with = tmp_path / "with"
+    out_without = tmp_path / "without"
+
+    rc1 = main(
+        [
+            "preview",
+            str(rp),
+            "--count",
+            "3",
+            "--seed",
+            "7",
+            "--workers",
+            "1",
+            "--output",
+            str(out_with),
+        ]
+    )
+    assert rc1 == 0, capsys.readouterr().err
+
+    rc2 = main(
+        [
+            "preview",
+            str(rp),
+            "--count",
+            "3",
+            "--seed",
+            "7",
+            "--workers",
+            "1",
+            "--no-degrade",
+            "--output",
+            str(out_without),
+        ]
+    )
+    assert rc2 == 0, capsys.readouterr().err
+
+    with_pngs = sorted((out_with / "images").glob("*.png"))
+    without_pngs = sorted((out_without / "images").glob("*.png"))
+    assert len(with_pngs) == len(without_pngs) == 3
+
+    # Same filenames (deterministic naming), different bytes (degradation
+    # changed at least the JPEG-quantized output) for every sample.
+    for w, wo in zip(with_pngs, without_pngs, strict=True):
+        assert w.name == wo.name
+        assert w.read_bytes() != wo.read_bytes(), f"degradation produced no change for {w.name}"
+
+
+def test_preview_degradation_is_deterministic_across_workers(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """With degradation on, --workers 1 and --workers 4 must still match
+    byte-for-byte. The degradation pipeline draws from the same
+    per-sample-branched RNG that the renderer reseeds before each call.
+    """
+
+    rp = _setup(tmp_path, with_degrade=True)
+    serial_out = tmp_path / "serial"
+    parallel_out = tmp_path / "parallel"
+
+    rc1 = main(
+        [
+            "preview",
+            str(rp),
+            "--count",
+            "6",
+            "--seed",
+            "21",
+            "--workers",
+            "1",
+            "--output",
+            str(serial_out),
+        ]
+    )
+    assert rc1 == 0, capsys.readouterr().err
+    rc2 = main(
+        [
+            "preview",
+            str(rp),
+            "--count",
+            "6",
+            "--seed",
+            "21",
+            "--workers",
+            "4",
+            "--output",
+            str(parallel_out),
+        ]
+    )
+    assert rc2 == 0, capsys.readouterr().err
+
+    serial_pngs = {p.name: p for p in (serial_out / "images").glob("*.png")}
+    parallel_pngs = {p.name: p for p in (parallel_out / "images").glob("*.png")}
+    assert serial_pngs.keys() == parallel_pngs.keys()
+    for name in serial_pngs:
+        assert serial_pngs[name].read_bytes() == parallel_pngs[name].read_bytes(), (
+            f"degraded png mismatch at {name} between workers=1 and workers=4"
+        )

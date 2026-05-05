@@ -44,6 +44,7 @@ from typing import TYPE_CHECKING
 
 from pd_ocr_synth.corpus import CacheStore, ProviderContext, default_cache_root
 from pd_ocr_synth.corpus.runner import collect_corpus_text
+from pd_ocr_synth.degradation import apply_degradation
 from pd_ocr_synth.render.context import RenderContext
 from pd_ocr_synth.render.word_crop import (
     MissingGlyphError,
@@ -106,6 +107,7 @@ def run_preview(
     seed: int | None = None,
     cache_dir: Path | None = None,
     workers: int = 1,
+    apply_degrade: bool = True,
 ) -> PreviewStats:
     """Render ``count`` samples from ``recipe`` into ``output_dir``.
 
@@ -119,6 +121,11 @@ def run_preview(
     deterministic regardless of worker count: PNG file names and
     per-sample RNG state are keyed on the sample index, and manifest
     lines are written in sample-index order.
+
+    ``apply_degrade`` (default ``True``) runs the recipe's
+    ``degradation`` pipeline against each rendered sample. Pass
+    ``False`` to inspect the raw render output (useful when
+    debugging the renderer itself).
     """
 
     if recipe.layout.mode != "word_crops":
@@ -153,6 +160,7 @@ def run_preview(
             recipe=recipe,
             images_dir=images_dir,
             seed=effective_seed,
+            apply_degrade=apply_degrade,
         )
     else:
         records = _render_parallel(
@@ -161,6 +169,7 @@ def run_preview(
             images_dir=images_dir,
             seed=effective_seed,
             workers=worker_count,
+            apply_degrade=apply_degrade,
         )
 
     rendered = 0
@@ -206,6 +215,7 @@ def _render_serial(
     recipe: Recipe,
     images_dir: Path,
     seed: int,
+    apply_degrade: bool,
 ) -> list[dict]:
     render_ctx = RenderContext.for_seed(seed)
     out: list[dict] = []
@@ -219,6 +229,7 @@ def _render_serial(
                 ctx=render_ctx,
                 images_dir=images_dir,
                 seed=seed,
+                apply_degrade=apply_degrade,
             )
         )
     return out
@@ -241,9 +252,10 @@ _WORKER_RECIPE: Recipe | None = None
 _WORKER_CTX: RenderContext | None = None
 _WORKER_IMAGES_DIR: Path | None = None
 _WORKER_SEED: int = 0
+_WORKER_APPLY_DEGRADE: bool = True
 
 
-def _worker_init(recipe_path: str, seed: int, images_dir: str) -> None:
+def _worker_init(recipe_path: str, seed: int, images_dir: str, apply_degrade: bool) -> None:
     """Pool initializer — runs once per worker process.
 
     Re-loads the recipe from disk inside the worker rather than
@@ -256,11 +268,12 @@ def _worker_init(recipe_path: str, seed: int, images_dir: str) -> None:
     # startup cost when running serially.
     from pd_ocr_synth.recipe import load_recipe
 
-    global _WORKER_RECIPE, _WORKER_CTX, _WORKER_IMAGES_DIR, _WORKER_SEED
+    global _WORKER_RECIPE, _WORKER_CTX, _WORKER_IMAGES_DIR, _WORKER_SEED, _WORKER_APPLY_DEGRADE
     _WORKER_RECIPE = load_recipe(recipe_path)
     _WORKER_CTX = RenderContext.for_seed(seed)
     _WORKER_IMAGES_DIR = Path(images_dir)
     _WORKER_SEED = seed
+    _WORKER_APPLY_DEGRADE = apply_degrade
 
 
 def _worker_render(payload: tuple[int, str]) -> tuple[int, dict]:
@@ -277,6 +290,7 @@ def _worker_render(payload: tuple[int, str]) -> tuple[int, dict]:
         ctx=_WORKER_CTX,
         images_dir=_WORKER_IMAGES_DIR,
         seed=_WORKER_SEED,
+        apply_degrade=_WORKER_APPLY_DEGRADE,
     )
     return index, record
 
@@ -288,6 +302,7 @@ def _render_parallel(
     images_dir: Path,
     seed: int,
     workers: int,
+    apply_degrade: bool,
 ) -> list[dict]:
     payloads = list(enumerate(chosen))
     # Per-record slot keyed by sample index, so we can write the
@@ -306,7 +321,7 @@ def _render_parallel(
     with ctx.Pool(
         processes=workers,
         initializer=_worker_init,
-        initargs=(str(recipe_path), seed, str(images_dir)),
+        initargs=(str(recipe_path), seed, str(images_dir), apply_degrade),
     ) as pool:
         # ``chunksize=1`` keeps load balancing tight; per-sample render
         # is heavy enough (font shaping + rasterization + PNG encode)
@@ -331,6 +346,7 @@ def _render_one(
     ctx: RenderContext,
     images_dir: Path,
     seed: int,
+    apply_degrade: bool,
 ) -> dict:
     image_name = f"{seed:08x}_{index:06d}.png"
     image_path = images_dir / image_name
@@ -353,6 +369,26 @@ def _render_one(
             "reason": "render_error",
             "message": str(exc),
         }
+
+    # Run the recipe's degradation pipeline on the rendered sample.
+    # ``ctx.rng`` is the per-sample-branched RNG; degradation continues
+    # to draw from it so determinism keys (recipe + seed + index) stay
+    # the same. We surface degradation errors as a render skip rather
+    # than crashing the whole batch — a malformed stage shouldn't
+    # poison the rest of the preview.
+    if apply_degrade and recipe.degradation:
+        from pd_ocr_synth.degradation import DegradationError
+
+        try:
+            sample = apply_degradation(sample, list(recipe.degradation), rng=ctx.rng)
+        except DegradationError as exc:
+            return {
+                "index": index,
+                "text": text,
+                "status": "skipped",
+                "reason": "degradation_error",
+                "message": str(exc),
+            }
 
     sample.image.save(image_path, format="PNG")
     return {
