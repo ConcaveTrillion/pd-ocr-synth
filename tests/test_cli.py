@@ -1,9 +1,9 @@
 """CLI behavior tests.
 
 M01 shipped argument parsing only. M02 implements ``list``, ``validate``,
-``describe``, ``init``, ``schema``; the render-side subcommands
-(``fetch``, ``preview``, ``render``, ``publish``, ``clean``) remain
-stubs until their milestones land.
+``describe``, ``init``, ``schema``; M03 added ``fetch``/``clean``; M05
+adds ``preview``. ``render`` and ``publish`` remain stubs until their
+milestones land.
 """
 
 from __future__ import annotations
@@ -32,9 +32,10 @@ ALL_SUBCOMMANDS = [
     "clean",
 ]
 
-# Subcommands still stubbed after M04. Render, publish, preview belong
-# to later milestones; fetch + clean landed in M03/M04 follow-up.
-STILL_STUBBED = ["preview", "render"]
+# Subcommands still stubbed after M05. ``render`` waits on M07 (output
+# adapter); ``publish`` waits on M10. ``fetch`` + ``clean`` landed in
+# M03; ``preview`` landed in M05.
+STILL_STUBBED = ["render"]
 
 
 # ---------------------------------------------------------------------------

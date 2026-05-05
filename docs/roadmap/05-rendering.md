@@ -10,28 +10,30 @@ Spec: [`06-rendering.md`](../specs/06-rendering.md).
 
 ### Shaping & rasterization
 
-- [ ] `pd_ocr_synth.rendering.harfbuzz_engine`:
-  - Use `uharfbuzz` for shaping.
-  - Use `freetype-py` for glyph rasterization.
+- [x] `pd_ocr_synth.render.word_crop` (HarfBuzz path):
+  - Uses `uharfbuzz` for shaping.
+  - Uses `freetype-py` for glyph rasterization.
   - Per-font feature toggles (`liga`, `calt` enabled by default).
-- [ ] `pd_ocr_synth.rendering.pillow_engine` (fallback):
+- [ ] Pillow-only fallback engine:
   - Pillow's `ImageDraw.text` for plain Latin without shaping.
-  - Auto-skipped when shaping is required by the script.
+  - Deferred — Cló Gaelach needs shaping, so the spec's "auto-skip
+    when shaping required" path covers M05. Revisit when a recipe
+    actually targets a non-shaping script.
 
 ### Tokenization (the M03 placeholder gets real here)
 
-- [ ] Word tokenizer for `word_crops` mode: whitespace + punctuation
-      split, drop empties.
+- [x] Word tokenizer for `word_crops` mode: whitespace + edge-
+      punctuation split, drop empties (`pd_ocr_synth.tokenization`).
 - [ ] Per-recipe `corpus_sampling`: `uniform`, `unique_weighted`,
-      `frequency`. Default `unique_weighted` to avoid stop-word
-      overfitting.
+      `frequency`. Preview currently uses uniform-with-replacement;
+      the weighting modes ship with the M07 dataset loop.
 
 ### Sample assembly (word_crops)
 
-- [ ] Per-sample draws: font (weighted), font_size_pt, dpi, ink_color,
-      background_color.
-- [ ] Render to a tight bbox + padding sampled per-recipe.
-- [ ] Capture per-sample ground truth:
+- [x] Per-sample draws: font (weighted), font_size_pt, dpi, ink_color,
+      background_color, padding.
+- [x] Render to a tight bbox + padding sampled per-recipe.
+- [x] Capture per-sample ground truth:
   - `text` (codepoint string)
   - `bbox` (tight inked region, post-padding)
   - `font_path`, `font_size_pt`, `dpi`
@@ -39,31 +41,39 @@ Spec: [`06-rendering.md`](../specs/06-rendering.md).
 
 ### Font validation
 
-- [ ] On recipe load, open each font and report its codepoint coverage.
-- [ ] Surface coverage gaps to `pd-ocr-synth validate` (extends M02).
-- [ ] At render time, samples requiring a missing glyph are skipped
-      with the reason recorded for the manifest.
+- [x] On recipe load, open each font and report its codepoint coverage
+      (`pd_ocr_synth.fonts.open_font`, M-fonts work).
+- [x] Surface coverage gaps to `pd-ocr-synth validate` (M-fonts work).
+- [x] At render time, samples requiring a missing glyph raise
+      `MissingGlyphError`; the preview loop records `missing_glyph` as
+      the manifest skip reason.
 
 ### Determinism
 
-- [ ] All randomness flows from the recipe's `seed` through a single
-      `Random` per render run, branched per sample by sample index.
-      Same recipe + seed + sample index → identical output bytes.
+- [x] All randomness flows from the recipe's `seed` through a single
+      `Random` per render run, branched per sample by sample index
+      (`RenderContext.reseed_for_sample` + `branched_seed`). Same
+      recipe + seed + sample index → identical output bytes.
 
 ### CLI surface
 
-- [ ] `pd-ocr-synth preview <recipe>` — render N samples (default 50)
-      to a configurable output dir. No degradation yet (M06).
+- [x] `pd-ocr-synth preview <recipe>` — renders N samples (default 50)
+      to a configurable output dir. Honors `--count` / `--output` /
+      `--seed`. Writes `images/`, `manifest.jsonl`, `stats.json`. No
+      degradation yet (M06); no `pd-ocr-trainer/v1` adapter (M07).
 
 ### Tests
 
-- [ ] Smoke: render 5 samples from `gaelic.yaml`; count files,
-      check non-empty PNGs.
-- [ ] Determinism: same seed → byte-identical PNGs.
-- [ ] Glyph-coverage skip: a recipe whose font lacks `ḃ` produces a
-      manifest with a `missing_glyph` reason for affected samples.
-- [ ] Visual eyeball test: `make gaelic-preview` produces 50 samples
-      a human can spot-check.
+- [x] Smoke: render 5 samples from a tmp recipe pointed at the bundled
+      Bunchló GC font; assert non-empty PNGs (`tests/test_render.py`).
+- [x] Determinism: same seed + sample index → byte-identical PNG bytes.
+- [x] Glyph-coverage skip: rendering a token containing U+1F600 (an
+      emoji absent from the Gaelic font) raises `MissingGlyphError`
+      with the missing codepoints set; preview records the same as a
+      manifest skip reason.
+- [ ] Visual eyeball test: `make gaelic-preview` produces 50 samples a
+      human can spot-check. Deferred — depends on `make fetch-fonts`
+      which is interactive (license confirmation).
 
 ## Validation criteria
 

@@ -1,9 +1,12 @@
 """Command-line interface for pd-ocr-synth.
 
-M02 wires ``list``, ``validate``, ``describe``, ``init``, and the new
-``schema`` subcommand. Render-side subcommands (``fetch``, ``preview``,
-``render``, ``publish``, ``clean``) remain stubs until the milestones
-that own them.
+Subcommands wired to date:
+
+- M02: ``list``, ``validate``, ``describe``, ``init``, ``schema``.
+- M03: ``fetch``, ``clean`` (corpus cache management).
+- M05: ``preview`` (render N samples to a preview directory).
+
+``render`` and ``publish`` remain stubs until M07/M10 land.
 """
 
 from __future__ import annotations
@@ -338,6 +341,75 @@ def _cmd_fetch(recipe_arg: str, *, cache_dir: str | None, no_cache: bool) -> int
     return 0
 
 
+def _cmd_preview(
+    recipe_arg: str,
+    *,
+    count: int | None,
+    output: str | None,
+    seed: int | None,
+    cache_dir: str | None,
+) -> int:
+    """Render N samples to a preview directory (no degradation; M05).
+
+    Default count: ``DEFAULT_PREVIEW_COUNT`` (50).
+    Default output: ``./preview/<recipe-name>/``.
+    """
+
+    from pd_ocr_synth.recipe import RecipeLoadError, load_recipe
+    from pd_ocr_synth.recipe_search import RecipeNotFoundError, resolve_recipe
+    from pd_ocr_synth.render import RenderError
+    from pd_ocr_synth.render.preview import DEFAULT_PREVIEW_COUNT, run_preview
+
+    try:
+        path = resolve_recipe(recipe_arg)
+    except RecipeNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return VALIDATION_EXIT
+
+    try:
+        recipe = load_recipe(path)
+    except RecipeLoadError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return VALIDATION_EXIT
+    except Exception as exc:
+        print(f"error: schema validation failed for {path}:", file=sys.stderr)
+        print(str(exc), file=sys.stderr)
+        return VALIDATION_EXIT
+
+    sample_count = count if count is not None else DEFAULT_PREVIEW_COUNT
+    if sample_count <= 0:
+        print(f"error: --count must be positive (got {sample_count})", file=sys.stderr)
+        return USAGE_EXIT
+
+    output_dir = Path(output).expanduser() if output else Path("preview") / recipe.name
+    cache_root = Path(cache_dir).expanduser() if cache_dir else None
+
+    print(f"recipe: {recipe.name} ({path})")
+    print(f"output: {output_dir}")
+    print(f"count:  {sample_count}")
+
+    try:
+        stats = run_preview(
+            recipe,
+            output_dir=output_dir,
+            count=sample_count,
+            seed=seed,
+            cache_dir=cache_root,
+        )
+    except RenderError as exc:
+        print(f"error: render failed: {exc}", file=sys.stderr)
+        return 5  # RENDER_EXIT per docs/specs/01-cli.md
+
+    print()
+    print(f"rendered: {stats.rendered}/{stats.count}")
+    if stats.skipped:
+        print(f"skipped:  {stats.skipped}")
+        for reason, n in sorted(stats.skip_reasons.items()):
+            print(f"  {reason}: {n}")
+    print(f"manifest: {output_dir / 'manifest.jsonl'}")
+    return 0
+
+
 def _cmd_clean(recipe_arg: str, *, cache_dir: str | None) -> int:
     """Remove cache entries owned by the given recipe.
 
@@ -431,6 +503,13 @@ _IMPLEMENTED_DISPATCH = {
         args.recipe,
         cache_dir=args.cache_dir,
         no_cache=args.no_cache,
+    ),
+    "preview": lambda args: _cmd_preview(
+        args.recipe,
+        count=args.count,
+        output=args.output,
+        seed=args.seed,
+        cache_dir=args.cache_dir,
     ),
     "clean": lambda args: _cmd_clean(args.recipe, cache_dir=args.cache_dir),
 }

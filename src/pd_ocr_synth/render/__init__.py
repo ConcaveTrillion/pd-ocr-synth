@@ -14,14 +14,22 @@ later commits this milestone.
 
 from __future__ import annotations
 
-from pd_ocr_synth.render.context import RenderContext
-from pd_ocr_synth.render.sample import RenderedSample
+from pd_ocr_synth.render.context import RenderContext, branched_seed
+from pd_ocr_synth.render.sample import GlyphRun, RenderedSample
 from pd_ocr_synth.render.sampling import sample_color, sample_value, weighted_choice
-from pd_ocr_synth.render.word_crop import render_word_crop
+from pd_ocr_synth.render.word_crop import (
+    MissingGlyphError,
+    RenderError,
+    render_word_crop,
+)
 
 __all__ = [
+    "GlyphRun",
+    "MissingGlyphError",
     "RenderContext",
+    "RenderError",
     "RenderedSample",
+    "branched_seed",
     "render_word_crop",
     "sample_color",
     "sample_value",

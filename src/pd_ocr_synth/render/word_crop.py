@@ -15,6 +15,7 @@ The renderer assumes ``shaping_engine: harfbuzz``. Pillow-only fallback
 
 from __future__ import annotations
 
+from pathlib import Path
 from random import Random
 from typing import TYPE_CHECKING
 
@@ -22,6 +23,7 @@ import freetype
 import uharfbuzz as hb
 from PIL import Image
 
+from pd_ocr_synth.fonts import open_font
 from pd_ocr_synth.render.context import RenderContext
 from pd_ocr_synth.render.sample import GlyphRun, RenderedSample
 from pd_ocr_synth.render.sampling import sample_color, sample_value
@@ -35,8 +37,29 @@ if TYPE_CHECKING:
 _DEFAULT_FEATURES: dict[str, bool] = {"liga": True, "calt": True}
 
 
+# Cache codepoint sets per resolved font path so the per-sample
+# coverage check is O(1) after the first probe.
+_COVERAGE_CACHE: dict[str, frozenset[int]] = {}
+
+
 class RenderError(Exception):
     """Raised when a sample cannot be rendered (e.g. all glyphs missing)."""
+
+
+class MissingGlyphError(RenderError):
+    """Raised when the chosen font does not cover one of the input codepoints.
+
+    The dataset loop catches this and records ``missing_glyph`` as the
+    skip reason in the manifest (per docs/specs/06-rendering.md and
+    docs/roadmap/05-rendering.md).
+    """
+
+    def __init__(self, text: str, font_path: Path, missing: set[int]) -> None:
+        self.text = text
+        self.font_path = font_path
+        self.missing = missing
+        codepoints = ", ".join(f"U+{cp:04X}" for cp in sorted(missing))
+        super().__init__(f"font {font_path.name} does not cover {codepoints} for text {text!r}")
 
 
 def render_word_crop(
@@ -45,7 +68,16 @@ def render_word_crop(
     recipe: Recipe,
     ctx: RenderContext,
 ) -> RenderedSample:
-    """Render ``text`` as one tight word-crop sample."""
+    """Render ``text`` as one tight word-crop sample.
+
+    Raises:
+        MissingGlyphError: if the picked font doesn't cover every
+            codepoint in ``text``. (Pre-shape: skips the cost of the
+            HarfBuzz call when we already know it would emit
+            ``.notdef`` glyphs.)
+        RenderError: for other render failures (no usable fonts,
+            shaping returned no glyphs).
+    """
 
     font = _pick_font(recipe, ctx.rng)
     font_size_pt = float(sample_value(recipe.rendering.font_size_pt, ctx.rng))
@@ -53,6 +85,12 @@ def render_word_crop(
     ink = sample_color(recipe.rendering.ink_color, ctx.rng)
     bg = sample_color(recipe.rendering.background_color, ctx.rng)
     padding = int(sample_value(recipe.layout.padding_px or 0, ctx.rng))
+
+    # Codepoint-coverage check before we spin up shaping. Cheaper to
+    # skip a missing-glyph sample here than to render a row of tofu.
+    missing = _missing_codepoints(font.path, text)
+    if missing:
+        raise MissingGlyphError(text, font.path, missing)
 
     handles = ctx.font_handles(font.path)
     pixel_size = max(1, int(round(font_size_pt * dpi / 72.0)))
@@ -81,6 +119,22 @@ def render_word_crop(
 # ---------------------------------------------------------------------------
 # Font selection
 # ---------------------------------------------------------------------------
+
+
+def _missing_codepoints(font_path: Path, text: str) -> set[int]:
+    """Return codepoints in ``text`` not covered by ``font_path``.
+
+    The chosen font's full codepoint set is cached on the first probe
+    so subsequent samples are a cheap set-difference.
+    """
+
+    key = str(font_path.resolve())
+    coverage = _COVERAGE_CACHE.get(key)
+    if coverage is None:
+        info = open_font(font_path)
+        coverage = info.codepoints
+        _COVERAGE_CACHE[key] = coverage
+    return {ord(ch) for ch in text if ord(ch) not in coverage}
 
 
 def _pick_font(recipe: Recipe, rng: Random):
