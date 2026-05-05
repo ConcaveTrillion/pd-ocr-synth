@@ -141,3 +141,127 @@ def test_preview_default_count_is_50_helper() -> None:
     from pd_ocr_synth.render.preview import DEFAULT_PREVIEW_COUNT
 
     assert DEFAULT_PREVIEW_COUNT == 50
+
+
+# ---------------------------------------------------------------------------
+# Parallelism / worker count
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_workers_default_is_sane() -> None:
+    """Auto-resolved worker count must respect the documented bounds.
+
+    Per the M05 follow-up: default = ``max(1, min(cpu_count - 1, 8))``.
+    Asserting the range rather than a single value keeps the test
+    portable across dev boxes (1-core CI VMs through 32-core
+    workstations).
+    """
+
+    import os
+
+    from pd_ocr_synth.render.preview import resolve_workers
+
+    auto = resolve_workers(None)
+    cpu = os.cpu_count() or 1
+    assert auto >= 1
+    assert auto <= min(max(cpu, 1), 8)
+    if cpu >= 3:
+        # Multi-core: we leave one core free.
+        assert auto <= cpu - 1
+
+
+def test_resolve_workers_explicit_override_is_clamped_positive() -> None:
+    from pd_ocr_synth.render.preview import resolve_workers
+
+    assert resolve_workers(1) == 1
+    assert resolve_workers(2) == 2
+    assert resolve_workers(99) == 99  # explicit override: trust the user
+    # Defensive clamp — we guard non-positive at the CLI layer too,
+    # but the helper itself should never return < 1.
+    assert resolve_workers(0) == 1
+
+
+def test_preview_parallel_matches_serial_byte_for_byte(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The load-bearing determinism test for parallelism.
+
+    Same recipe + seed + count, run once with ``--workers 1`` and
+    once with ``--workers 4`` against fresh output directories. PNG
+    bytes for each ``images/<seed>_<index>.png`` must match exactly,
+    and manifest lines must match when sorted by index. Stats too.
+    """
+
+    rp = _setup(tmp_path)
+    serial_out = tmp_path / "serial-out"
+    parallel_out = tmp_path / "parallel-out"
+
+    rc1 = main(
+        [
+            "preview",
+            str(rp),
+            "--count",
+            "8",
+            "--output",
+            str(serial_out),
+            "--seed",
+            "13",
+            "--workers",
+            "1",
+        ]
+    )
+    assert rc1 == 0, capsys.readouterr().err
+
+    rc2 = main(
+        [
+            "preview",
+            str(rp),
+            "--count",
+            "8",
+            "--output",
+            str(parallel_out),
+            "--seed",
+            "13",
+            "--workers",
+            "4",
+        ]
+    )
+    assert rc2 == 0, capsys.readouterr().err
+
+    # Same set of PNG filenames (same seed + same indices).
+    serial_pngs = {p.name: p for p in (serial_out / "images").glob("*.png")}
+    parallel_pngs = {p.name: p for p in (parallel_out / "images").glob("*.png")}
+    assert serial_pngs.keys() == parallel_pngs.keys()
+    assert len(serial_pngs) == 8
+
+    # Byte-equal images per index.
+    for name in serial_pngs:
+        assert serial_pngs[name].read_bytes() == parallel_pngs[name].read_bytes(), (
+            f"png mismatch at {name} between workers=1 and workers=4"
+        )
+
+    # Manifest equality after sorting by index. Workers may finish
+    # in any order, but the writer assembles the manifest in sample-
+    # index order — so the lines should already be in lockstep.
+    serial_records = [
+        json.loads(line)
+        for line in (serial_out / "manifest.jsonl").read_text().splitlines()
+        if line
+    ]
+    parallel_records = [
+        json.loads(line)
+        for line in (parallel_out / "manifest.jsonl").read_text().splitlines()
+        if line
+    ]
+    serial_sorted = sorted(serial_records, key=lambda r: r["index"])
+    parallel_sorted = sorted(parallel_records, key=lambda r: r["index"])
+    assert serial_sorted == parallel_sorted
+
+    # Stats must match too — same rendered/skipped counts.
+    serial_stats = json.loads((serial_out / "stats.json").read_text())
+    parallel_stats = json.loads((parallel_out / "stats.json").read_text())
+    # ``output_dir`` differs by construction; everything else must match.
+    serial_stats.pop("output_dir")
+    parallel_stats.pop("output_dir")
+    assert serial_stats == parallel_stats

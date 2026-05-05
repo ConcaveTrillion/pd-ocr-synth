@@ -15,11 +15,27 @@ Output layout (per docs/roadmap/05-rendering.md "Validation criteria"):
 Each manifest line carries either ``status: "rendered"`` (with the
 full ground-truth payload) or ``status: "skipped"`` with a
 ``reason`` (currently ``missing_glyph`` or ``render_error``).
+
+## Parallelism
+
+When ``workers > 1`` the per-sample render fan out across a
+``multiprocessing.Pool``. Each worker initializes its own
+``RenderContext`` once via ``Pool(initializer=...)`` so freetype /
+HarfBuzz font handles cache across that worker's samples.
+
+Determinism is preserved: PNG file names and per-sample RNG state
+are both keyed on the sample index (via ``branched_seed`` +
+``RenderContext.reseed_for_sample``), so worker count and
+completion order do not influence output bytes. Manifest lines are
+collected by index and written in sorted order, regardless of the
+order in which workers finish.
 """
 
 from __future__ import annotations
 
 import json
+import multiprocessing
+import os
 import random
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
@@ -41,6 +57,29 @@ if TYPE_CHECKING:
 
 
 DEFAULT_PREVIEW_COUNT = 50
+
+#: Hard cap on the auto-resolved worker count. Eight is a sensible
+#: ceiling for a CPU-bound rendering job — beyond that, contention
+#: on the GIL-released C extensions (freetype / HarfBuzz / Pillow)
+#: and disk I/O usually outweighs the parallelism win on a dev box.
+_DEFAULT_WORKER_CAP = 8
+
+
+def resolve_workers(requested: int | None) -> int:
+    """Pick a sensible worker count.
+
+    - ``requested is None`` → auto: ``max(1, min(cpu_count - 1, 8))``.
+      We leave one core free on multi-core machines so the dev box
+      stays usable while a large render is in flight.
+    - ``requested`` set → use it verbatim, clamped to ``>= 1``.
+    """
+
+    if requested is not None:
+        return max(1, int(requested))
+    cpu_count = os.cpu_count() or 1
+    if cpu_count <= 2:
+        return max(1, cpu_count)
+    return max(1, min(cpu_count - 1, _DEFAULT_WORKER_CAP))
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,12 +105,20 @@ def run_preview(
     count: int = DEFAULT_PREVIEW_COUNT,
     seed: int | None = None,
     cache_dir: Path | None = None,
+    workers: int = 1,
 ) -> PreviewStats:
     """Render ``count`` samples from ``recipe`` into ``output_dir``.
 
     The seed defaults to the recipe seed; pass ``seed=...`` to override.
     Cache root defaults to ``$PD_OCR_SYNTH_CACHE`` / the per-user cache
     if ``cache_dir`` is omitted.
+
+    ``workers`` defaults to 1 (in-process serial path; matches the
+    pre-parallelism behavior). When ``workers > 1`` the per-sample
+    render fans out across a ``multiprocessing.Pool``. Output is
+    deterministic regardless of worker count: PNG file names and
+    per-sample RNG state are keyed on the sample index, and manifest
+    lines are written in sample-index order.
     """
 
     if recipe.layout.mode != "word_crops":
@@ -99,24 +146,29 @@ def run_preview(
     pick_rng = random.Random(effective_seed ^ 0xC0FFEE)
     chosen: list[str] = [pick_rng.choice(tokens) for _ in range(count)]
 
-    render_ctx = RenderContext.for_seed(effective_seed)
+    worker_count = max(1, int(workers))
+    if worker_count == 1:
+        records = _render_serial(
+            chosen,
+            recipe=recipe,
+            images_dir=images_dir,
+            seed=effective_seed,
+        )
+    else:
+        records = _render_parallel(
+            chosen,
+            recipe_path=recipe.source_path,
+            images_dir=images_dir,
+            seed=effective_seed,
+            workers=worker_count,
+        )
 
-    manifest_path = output_dir / "manifest.jsonl"
     rendered = 0
     skipped = 0
     skip_reasons: dict[str, int] = {}
-
+    manifest_path = output_dir / "manifest.jsonl"
     with manifest_path.open("w", encoding="utf-8") as manifest:
-        for index, token in enumerate(chosen):
-            render_ctx.reseed_for_sample(index)
-            record = _render_one(
-                token,
-                index=index,
-                recipe=recipe,
-                ctx=render_ctx,
-                images_dir=images_dir,
-                seed=effective_seed,
-            )
+        for record in records:  # already in sample-index order
             if record["status"] == "rendered":
                 rendered += 1
             else:
@@ -139,6 +191,136 @@ def run_preview(
         encoding="utf-8",
     )
     return stats
+
+
+# ---------------------------------------------------------------------------
+# Serial path (workers == 1) — kept identical to the pre-parallelism flow
+# so single-worker stays simple and debuggable (no Pool overhead, full
+# tracebacks, no fork dance).
+# ---------------------------------------------------------------------------
+
+
+def _render_serial(
+    chosen: Sequence[str],
+    *,
+    recipe: Recipe,
+    images_dir: Path,
+    seed: int,
+) -> list[dict]:
+    render_ctx = RenderContext.for_seed(seed)
+    out: list[dict] = []
+    for index, token in enumerate(chosen):
+        render_ctx.reseed_for_sample(index)
+        out.append(
+            _render_one(
+                token,
+                index=index,
+                recipe=recipe,
+                ctx=render_ctx,
+                images_dir=images_dir,
+                seed=seed,
+            )
+        )
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Parallel path (workers > 1) — multiprocessing.Pool with imap_unordered.
+# Each worker loads the recipe once via the pool initializer and builds
+# its own RenderContext (font handles are not safe to share across
+# processes). Records come back keyed by sample index and are sorted
+# before manifest writing, so manifest order is independent of worker
+# completion order.
+# ---------------------------------------------------------------------------
+
+
+# Per-worker module globals populated by ``_worker_init``. Keeping the
+# heavy state out of the per-task payload means each ``imap`` call
+# only ships a tiny ``(index, token)`` tuple to the worker.
+_WORKER_RECIPE: Recipe | None = None
+_WORKER_CTX: RenderContext | None = None
+_WORKER_IMAGES_DIR: Path | None = None
+_WORKER_SEED: int = 0
+
+
+def _worker_init(recipe_path: str, seed: int, images_dir: str) -> None:
+    """Pool initializer — runs once per worker process.
+
+    Re-loads the recipe from disk inside the worker rather than
+    relying on pickle to copy it. Same end state, more explicit, and
+    matches how the worker would naturally be re-entered if we ever
+    swap to spawn-based pools on a non-fork platform.
+    """
+
+    # Imported here so the parent process doesn't pay yaml/pydantic
+    # startup cost when running serially.
+    from pd_ocr_synth.recipe import load_recipe
+
+    global _WORKER_RECIPE, _WORKER_CTX, _WORKER_IMAGES_DIR, _WORKER_SEED
+    _WORKER_RECIPE = load_recipe(recipe_path)
+    _WORKER_CTX = RenderContext.for_seed(seed)
+    _WORKER_IMAGES_DIR = Path(images_dir)
+    _WORKER_SEED = seed
+
+
+def _worker_render(payload: tuple[int, str]) -> tuple[int, dict]:
+    index, token = payload
+    assert _WORKER_RECIPE is not None
+    assert _WORKER_CTX is not None
+    assert _WORKER_IMAGES_DIR is not None
+
+    _WORKER_CTX.reseed_for_sample(index)
+    record = _render_one(
+        token,
+        index=index,
+        recipe=_WORKER_RECIPE,
+        ctx=_WORKER_CTX,
+        images_dir=_WORKER_IMAGES_DIR,
+        seed=_WORKER_SEED,
+    )
+    return index, record
+
+
+def _render_parallel(
+    chosen: Sequence[str],
+    *,
+    recipe_path: Path,
+    images_dir: Path,
+    seed: int,
+    workers: int,
+) -> list[dict]:
+    payloads = list(enumerate(chosen))
+    # Per-record slot keyed by sample index, so we can write the
+    # manifest in deterministic order regardless of completion order.
+    results: list[dict | None] = [None] * len(payloads)
+
+    # Use ``fork`` where available (Linux) — it's both faster and lets
+    # the child see any module-level state the parent already set up.
+    # Fall back to the platform default elsewhere.
+    ctx = (
+        multiprocessing.get_context("fork")
+        if "fork" in multiprocessing.get_all_start_methods()
+        else multiprocessing.get_context()
+    )
+
+    with ctx.Pool(
+        processes=workers,
+        initializer=_worker_init,
+        initargs=(str(recipe_path), seed, str(images_dir)),
+    ) as pool:
+        # ``chunksize=1`` keeps load balancing tight; per-sample render
+        # is heavy enough (font shaping + rasterization + PNG encode)
+        # that the per-task IPC overhead is negligible.
+        for index, record in pool.imap_unordered(_worker_render, payloads, chunksize=1):
+            results[index] = record
+
+    # All slots must be filled; assert defensively in case a worker
+    # raised and ``imap_unordered`` swallowed it (shouldn't happen,
+    # but it's a quick sanity check).
+    for i, rec in enumerate(results):
+        if rec is None:  # pragma: no cover - defensive
+            raise RenderError(f"worker pool produced no record for sample index {i}")
+    return [rec for rec in results if rec is not None]
 
 
 def _render_one(
@@ -189,4 +371,9 @@ def _render_one(
     }
 
 
-__all__: Sequence[str] = ("PreviewStats", "DEFAULT_PREVIEW_COUNT", "run_preview")
+__all__: Sequence[str] = (
+    "DEFAULT_PREVIEW_COUNT",
+    "PreviewStats",
+    "resolve_workers",
+    "run_preview",
+)

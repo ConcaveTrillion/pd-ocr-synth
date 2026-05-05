@@ -348,17 +348,24 @@ def _cmd_preview(
     output: str | None,
     seed: int | None,
     cache_dir: str | None,
+    workers: int | None,
 ) -> int:
     """Render N samples to a preview directory (no degradation; M05).
 
     Default count: ``DEFAULT_PREVIEW_COUNT`` (50).
     Default output: ``./preview/<recipe-name>/``.
+    Default workers: ``max(1, min(cpu_count - 1, 8))`` — see
+    :func:`pd_ocr_synth.render.preview.resolve_workers`.
     """
 
     from pd_ocr_synth.recipe import RecipeLoadError, load_recipe
     from pd_ocr_synth.recipe_search import RecipeNotFoundError, resolve_recipe
     from pd_ocr_synth.render import RenderError
-    from pd_ocr_synth.render.preview import DEFAULT_PREVIEW_COUNT, run_preview
+    from pd_ocr_synth.render.preview import (
+        DEFAULT_PREVIEW_COUNT,
+        resolve_workers,
+        run_preview,
+    )
 
     try:
         path = resolve_recipe(recipe_arg)
@@ -381,12 +388,18 @@ def _cmd_preview(
         print(f"error: --count must be positive (got {sample_count})", file=sys.stderr)
         return USAGE_EXIT
 
+    if workers is not None and workers <= 0:
+        print(f"error: --workers must be positive (got {workers})", file=sys.stderr)
+        return USAGE_EXIT
+    worker_count = resolve_workers(workers)
+
     output_dir = Path(output).expanduser() if output else Path("preview") / recipe.name
     cache_root = Path(cache_dir).expanduser() if cache_dir else None
 
-    print(f"recipe: {recipe.name} ({path})")
-    print(f"output: {output_dir}")
-    print(f"count:  {sample_count}")
+    print(f"recipe:  {recipe.name} ({path})")
+    print(f"output:  {output_dir}")
+    print(f"count:   {sample_count}")
+    print(f"workers: {worker_count}")
 
     try:
         stats = run_preview(
@@ -395,6 +408,7 @@ def _cmd_preview(
             count=sample_count,
             seed=seed,
             cache_dir=cache_root,
+            workers=worker_count,
         )
     except RenderError as exc:
         print(f"error: render failed: {exc}", file=sys.stderr)
@@ -510,6 +524,7 @@ _IMPLEMENTED_DISPATCH = {
         output=args.output,
         seed=args.seed,
         cache_dir=args.cache_dir,
+        workers=args.workers,
     ),
     "clean": lambda args: _cmd_clean(args.recipe, cache_dir=args.cache_dir),
 }
