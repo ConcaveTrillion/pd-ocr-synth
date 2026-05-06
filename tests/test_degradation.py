@@ -26,7 +26,7 @@ from PIL import Image
 
 from pd_ocr_synth.degradation import REGISTRY, DegradationError, apply_degradation
 from pd_ocr_synth.recipe.models import DegradationStage
-from pd_ocr_synth.render.sample import GlyphRun, RenderedSample, WordBox
+from pd_ocr_synth.render.sample import GlyphRun, LineBox, ParagraphBox, RenderedSample, WordBox
 
 # ---------------------------------------------------------------------------
 # fixtures
@@ -591,3 +591,200 @@ def test_pixel_stages_preserve_geometry_with_empty_optional_fields() -> None:
     assert out.glyph_runs == ()
     assert out.word_boxes == ()
     assert out.bbox == base.bbox
+
+
+# ---------------------------------------------------------------------------
+# M09: geometric stages must propagate the affine to every box collection
+# ---------------------------------------------------------------------------
+#
+# Per ``docs/roadmap/09-detection-mode.md`` § "Residual M09 work →
+# Geometric-stage detection-bbox propagation": ``_skew`` (and any
+# future geometric stage) must rotate ``word_boxes`` / ``line_boxes`` /
+# ``paragraph_boxes`` alongside ``bbox`` / ``glyph_runs``, otherwise a
+# detection-mode recipe with `skew` enabled will write polygons that
+# no longer match the rendered text. This is a complementary tripwire
+# to the pixel-stage invariant test above.
+
+
+def _make_paragraph_sample() -> RenderedSample:
+    """Sample populated with all four bbox collections.
+
+    Mimics what `paragraphs` / `pages` modes feed into the degradation
+    pipeline: a paragraph containing two lines, each with two words,
+    each word with one glyph cluster. Coordinates are arbitrary but
+    consistent (every word fits inside its line, every line fits
+    inside the paragraph, every box fits inside ``sample.bbox``) so
+    the test can lock containment invariants pre- and post-skew.
+    """
+
+    width, height = 128, 64
+    bg = (240, 235, 220)
+    ink = (20, 18, 16)
+    img = Image.new("RGB", (width, height), color=bg)
+    pad = 8
+    inked = Image.new("RGB", (width - 2 * pad, height - 2 * pad), color=ink)
+    img.paste(inked, (pad, pad))
+    bbox = (pad, pad, width - pad, height - pad)
+
+    # Two lines vertically stacked inside the paragraph bbox.
+    line0_bbox = (pad, pad, width - pad, pad + 24)
+    line1_bbox = (pad, pad + 28, width - pad, height - pad)
+
+    # Two words per line, side by side.
+    word_a = WordBox(text="alpha", bbox=(pad, pad, pad + 48, pad + 24))
+    word_b = WordBox(text="beta", bbox=(pad + 56, pad, width - pad, pad + 24))
+    word_c = WordBox(text="gamma", bbox=(pad, pad + 28, pad + 56, height - pad))
+    word_d = WordBox(text="delta", bbox=(pad + 64, pad + 28, width - pad, height - pad))
+
+    line_boxes = (
+        LineBox(text="alpha beta", bbox=line0_bbox),
+        LineBox(text="gamma delta", bbox=line1_bbox),
+    )
+    paragraph_boxes = (ParagraphBox(text="alpha beta\ngamma delta", bbox=bbox),)
+    glyph_runs = (
+        GlyphRun(cluster=0, bbox=word_a.bbox),
+        GlyphRun(cluster=1, bbox=word_b.bbox),
+        GlyphRun(cluster=2, bbox=word_c.bbox),
+        GlyphRun(cluster=3, bbox=word_d.bbox),
+    )
+
+    return RenderedSample(
+        text="alpha beta\ngamma delta",
+        image=img,
+        bbox=bbox,
+        font_path=None,  # type: ignore[arg-type]  # not used by pipeline
+        font_size_pt=14.0,
+        dpi=300,
+        ink_color=ink,
+        background_color=bg,
+        glyph_runs=glyph_runs,
+        word_boxes=(word_a, word_b, word_c, word_d),
+        line_boxes=line_boxes,
+        paragraph_boxes=paragraph_boxes,
+    )
+
+
+def _bbox_contains(
+    outer: tuple[int, int, int, int], inner: tuple[int, int, int, int], *, margin: int = 0
+) -> bool:
+    """True if ``inner`` lies inside ``outer`` (with ``margin`` slack)."""
+
+    ox0, oy0, ox1, oy1 = outer
+    ix0, iy0, ix1, iy1 = inner
+    return (
+        ix0 >= ox0 - margin and iy0 >= oy0 - margin and ix1 <= ox1 + margin and iy1 <= oy1 + margin
+    )
+
+
+def test_skew_propagates_to_every_box_collection() -> None:
+    """``_skew`` must rotate every bbox collection, not just bbox+glyph_runs.
+
+    Lock the M09 residual contract: a detection-mode recipe that
+    enables `skew` must still emit per-word / per-line / per-paragraph
+    polygons that line up with the rendered text. Each collection's
+    bboxes should (a) survive (no entries dropped), (b) actually move
+    (the affine ran), and (c) preserve the original containment
+    relationships (words ⊆ lines ⊆ paragraphs ⊆ sample.bbox) within
+    a small slack to absorb axis-aligned-bounding-of-rotated-quad
+    rounding.
+    """
+
+    base = _make_paragraph_sample()
+    stage = _stage("skew", probability=1.0, angle_deg=6.0, fill="background")
+    out = apply_degradation(base, [stage], rng=Random(0))
+
+    # (a) Survival: counts unchanged.
+    assert len(out.word_boxes) == len(base.word_boxes)
+    assert len(out.line_boxes) == len(base.line_boxes)
+    assert len(out.paragraph_boxes) == len(base.paragraph_boxes)
+    assert len(out.glyph_runs) == len(base.glyph_runs)
+
+    # Texts round-trip — only bboxes should mutate.
+    assert [w.text for w in out.word_boxes] == [w.text for w in base.word_boxes]
+    assert [line.text for line in out.line_boxes] == [line.text for line in base.line_boxes]
+    assert [p.text for p in out.paragraph_boxes] == [p.text for p in base.paragraph_boxes]
+
+    # (b) Bboxes actually moved. PIL expand=True grows the canvas, so
+    # *every* box should land at a new coordinate post-skew.
+    assert out.image.size != base.image.size
+    for old, new in zip(base.word_boxes, out.word_boxes, strict=True):
+        assert old.bbox != new.bbox
+    for old, new in zip(base.line_boxes, out.line_boxes, strict=True):
+        assert old.bbox != new.bbox
+    for old, new in zip(base.paragraph_boxes, out.paragraph_boxes, strict=True):
+        assert old.bbox != new.bbox
+
+    # (c) Containment relationships survive within a small slack. The
+    # axis-aligned bbox of a rotated rectangle is strictly larger than
+    # the rotated rectangle itself, so child boxes can spill past their
+    # parents' axis-aligned hulls by a few pixels at small angles. Six
+    # pixels is a generous upper bound for 6° on a 128 × 64 canvas.
+    margin = 6
+    paragraph_bbox = out.paragraph_boxes[0].bbox
+
+    # word_boxes 0..1 belong to line 0; word_boxes 2..3 to line 1.
+    line0, line1 = out.line_boxes
+    word_to_line = {0: line0, 1: line0, 2: line1, 3: line1}
+    for idx, word in enumerate(out.word_boxes):
+        line = word_to_line[idx]
+        assert _bbox_contains(line.bbox, word.bbox, margin=margin), (
+            f"word {idx} {word.bbox!r} no longer inside line {line.bbox!r}"
+        )
+
+    for line in out.line_boxes:
+        assert _bbox_contains(paragraph_bbox, line.bbox, margin=margin), (
+            f"line {line.bbox!r} no longer inside paragraph {paragraph_bbox!r}"
+        )
+
+    # Sample.bbox should still enclose every word.
+    for word in out.word_boxes:
+        assert _bbox_contains(out.bbox, word.bbox, margin=margin), (
+            f"word {word.bbox!r} no longer inside sample.bbox {out.bbox!r}"
+        )
+
+    # And every box must land on the new (expanded) canvas.
+    nw, nh = out.image.size
+    for collection in (out.word_boxes, out.line_boxes, out.paragraph_boxes):
+        for entry in collection:
+            x0, y0, x1, y1 = entry.bbox
+            assert 0 <= x0 < x1 <= nw
+            assert 0 <= y0 < y1 <= nh
+
+
+def test_skew_zero_angle_preserves_every_box_collection() -> None:
+    """Zero-angle ``_skew`` is a strict noop, including for new collections."""
+
+    base = _make_paragraph_sample()
+    stage = _stage("skew", probability=1.0, angle_deg=0.0)
+    out = apply_degradation(base, [stage], rng=Random(0))
+    assert out.bbox == base.bbox
+    assert out.glyph_runs == base.glyph_runs
+    assert out.word_boxes == base.word_boxes
+    assert out.line_boxes == base.line_boxes
+    assert out.paragraph_boxes == base.paragraph_boxes
+
+
+def test_skew_preserves_empty_optional_box_collections() -> None:
+    """``_skew`` on a word-crops-style sample must not invent box collections.
+
+    M07 word-crops mode emits ``word_boxes`` / ``line_boxes`` /
+    ``paragraph_boxes`` empty by construction (a single word *is* the
+    sample). A geometric stage applied to such a sample must leave
+    them empty — fabricating entries here would propagate downstream
+    as bogus annotations.
+    """
+
+    base = _make_sample()  # default: empty word/line/paragraph collections
+    assert base.word_boxes == ()
+    assert base.line_boxes == ()
+    assert base.paragraph_boxes == ()
+
+    stage = _stage("skew", probability=1.0, angle_deg=4.0)
+    out = apply_degradation(base, [stage], rng=Random(0))
+
+    assert out.word_boxes == ()
+    assert out.line_boxes == ()
+    assert out.paragraph_boxes == ()
+    # And the existing populated collections still got rotated.
+    assert out.bbox != base.bbox
+    assert out.glyph_runs != base.glyph_runs

@@ -68,15 +68,17 @@ Spec: [`06-rendering.md`](../specs/06-rendering.md) +
 
 - [~] Geometric stages update bboxes correctly: `skew`, `perspective`,
       `scale`. (`skew` is the only geometric stage registered today
-      (`builtins.py:542`); it rotates `sample.bbox` and
-      `sample.glyph_runs` corner-by-corner around the expanded canvas
-      and locks the round-trip in
+      (`builtins.py:542`); it rotates `sample.bbox`,
+      `sample.glyph_runs`, `word_boxes`, `line_boxes`, and
+      `paragraph_boxes` corner-by-corner around the expanded canvas.
+      Round-trip locked in
       `tests/test_degradation.py::test_skew_updates_bbox_and_keeps_text_inside`
-      / `::test_skew_glyph_runs_track_image_resize`. `perspective` and
-      `scale` are not yet registered. `skew` does **not** propagate
-      through `word_boxes` / `line_boxes` / `paragraph_boxes` — see
-      "Residual M09 work → Geometric-stage detection-bbox propagation"
-      below.)
+      / `::test_skew_glyph_runs_track_image_resize`; the multi-
+      collection contract is locked in
+      `::test_skew_propagates_to_every_box_collection` (the M09
+      residual). `perspective` and `scale` are not yet registered;
+      they should land with full bbox propagation built in from the
+      start.)
 - [x] Pixel-only stages pass bboxes through unchanged. (`6165e58` locks
       the invariant for every registered pixel stage —
       `tests/test_degradation.py::test_pixel_stages_preserve_bbox_glyph_runs_and_word_boxes`
@@ -192,14 +194,17 @@ future small chunk.
 
 ### Geometric-stage detection-bbox propagation
 
-- [ ] `_skew` updates `sample.bbox` and `sample.glyph_runs` but does
-      **not** rotate `word_boxes` / `line_boxes` / `paragraph_boxes`.
-      Detection mode currently writes pre-skew per-line / per-word
-      polygons even when a `skew` stage is enabled. Either (a) extend
-      `_skew` to apply the same affine to every box collection, or
-      (b) document that detection-mode recipes should not use
-      geometric degradation stages. Option (a) is the right answer —
-      it's a small extension to the existing corner-rotation helper.
+- [x] `_skew` now rotates `word_boxes`, `line_boxes`, and
+      `paragraph_boxes` alongside `sample.bbox` and `glyph_runs` via
+      the same per-box corner-rotation helper, so detection mode emits
+      polygons that line up with the rendered text even when a `skew`
+      stage is enabled. Lock test:
+      `tests/test_degradation.py::test_skew_propagates_to_every_box_collection`
+      (asserts survival, mutation, parent/child containment within a
+      6-px slack to absorb axis-aligned-bounding-of-rotated-quad
+      rounding). Empty-collection invariance is locked in
+      `::test_skew_preserves_empty_optional_box_collections` so
+      word-crops samples don't grow phantom annotations under skew.
       `perspective` and `scale` (currently unregistered) should land
       with bbox propagation built in from the start.
 

@@ -448,12 +448,13 @@ def _grayscale(image: Image.Image, options: dict[str, Any], rng: Random) -> Imag
 
 
 def _skew(sample: RenderedSample, options: dict[str, Any], rng: Random) -> RenderedSample:
-    """Affine rotation around the image center; updates bbox / glyph_runs.
+    """Affine rotation around the image center; updates every bbox collection.
 
     The new image is sized to fit the rotated content (PIL's
-    ``expand=True``), so the bbox is translated by the same offset the
-    rotation applied. Glyph runs follow the same rotation matrix so
-    detection-mode bbox tracking still works downstream.
+    ``expand=True``), so each bbox is translated by the same offset the
+    rotation applied. Glyph runs, word boxes, line boxes, and paragraph
+    boxes all follow the same rotation matrix so detection-mode
+    annotations stay aligned with the rendered text downstream.
     """
 
     from dataclasses import replace as dc_replace
@@ -505,7 +506,22 @@ def _skew(sample: RenderedSample, options: dict[str, Any], rng: Random) -> Rende
 
     new_bbox = _rotate_box(sample.bbox)
     new_runs = tuple(dc_replace(g, bbox=_rotate_box(g.bbox)) for g in sample.glyph_runs)
-    return dc_replace(sample, image=new_image, bbox=new_bbox, glyph_runs=new_runs)
+    new_word_boxes = tuple(dc_replace(w, bbox=_rotate_box(w.bbox)) for w in sample.word_boxes)
+    new_line_boxes = tuple(
+        dc_replace(line, bbox=_rotate_box(line.bbox)) for line in sample.line_boxes
+    )
+    new_paragraph_boxes = tuple(
+        dc_replace(p, bbox=_rotate_box(p.bbox)) for p in sample.paragraph_boxes
+    )
+    return dc_replace(
+        sample,
+        image=new_image,
+        bbox=new_bbox,
+        glyph_runs=new_runs,
+        word_boxes=new_word_boxes,
+        line_boxes=new_line_boxes,
+        paragraph_boxes=new_paragraph_boxes,
+    )
 
 
 def _resolve_fill(fill: Any, sample: RenderedSample) -> tuple[int, int, int]:
