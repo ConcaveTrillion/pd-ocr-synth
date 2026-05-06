@@ -8,6 +8,8 @@ Subcommands wired to date:
 - M07: ``render`` (full dataset → ``pd-ocr-trainer/v1`` recognition).
 - M08: ``publish --dry-run`` (preview HF upload plan; real upload
   lands in a later chunk of M08).
+- M10: ``lint`` (heuristic recipe checks layered on top of
+  ``validate``; see ``docs/roadmap/10-stretch.md``).
 """
 
 from __future__ import annotations
@@ -89,6 +91,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--offline",
         action="store_true",
         help="skip network-touching checks (M03+)",
+    )
+
+    p_lint = subparsers.add_parser(
+        "lint",
+        help="run validate + heuristic lint checks (M10 stretch)",
+    )
+    _add_recipe_arg(p_lint)
+    p_lint.add_argument(
+        "--offline",
+        action="store_true",
+        help="skip network-touching checks (forwarded to validate)",
     )
 
     p_describe = subparsers.add_parser(
@@ -207,6 +220,79 @@ def _cmd_validate(recipe_arg: str, *, offline: bool) -> int:
         print(f"OK: {recipe.name} ({path})")
         return 0
     return VALIDATION_EXIT
+
+
+def _cmd_lint(recipe_arg: str, *, offline: bool) -> int:
+    """Run schema validation followed by heuristic lint checks.
+
+    Exit-code matrix:
+
+    - ``0`` — clean recipe with no warnings (validate + lint both empty).
+    - ``0`` — warnings only; lint warnings never fail the command.
+    - ``2`` — pydantic structural load failure (missing required keys
+      or wrong types). Lint can't usefully run on a recipe that won't
+      even load, so we surface this as a usage-style failure.
+    - ``3`` — recipe loads but ``validate_recipe`` reports errors
+      (e.g. font path missing, mode/output mismatch). Same exit code
+      as the standalone ``validate`` subcommand.
+
+    Lint warnings are layered on top of validate's output: validate
+    warnings appear with their existing codes (e.g. ``layout_key_unused``)
+    and lint warnings appear with ``lint_*`` codes (see
+    :mod:`pd_ocr_synth.lint`). Both go to stdout; only true errors
+    go to stderr.
+    """
+
+    from pd_ocr_synth.lint import lint_recipe
+    from pd_ocr_synth.recipe import RecipeLoadError, load_recipe
+    from pd_ocr_synth.recipe_search import RecipeNotFoundError, resolve_recipe
+    from pd_ocr_synth.validation import validate_recipe
+
+    try:
+        path = resolve_recipe(recipe_arg)
+    except RecipeNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return VALIDATION_EXIT
+
+    try:
+        recipe = load_recipe(path)
+    except RecipeLoadError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        # RecipeLoadError covers I/O + YAML-parse failures and is
+        # legitimately a "validate" failure (exit 3) — the file is
+        # there but unparseable. Pydantic structural failures fall
+        # through to the bare ``Exception`` branch below.
+        return VALIDATION_EXIT
+    except Exception as exc:
+        # pydantic.ValidationError lands here. A recipe missing
+        # required fields can't be linted, so per the M10 spec we
+        # surface this as a usage-style error (exit 2).
+        print(f"error: schema load failed for {path}:", file=sys.stderr)
+        print(str(exc), file=sys.stderr)
+        return USAGE_EXIT
+
+    validation = validate_recipe(recipe, offline=offline)
+    lint = lint_recipe(recipe)
+
+    # Print warnings first (stdout), then errors (stderr). The
+    # ordering means a downstream pipe like ``| grep ERROR`` is
+    # unaffected by warning verbosity.
+    for issue in validation.warnings:
+        print(issue.format())
+    for issue in lint.warnings:
+        print(issue.format())
+    for issue in validation.errors:
+        print(issue.format(), file=sys.stderr)
+
+    if not validation.is_ok:
+        return VALIDATION_EXIT
+
+    n_warnings = len(validation.warnings) + len(lint.warnings)
+    if n_warnings == 0:
+        print(f"OK: {recipe.name} ({path}) — no warnings")
+    else:
+        print(f"OK: {recipe.name} ({path}) — {n_warnings} warning(s); see output above")
+    return 0
 
 
 def _cmd_describe(recipe_arg: str, *, output_format: str) -> int:
@@ -710,6 +796,7 @@ def _cmd_schema(output: str | None) -> int:
 _IMPLEMENTED_DISPATCH = {
     "list": lambda args: _cmd_list(),
     "validate": lambda args: _cmd_validate(args.recipe, offline=args.offline),
+    "lint": lambda args: _cmd_lint(args.recipe, offline=args.offline),
     "describe": lambda args: _cmd_describe(args.recipe, output_format=args.format),
     "init": lambda args: _cmd_init(args.name, dir_=args.dir, force=args.force),
     "schema": lambda args: _cmd_schema(args.output),

@@ -23,6 +23,7 @@ ALL_SUBCOMMANDS = [
     "init",
     "list",
     "validate",
+    "lint",
     "describe",
     "schema",
     "fetch",

@@ -42,9 +42,13 @@ This is only worth doing once render time becomes a bottleneck —
 Captured here as candidates; promote any of them into a real milestone
 if they start mattering:
 
-- **Recipe linter.** Beyond schema validation, flag suspicious
-  patterns: degradation always at probability 1.0, single font, no
-  text transforms when the corpus is in modern spelling.
+- **Recipe linter.** _First chunk landed:_ `pd-ocr-synth lint <recipe>`
+  layered on top of `validate`, with heuristic warnings for
+  `lint_degradation_always_certain`, `lint_single_font`,
+  `lint_no_text_transforms`, `lint_low_sample_count`, and
+  `lint_seed_default`. Future chunks: corpus-language detection
+  (modern-spelling heuristic), per-stage option sanity checks,
+  cross-stage interaction warnings (e.g. `binarize` after `noise`).
 - **Visual regression tests.** A "golden" sample set for the Gaelic
   recipe; CI re-renders and compares to detect accidental changes
   in the rendering or degradation pipeline.
