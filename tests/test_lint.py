@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from pd_ocr_synth.lint import (
+    LINT_CODES,
     SMALL_SAMPLE_THRESHOLD,
     lint_recipe,
 )
@@ -471,3 +472,255 @@ degradation:
         "lint_seed_default",
     }
     assert all(i.severity == "warning" for i in report.warnings)
+
+
+# ---------------------------------------------------------------------------
+# LINT_CODES catalog drift guards
+#
+# ``LINT_CODES`` is the source-of-truth set the spec doc compares against.
+# Both halves of the contract need locking:
+#
+#   1. Every emitted ``code`` must appear in LINT_CODES — a new helper
+#      that adds a code without registering it would silently ship
+#      undocumented behaviour.
+#   2. Every entry in LINT_CODES must be reachable by *some* recipe —
+#      a stale entry (left behind after a helper was removed) would
+#      keep claiming a code the linter no longer emits.
+#
+# (1) is the cheap direction: runtime emission ⊆ catalog. (2) is the
+# stronger guarantee — we exercise it by combining the codes seen across
+# every "this lint fires" test fixture in this module.
+# ---------------------------------------------------------------------------
+
+
+def test_every_emitted_lint_code_is_in_LINT_CODES(
+    tmp_path: Path, writable_font_bytes: bytes
+) -> None:
+    """A recipe that fails every check must only emit codes from LINT_CODES.
+
+    The "fail every check" recipe below intentionally trips every
+    helper — single mandatory font, no text_transforms, count below
+    threshold, seed=0, all-certain degradation. If a future helper
+    introduces a new code without registering it in ``LINT_CODES``,
+    the catalog falls out of sync and the spec drifts; surface here.
+    """
+
+    f1 = tmp_path / "primary.otf"
+    f1.write_bytes(writable_font_bytes)
+    corpus = tmp_path / "seed.txt"
+    corpus.write_text("hi\n", encoding="utf-8")
+    yaml_text = f"""\
+schema_version: 1
+name: dirty-everything
+seed: 0
+output:
+  format: pd-ocr-trainer/v1
+  mode: recognition
+  destination: {tmp_path / "out"}
+  count: 1
+corpus:
+  - type: local
+    path: {corpus}
+fonts:
+  - path: {f1}
+rendering:
+  font_size_pt: 14
+  dpi: 300
+  ink_color: {{r: 0, g: 0, b: 0}}
+  background_color: {{r: 255, g: 255, b: 255}}
+layout:
+  mode: word_crops
+  padding_px: 4
+degradation:
+  - kind: blur
+    probability: 1.0
+"""
+    rp = tmp_path / "recipe.yaml"
+    rp.write_text(yaml_text, encoding="utf-8")
+    recipe = load_recipe(rp)
+    emitted = {i.code for i in lint_recipe(recipe).warnings}
+    leaked = emitted - LINT_CODES
+    assert not leaked, (
+        f"lint_recipe emitted code(s) not in LINT_CODES: {sorted(leaked)}. "
+        "Add them to src/pd_ocr_synth/lint.py:LINT_CODES."
+    )
+
+
+def test_LINT_CODES_has_no_dead_entries(tmp_path: Path, writable_font_bytes: bytes) -> None:
+    """Every code in LINT_CODES must be reachable by at least one recipe.
+
+    Combines the union of codes emitted by every "this lint fires"
+    fixture in this file. If a code is in ``LINT_CODES`` but no
+    fixture can hit it, either a helper was removed (and the entry
+    is stale) or the test coverage is missing — either way, fail.
+
+    This is the stronger half of the contract: it forces test
+    coverage to follow the catalog, not the other way around.
+    """
+
+    f1 = tmp_path / "primary.otf"
+    f1.write_bytes(writable_font_bytes)
+    f2 = tmp_path / "secondary.otf"
+    f2.write_bytes(writable_font_bytes)
+    corpus = tmp_path / "seed.txt"
+    corpus.write_text("hi\n", encoding="utf-8")
+    dest = tmp_path / "out"
+
+    seen: set[str] = set()
+
+    # Trigger 1: all-certain degradation (otherwise-clean recipe).
+    yaml1 = _full_yaml(
+        font=str(f1),
+        font2=str(f2),
+        dest=str(dest),
+        corpus=str(corpus),
+        degradation=(
+            "\ndegradation:\n"
+            "  - kind: blur\n    probability: 1.0\n"
+            "  - kind: noise\n    probability: 1.0\n"
+        ),
+    )
+    rp1 = tmp_path / "r1.yaml"
+    rp1.write_text(yaml1, encoding="utf-8")
+    seen.update(i.code for i in lint_recipe(load_recipe(rp1)).warnings)
+
+    # Trigger 2: single mandatory font.
+    yaml2 = f"""\
+schema_version: 1
+name: lone-font
+seed: 7
+output:
+  format: pd-ocr-trainer/v1
+  mode: recognition
+  destination: {dest}
+  count: 5000
+corpus:
+  - type: local
+    path: {corpus}
+fonts:
+  - path: {f1}
+text_transforms:
+  - normalize_whitespace
+rendering:
+  font_size_pt: 14
+  dpi: 300
+  ink_color: {{r: 0, g: 0, b: 0}}
+  background_color: {{r: 255, g: 255, b: 255}}
+layout:
+  mode: word_crops
+  padding_px: 4
+"""
+    rp2 = tmp_path / "r2.yaml"
+    rp2.write_text(yaml2, encoding="utf-8")
+    seen.update(i.code for i in lint_recipe(load_recipe(rp2)).warnings)
+
+    # Trigger 3: no text_transforms.
+    yaml3 = _full_yaml(
+        font=str(f1),
+        font2=str(f2),
+        dest=str(dest),
+        corpus=str(corpus),
+        text_transforms="\n",
+    )
+    rp3 = tmp_path / "r3.yaml"
+    rp3.write_text(yaml3, encoding="utf-8")
+    seen.update(i.code for i in lint_recipe(load_recipe(rp3)).warnings)
+
+    # Trigger 4: low sample count.
+    yaml4 = _full_yaml(
+        font=str(f1),
+        font2=str(f2),
+        dest=str(dest),
+        corpus=str(corpus),
+        count=SMALL_SAMPLE_THRESHOLD - 1,
+    )
+    rp4 = tmp_path / "r4.yaml"
+    rp4.write_text(yaml4, encoding="utf-8")
+    seen.update(i.code for i in lint_recipe(load_recipe(rp4)).warnings)
+
+    # Trigger 5: default seed=0.
+    yaml5 = _full_yaml(
+        font=str(f1),
+        font2=str(f2),
+        dest=str(dest),
+        corpus=str(corpus),
+        seed=0,
+    )
+    rp5 = tmp_path / "r5.yaml"
+    rp5.write_text(yaml5, encoding="utf-8")
+    seen.update(i.code for i in lint_recipe(load_recipe(rp5)).warnings)
+
+    # Trigger 6: zero-weight font.
+    yaml6 = f"""\
+schema_version: 1
+name: zw
+seed: 7
+output:
+  format: pd-ocr-trainer/v1
+  mode: recognition
+  destination: {dest}
+  count: 5000
+corpus:
+  - type: local
+    path: {corpus}
+fonts:
+  - path: {f1}
+    weight: 1.0
+  - path: {f2}
+    weight: 0.0
+text_transforms:
+  - normalize_whitespace
+rendering:
+  font_size_pt: 14
+  dpi: 300
+  ink_color: {{r: 0, g: 0, b: 0}}
+  background_color: {{r: 255, g: 255, b: 255}}
+layout:
+  mode: word_crops
+  padding_px: 4
+"""
+    rp6 = tmp_path / "r6.yaml"
+    rp6.write_text(yaml6, encoding="utf-8")
+    seen.update(i.code for i in lint_recipe(load_recipe(rp6)).warnings)
+
+    # Trigger 7: all fonts optional.
+    yaml7 = f"""\
+schema_version: 1
+name: ao
+seed: 7
+output:
+  format: pd-ocr-trainer/v1
+  mode: recognition
+  destination: {dest}
+  count: 5000
+corpus:
+  - type: local
+    path: {corpus}
+fonts:
+  - path: {f1}
+    optional: true
+  - path: {f2}
+    optional: true
+text_transforms:
+  - normalize_whitespace
+rendering:
+  font_size_pt: 14
+  dpi: 300
+  ink_color: {{r: 0, g: 0, b: 0}}
+  background_color: {{r: 255, g: 255, b: 255}}
+layout:
+  mode: word_crops
+  padding_px: 4
+"""
+    rp7 = tmp_path / "r7.yaml"
+    rp7.write_text(yaml7, encoding="utf-8")
+    seen.update(i.code for i in lint_recipe(load_recipe(rp7)).warnings)
+
+    # Every catalog entry must show up in the union.
+    unreachable = LINT_CODES - seen
+    assert not unreachable, (
+        f"LINT_CODES has entries not produced by any test fixture: "
+        f"{sorted(unreachable)}. Either remove the stale entry from "
+        "src/pd_ocr_synth/lint.py:LINT_CODES, or add a fixture that "
+        "exercises the corresponding helper."
+    )

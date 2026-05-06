@@ -29,6 +29,26 @@ from pd_ocr_synth.validation import ValidationIssue, ValidationReport
 SMALL_SAMPLE_THRESHOLD = 100
 
 
+# Catalog of every issue ``code`` :func:`lint_recipe` can emit. This
+# is the source-of-truth the spec doc (``docs/specs/01-cli.md``) and
+# the meta-test in ``tests/test_spec_docs.py`` both compare against;
+# behavioural tests in ``tests/test_lint.py`` also assert equality
+# with the codes actually produced when each lint trigger fires. Add
+# a new code here whenever a new ``_lint_*`` helper is added below,
+# and document it in spec 01's "Lint codes" section.
+LINT_CODES: frozenset[str] = frozenset(
+    {
+        "lint_degradation_always_certain",
+        "lint_single_font",
+        "lint_no_text_transforms",
+        "lint_low_sample_count",
+        "lint_seed_default",
+        "lint_zero_weight_font",
+        "lint_all_optional_fonts",
+    }
+)
+
+
 def lint_recipe(recipe: Recipe) -> ValidationReport:
     """Return a :class:`ValidationReport` containing only lint warnings.
 

@@ -139,6 +139,33 @@ The positional `output_dir` is required *unless* `--global` or
 | `--recipe-sha PREFIX` | Only show entries whose `recipe_sha` starts with this hex prefix (case-insensitive); entries with a null sha are excluded |
 | `--summary` | Print aggregate statistics over the matched entries instead of the per-row table; combine with `--json` for a single JSON object |
 
+## Lint codes
+
+Every issue surfaced by `lint <recipe>` (beyond the validation errors
+forwarded from `validate`) carries a stable `code` field. The full
+catalog is below — these codes appear verbatim in the human-readable
+output, the `--json` payload, and structured logs, so they're safe to
+grep / filter on.
+
+A meta-test in `tests/test_spec_docs.py` enforces that this table and
+the `LINT_CODES` constant in `src/pd_ocr_synth/lint.py` stay in sync:
+adding a new lint helper without listing it here (or vice-versa) is a
+hard test failure.
+
+| Code | Trigger |
+|------|---------|
+| `lint_degradation_always_certain` | Every degradation stage has `probability=1.0`; every sample receives identical augmentation, defeating the point of randomized augmentation. |
+| `lint_single_font` | Recipe declares one or zero fonts; models trained on a single typeface tend to overfit to its rasterization quirks. |
+| `lint_no_text_transforms` | Recipe declares no `text_transforms`; suspicious for historical-typography targets where the corpus is in modern spelling. |
+| `lint_low_sample_count` | `output.count` is below 100, the suggested minimum for a useful training run; usually a forgotten `--count` flag or misconfigured recipe. |
+| `lint_seed_default` | `seed` is left at the schema default of `0`; every render of every fork produces bit-identical samples. Set an explicit seed in the recipe. |
+| `lint_zero_weight_font` | A declared font has `weight=0.0` and will never be sampled; almost always a typo or a leftover from a temporarily disabled font. |
+| `lint_all_optional_fonts` | Every font is marked `optional=True`; if no font files are present on disk the loader ends up with an empty font set and rendering fails. |
+
+All lint issues use `severity="warning"`. A recipe that flunks every
+lint check still renders correctly; lint alone never exits non-zero
+unless `--strict` is passed (see exit codes below).
+
 ## Recipe resolution
 
 A recipe argument may be:

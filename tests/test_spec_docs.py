@@ -30,6 +30,7 @@ from pathlib import Path
 # here means a future rename in code surfaces as a static failure
 # (ImportError) rather than a silent doc/code mismatch.
 from pd_ocr_synth.cli import build_parser
+from pd_ocr_synth.lint import LINT_CODES
 from pd_ocr_synth.output.detection import LABELS_FILENAME as DETECTION_LABELS_FILENAME
 from pd_ocr_synth.output.recognition import LABELS_FILENAME as RECOGNITION_LABELS_FILENAME
 
@@ -462,3 +463,75 @@ def test_argparse_flags_match_spec_01() -> None:
         "extend _RENDER_FAMILY_FLAGS / _OMIT_FROM_SPEC_CHECK in the "
         "test if the flag is intentionally shared/hidden."
     )
+
+
+# ---------------------------------------------------------------------------
+# Spec 01 "Lint codes" table ↔ ``lint.LINT_CODES`` (this iter)
+#
+# Spec 01 documents every code ``lint <recipe>`` can emit so users can
+# grep / filter on stable identifiers. The catalog source-of-truth is
+# ``pd_ocr_synth.lint.LINT_CODES``; behavioural tests in
+# ``tests/test_lint.py`` already pin both directions of the runtime
+# contract (every emitted code ⊆ catalog, every catalog entry reachable
+# by some recipe). This meta-test closes the third side: the spec doc
+# table must list exactly the codes in ``LINT_CODES``, no more and no
+# fewer.
+#
+# A new lint helper that lands code without updating spec 01 fails
+# here; a stale doc entry referring to a removed helper also fails.
+# ---------------------------------------------------------------------------
+
+
+def _spec_lint_codes(spec_text: str) -> set[str]:
+    """Codes parsed from the ``## Lint codes`` table in spec 01.
+
+    Walks each row in the table and extracts the first backticked
+    span as the code. Rows that don't start with a backticked code
+    cell are skipped, matching the pattern used by
+    ``_spec_flag_tables`` for the per-subcommand flag tables.
+    """
+
+    codes: set[str] = set()
+    in_section = False
+    for raw_line in spec_text.splitlines():
+        line = raw_line.rstrip()
+        stripped = line.strip()
+        if stripped.startswith("## Lint codes"):
+            in_section = True
+            continue
+        # Any other ``## `` heading closes the section.
+        if in_section and stripped.startswith("## ") and not stripped.startswith("## Lint codes"):
+            break
+        if not in_section:
+            continue
+        if not stripped.startswith("| `"):
+            continue
+        match = re.match(r"\|\s*`([a-z_]+)`", stripped)
+        if match:
+            codes.add(match.group(1))
+    return codes
+
+
+def test_spec_01_lint_codes_match_LINT_CODES() -> None:
+    """The Lint codes table in spec 01 must equal ``LINT_CODES``.
+
+    Both directions checked in one assertion:
+      - ``spec_only`` — codes documented but not registered (stale doc).
+      - ``code_only`` — codes registered but not documented (silent ship).
+
+    Either case is a contract drift between user-visible documentation
+    and the linter's actual behaviour.
+    """
+
+    spec_codes = _spec_lint_codes(_spec_text("01-cli.md"))
+    spec_only = sorted(spec_codes - LINT_CODES)
+    code_only = sorted(LINT_CODES - spec_codes)
+    failures: list[str] = []
+    if spec_only:
+        failures.append(f"spec 01 documents codes not in pd_ocr_synth.lint.LINT_CODES: {spec_only}")
+    if code_only:
+        failures.append(
+            "pd_ocr_synth.lint.LINT_CODES has codes missing from the spec 01 "
+            f"'Lint codes' table: {code_only}"
+        )
+    assert not failures, "\n".join(failures)
