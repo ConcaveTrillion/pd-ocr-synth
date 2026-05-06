@@ -931,15 +931,25 @@ def _parse_audit_timestamp(raw: str) -> str | None:
 
     Accepts the same shapes the audit writer emits (``YYYY-MM-DDTHH:MM:SSZ``)
     plus the convenience date-only form (``YYYY-MM-DD``) so a user can ask
-    "everything since today" without typing a time component. Returns the
-    normalized string with ``+00:00`` rewritten as ``Z`` so simple lex
-    comparison against the stored ``timestamp`` field works.
+    "everything since today" without typing a time component. Also accepts
+    timezone-offset forms (``+05:00``, ``-05:00``, ...): the offset is
+    applied so the returned string represents the *same instant* in UTC
+    with a ``Z`` suffix. This is essential because the stored ``timestamp``
+    field is always ``Z``-form UTC, and a downstream lex comparison would
+    silently produce wrong filter results otherwise (e.g. ``--since
+    2026-05-06T20:00:00+05:00`` is the same instant as
+    ``2026-05-06T15:00:00Z`` and must filter against that, not
+    against the lexicographically-larger ``+05:00`` string).
+
+    Naive (no-tz) input is treated as UTC — the same convention the
+    writer uses for its own timestamps and the same convention as
+    ``--since 2026-05-06`` (date-only).
 
     Returns ``None`` when ``raw`` is unparseable; the caller turns that
-    into a usage-error exit.
+    into a usage-error exit. Whitespace-only input is also rejected.
     """
 
-    from datetime import datetime
+    from datetime import UTC, datetime
 
     candidate = raw.strip()
     if not candidate:
@@ -955,6 +965,14 @@ def _parse_audit_timestamp(raw: str) -> str | None:
         parsed = datetime.fromisoformat(normalized)
     except ValueError:
         return None
+    # Ensure UTC so the returned string is comparable lex-wise against
+    # the writer's ``...Z`` form. ``astimezone(UTC)`` shifts an
+    # ``+05:00`` instant to its UTC counterpart; a naive datetime
+    # (date-only input) is bound to UTC verbatim.
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    else:
+        parsed = parsed.astimezone(UTC)
     iso = parsed.isoformat()
     return iso.replace("+00:00", "Z")
 

@@ -608,6 +608,73 @@ def test_audit_since_with_z_suffix_matches_stored_format(
     assert [entry["seed"] for entry in payload] == [3]
 
 
+def test_audit_since_with_positive_offset_normalizes_to_utc(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--since 2026-05-06T20:00:00+05:00`` is the same instant as
+    ``2026-05-06T15:00:00Z`` and must filter against that — not against
+    the lex-larger ``+05:00`` string. A stored row at 18:00Z is *after*
+    that instant and must be kept; a stored row at 14:00Z is *before*
+    and must be dropped.
+
+    Regression for a latent bug: the old implementation called
+    ``isoformat().replace('+00:00', 'Z')``, which left non-UTC offsets
+    untouched. Lex comparison ``'2026-05-06T18:00:00Z' >=
+    '2026-05-06T20:00:00+05:00'`` is false because ``T18`` < ``T20``,
+    even though semantically 18:00Z is later than 15:00Z. Result: the
+    18:00Z row was incorrectly excluded from a ``--since
+    2026-05-06T20:00:00+05:00`` filter.
+    """
+
+    out = tmp_path / "render-out"
+    _seed_audit(
+        out,
+        [
+            _make_entry(timestamp="2026-05-06T14:00:00Z", seed=1),  # before 15:00Z — drop
+            _make_entry(timestamp="2026-05-06T18:00:00Z", seed=2),  # after 15:00Z  — keep
+        ],
+    )
+
+    rc = main(
+        ["audit", str(out), "--json", "--since", "2026-05-06T20:00:00+05:00"],
+    )
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+
+    payload = json.loads(captured.out)
+    # Only the 18:00Z row survives the (UTC-equivalent 15:00Z) lower
+    # bound.
+    assert [entry["seed"] for entry in payload] == [2]
+
+
+def test_audit_until_with_negative_offset_normalizes_to_utc(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Mirror of the +05:00 case for the upper bound + a negative
+    offset. ``--until 2026-05-06T10:00:00-05:00`` is 15:00Z, so a row at
+    14:00Z survives and a row at 16:00Z is dropped."""
+
+    out = tmp_path / "render-out"
+    _seed_audit(
+        out,
+        [
+            _make_entry(timestamp="2026-05-06T14:00:00Z", seed=1),  # before 15:00Z — keep
+            _make_entry(timestamp="2026-05-06T16:00:00Z", seed=2),  # after 15:00Z  — drop
+        ],
+    )
+
+    rc = main(
+        ["audit", str(out), "--json", "--until", "2026-05-06T10:00:00-05:00"],
+    )
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+
+    payload = json.loads(captured.out)
+    assert [entry["seed"] for entry in payload] == [1]
+
+
 # ---------------------------------------------------------------------------
 # --summary aggregate mode (M10 stretch follow-up)
 # ---------------------------------------------------------------------------
