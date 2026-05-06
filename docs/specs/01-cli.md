@@ -139,6 +139,50 @@ The positional `output_dir` is required *unless* `--global` or
 | `--recipe-sha PREFIX` | Only show entries whose `recipe_sha` starts with this hex prefix (case-insensitive); entries with a null sha are excluded |
 | `--summary` | Print aggregate statistics over the matched entries instead of the per-row table; combine with `--json` for a single JSON object |
 
+## Audit log schema
+
+`render` appends one JSONL line to `<output_dir>/_audit.jsonl` (and,
+unless `PD_OCR_SYNTH_NO_GLOBAL_AUDIT=1` is set, mirrors the same line
+to `<cache_root>/audit.jsonl`) per invocation. The shape below is the
+contract `audit` reads back; it is also what tools like `jq` /
+`pandas.read_json(lines=True)` will see.
+
+The on-disk fields appear in the order shown — left-to-right
+readability for `cat _audit.jsonl` is intentional: identity first,
+provenance second, run outcome last, schema-version anchor at the
+end.
+
+A meta-test in `tests/test_spec_docs.py` enforces that this table and
+the `AuditEntry` dataclass in `src/pd_ocr_synth/audit.py` stay in
+sync: adding a field to the dataclass without listing it here (or
+vice-versa) is a hard test failure.
+
+| Field | Type | Since | Description |
+|-------|------|-------|-------------|
+| `timestamp` | string | v1 | ISO-8601 UTC, second precision, `Z` suffix (e.g. `2026-05-06T10:30:00Z`); finalized after the render completes |
+| `recipe_name` | string | v1 | `recipe.name` verbatim (free-text identifier) |
+| `recipe_sha` | string \| null | v1 | SHA-256 hex of the on-disk recipe YAML bytes, or `null` when the recipe was constructed in-memory (no `source_path`) |
+| `output_dir` | string | v1 | Absolute path the writer wrote into |
+| `count` | integer | v1 | Effective sample count (post `--count` override) |
+| `seed` | integer | v1 | Effective seed (post `--seed` override) |
+| `workers` | integer | v1 | Worker pool size as the runner saw it |
+| `rendered` | integer | v1 | Samples actually rendered (from `RunResult`) |
+| `skipped` | integer | v1 | Samples skipped, e.g. by `--resume` (from `RunResult`) |
+| `runtime_seconds` | float | v1 | Wall time of the render, from the writer's stats |
+| `schema_version` | integer | v1 | On-disk shape version; bumps on shape changes (current: `1`) |
+
+### Forward-compatibility policy
+
+The `audit` reader skips rows whose `schema_version` does not match
+the version it understands and emits an `AuditSchemaVersionWarning`
+naming the encountered version. A v1 reader cannot trust v2 field
+semantics (a future bump might rename `count` to `planned_count` or
+change `runtime_seconds` from float-seconds to integer-milliseconds)
+so silently summing them would produce wrong totals. Rows missing
+`schema_version` entirely are treated as legacy v1 — the field was
+introduced in v1, so absence implies pre-versioning or hand-edited
+input.
+
 ## Lint codes
 
 Every issue surfaced by `lint <recipe>` (beyond the validation errors

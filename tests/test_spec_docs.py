@@ -23,12 +23,15 @@ text on disk genuinely names the right artifact.
 from __future__ import annotations
 
 import argparse
-import re
-from pathlib import Path
 
 # Canonical filename constants live with the writers. Importing them
 # here means a future rename in code surfaces as a static failure
 # (ImportError) rather than a silent doc/code mismatch.
+import dataclasses
+import re
+from pathlib import Path
+
+from pd_ocr_synth.audit import AUDIT_SCHEMA_VERSION, AuditEntry
 from pd_ocr_synth.cli import build_parser
 from pd_ocr_synth.lint import LINT_CODES
 from pd_ocr_synth.output.detection import LABELS_FILENAME as DETECTION_LABELS_FILENAME
@@ -535,3 +538,125 @@ def test_spec_01_lint_codes_match_LINT_CODES() -> None:
             f"'Lint codes' table: {code_only}"
         )
     assert not failures, "\n".join(failures)
+
+
+# ---------------------------------------------------------------------------
+# Spec 01 "Audit log schema" table ↔ ``audit.AuditEntry`` (this iter)
+#
+# Spec 01 documents every field the audit JSONL row carries so users
+# can grep / filter / project on stable identifiers (``jq``, pandas,
+# trainer-side scripts that key off ``recipe_sha``, etc.). The on-disk
+# shape is determined by the ``AuditEntry`` dataclass — its
+# ``to_jsonl`` serialization keys equal the dataclass field names.
+#
+# Without a meta-test, a future schema bump that adds a field (say
+# ``planned_count`` next to ``count``, or ``host`` for cross-host
+# triage) lands in the writer without surfacing in the user-facing
+# spec, and consumers of the audit log only discover it by reading a
+# real audit file. Conversely, a stale doc entry referring to a
+# removed field would point users at JSON keys that never appear.
+#
+# Both directions are checked in one assertion:
+#   - ``spec_only`` — fields documented but not on the dataclass.
+#   - `dataclass_only` — fields on the dataclass but not documented.
+# ---------------------------------------------------------------------------
+
+
+def _spec_audit_fields(spec_text: str) -> set[str]:
+    """Field names parsed from the ``## Audit log schema`` table in spec 01.
+
+    Walks each row in the schema table and extracts the first
+    backticked span as the field name. Same shape as
+    ``_spec_lint_codes`` but the ``## `` heading match must close on
+    any other ``## `` (including the trailing ``### Forward-…``
+    subheading, which is one level deeper and therefore not a section
+    boundary — the schema table sits before that subheading).
+    """
+
+    fields: set[str] = set()
+    in_section = False
+    for raw_line in spec_text.splitlines():
+        line = raw_line.rstrip()
+        stripped = line.strip()
+        if stripped.startswith("## Audit log schema"):
+            in_section = True
+            continue
+        # Any other ``## `` heading closes the section. ``### `` is a
+        # subheading inside the section (e.g. forward-compat policy)
+        # and should not close it; the table itself sits before that
+        # subheading anyway.
+        if (
+            in_section
+            and stripped.startswith("## ")
+            and not stripped.startswith("## Audit log schema")
+        ):
+            break
+        if not in_section:
+            continue
+        if not stripped.startswith("| `"):
+            continue
+        match = re.match(r"\|\s*`([a-z_]+)`", stripped)
+        if match:
+            fields.add(match.group(1))
+    return fields
+
+
+def test_spec_01_audit_schema_matches_AuditEntry() -> None:
+    """The Audit log schema table in spec 01 must equal ``AuditEntry`` fields.
+
+    Both directions checked in one assertion:
+      - ``spec_only`` — fields documented but not on the dataclass (stale doc).
+      - ``dataclass_only`` — fields on the dataclass but not documented (silent ship).
+
+    Either case is a contract drift between the user-visible audit log
+    documentation and the actual on-disk JSONL shape.
+    """
+
+    spec_fields = _spec_audit_fields(_spec_text("01-cli.md"))
+    dataclass_fields = {f.name for f in dataclasses.fields(AuditEntry)}
+    spec_only = sorted(spec_fields - dataclass_fields)
+    dataclass_only = sorted(dataclass_fields - spec_fields)
+    failures: list[str] = []
+    if spec_only:
+        failures.append(
+            f"spec 01 'Audit log schema' table documents fields not on AuditEntry: {spec_only}"
+        )
+    if dataclass_only:
+        failures.append(
+            "pd_ocr_synth.audit.AuditEntry has fields missing from the spec 01 "
+            f"'Audit log schema' table: {dataclass_only}"
+        )
+    assert not failures, "\n".join(failures)
+
+
+def test_spec_01_audit_schema_version_matches_constant() -> None:
+    """Spec 01 must name the current ``AUDIT_SCHEMA_VERSION``.
+
+    The schema description says "current: `<N>`" and the
+    ``schema_version`` row's "Since" column references the same
+    version label. A bump in ``AUDIT_SCHEMA_VERSION`` that doesn't
+    update spec 01 would leave the doc claiming the wrong current
+    version — a silent contract drift especially nasty for v1 readers
+    that branch on the constant.
+
+    The check is intentionally lightweight: we look for the literal
+    ``current: `<N>``` substring in the audit schema section. Any
+    other phrasing is fine as long as the constant appears verbatim.
+    """
+
+    spec_text = _spec_text("01-cli.md")
+    needle = f"current: `{AUDIT_SCHEMA_VERSION}`"
+    # Restrict the search to the audit-schema section so a stray
+    # mention elsewhere in the spec doesn't paper over a stale
+    # in-section claim.
+    section_start = spec_text.find("## Audit log schema")
+    assert section_start != -1, "spec 01 missing '## Audit log schema' section"
+    next_section = spec_text.find("\n## ", section_start + 1)
+    section = (
+        spec_text[section_start:next_section] if next_section != -1 else spec_text[section_start:]
+    )
+    assert needle in section, (
+        f"docs/specs/01-cli.md '## Audit log schema' section does not name "
+        f"AUDIT_SCHEMA_VERSION={AUDIT_SCHEMA_VERSION}. Expected substring "
+        f"{needle!r}; update the spec to match the constant in audit.py."
+    )
