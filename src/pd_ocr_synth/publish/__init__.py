@@ -16,6 +16,13 @@ separated from the format-conversion decisions.
 
 from __future__ import annotations
 
+from pd_ocr_synth.publish.auth import (
+    HF_TOKEN_ENV_VAR,
+    AuthError,
+    ResolvedToken,
+    format_resolution_chain,
+    resolve_hf_token,
+)
 from pd_ocr_synth.publish.content_sha import (
     CONTENT_SHA_ALGORITHM,
     CONTENT_SHA_KEY,
@@ -43,13 +50,18 @@ __all__ = [
     "ContentShaError",
     "DATA_DIRNAME",
     "DatasetCardInputs",
+    "HF_TOKEN_ENV_VAR",
     "METADATA_FILENAME",
     "README_FILENAME",
+    "AuthError",
+    "ResolvedToken",
     "StagingResult",
     "apply_content_sha_to_readme",
     "build_recognition_staging",
     "compute_content_sha",
+    "format_resolution_chain",
     "load_card_inputs",
     "render_dataset_card",
+    "resolve_hf_token",
     "write_dataset_card",
 ]
