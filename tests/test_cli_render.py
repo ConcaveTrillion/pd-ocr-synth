@@ -441,3 +441,158 @@ def test_render_serial_and_parallel_produce_same_labels(
     serial_labels = json.loads((serial_out / LABELS_FILENAME).read_text())
     parallel_labels = json.loads((parallel_out / LABELS_FILENAME).read_text())
     assert serial_labels == parallel_labels
+
+
+# ---------------------------------------------------------------------------
+# Spec 07 ``name`` flow: recipe → manifest
+# ---------------------------------------------------------------------------
+
+
+_NAMED_DEGRADE_TAIL = """\
+degradation:
+  - kind: jpeg
+    name: light_jpeg
+    probability: 1.0
+    quality: {min: 70, max: 90}
+"""
+
+
+def _setup_named_degrade(tmp_path: Path) -> Path:
+    """Recipe with a named degradation stage (spec 07 ``name`` key)."""
+
+    font = _require_font()
+    rp = tmp_path / "recipe.yaml"
+    body = _RECIPE.format(font=font) + _NAMED_DEGRADE_TAIL
+    rp.write_text(body, encoding="utf-8")
+    (tmp_path / "seed-words.txt").write_text(_SEED_WORDS, encoding="utf-8")
+    return rp
+
+
+def _read_manifest_rendered(out: Path) -> list[dict]:
+    from pd_ocr_synth.output.recognition import MANIFEST_FILENAME as _MF
+
+    rows = [json.loads(line) for line in (out / _MF).read_text().splitlines() if line.strip()]
+    return [r for r in rows if r.get("status") == "rendered"]
+
+
+def test_render_flows_stage_name_into_manifest_serial(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Spec 07 lists ``name`` as "Optional label recorded in the manifest".
+
+    Producer (render/run.py) historically only emitted ``kind`` +
+    ``probability`` in ``degradations_applied``; the consumer
+    (``_flatten_degradations`` in publish/recognition.py) defensively
+    fell back to ``item.get("name")`` because the receiver was authored
+    expecting it. This test pins the producer-side fix: ``name`` rides
+    through to the manifest when the recipe declares it.
+    """
+
+    rp = _setup_named_degrade(tmp_path)
+    out = tmp_path / "trainer-out"
+
+    rc = main(
+        [
+            "render",
+            str(rp),
+            "--count",
+            "3",
+            "--output",
+            str(out),
+            "--seed",
+            "21",
+            "--workers",
+            "1",
+        ]
+    )
+    assert rc == 0, capsys.readouterr().err
+
+    rendered = _read_manifest_rendered(out)
+    assert rendered, "expected at least one rendered manifest row"
+    for row in rendered:
+        applied = row["degradations_applied"]
+        assert applied, "rendered row should have degradations_applied"
+        for stage in applied:
+            assert stage["kind"] == "jpeg"
+            assert stage["name"] == "light_jpeg"
+            assert stage["probability"] == 1.0
+
+
+def test_render_flows_stage_name_into_manifest_parallel(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The worker-payload round-trip (parallel path) preserves ``name``.
+
+    The parallel pickle/unpickle hop in ``_worker_render`` ships the
+    full ``applied`` list verbatim; this test guards against any future
+    payload schema that drops keys it doesn't recognise.
+    """
+
+    rp = _setup_named_degrade(tmp_path)
+    out = tmp_path / "trainer-out"
+
+    rc = main(
+        [
+            "render",
+            str(rp),
+            "--count",
+            "3",
+            "--output",
+            str(out),
+            "--seed",
+            "21",
+            "--workers",
+            "2",
+        ]
+    )
+    assert rc == 0, capsys.readouterr().err
+
+    rendered = _read_manifest_rendered(out)
+    assert rendered
+    for row in rendered:
+        for stage in row["degradations_applied"]:
+            assert stage["kind"] == "jpeg"
+            assert stage["name"] == "light_jpeg"
+
+
+def test_render_omits_stage_name_when_recipe_does_not_declare_it(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Stages without ``name`` keep their existing 2-key shape.
+
+    We don't synthesise a fallback name from ``kind`` — the spec calls
+    ``name`` "Optional", so absence stays absent. Guards against a
+    well-meaning future change that auto-derives ``name=kind`` and
+    then drifts the consumer.
+    """
+
+    rp = _setup(tmp_path, with_degrade=True)  # _DEGRADE_TAIL has no name
+    out = tmp_path / "trainer-out"
+
+    rc = main(
+        [
+            "render",
+            str(rp),
+            "--count",
+            "3",
+            "--output",
+            str(out),
+            "--seed",
+            "21",
+            "--workers",
+            "1",
+        ]
+    )
+    assert rc == 0, capsys.readouterr().err
+
+    rendered = _read_manifest_rendered(out)
+    assert rendered
+    for row in rendered:
+        for stage in row["degradations_applied"]:
+            assert stage["kind"] == "jpeg"
+            assert "name" not in stage, (
+                "stage without recipe-declared ``name`` should not synthesise one"
+            )

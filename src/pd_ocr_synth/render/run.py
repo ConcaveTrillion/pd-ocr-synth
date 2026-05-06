@@ -642,7 +642,23 @@ def _render_sample(
             # report which stages were configured. Per-roll outcomes
             # land when the degradation pipeline grows that surface
             # (M09, when bbox-aware stages need it for detection).
-            applied = [{"kind": s.kind, "probability": s.probability} for s in recipe.degradation]
+            #
+            # Spec 07 "Common keys" lists ``name`` as an optional label
+            # recorded in the manifest. ``DegradationStage`` uses
+            # ``extra="allow"`` so ``name`` (when present in the recipe)
+            # rides along as a pydantic extra; ``getattr`` with a
+            # ``None`` fallback keeps the manifest record stable for
+            # stages that don't declare a label.
+            applied = []
+            for s in recipe.degradation:
+                record: dict[str, object] = {
+                    "kind": s.kind,
+                    "probability": s.probability,
+                }
+                stage_name = getattr(s, "name", None)
+                if stage_name is not None:
+                    record["name"] = str(stage_name)
+                applied.append(record)
         except DegradationError as exc:
             return (
                 None,
