@@ -27,6 +27,15 @@ Spec: [`06-rendering.md`](../specs/06-rendering.md) +
       indent still TODO.)
 - [ ] `pages` mode — multi-paragraph page synthesis with margins,
       configurable page size, optional headings + drop caps.
+      (Foundation: `ParagraphBox` dataclass + `paragraph_boxes` field
+      on `RenderedSample` lands ahead of the renderer. Default `()`,
+      so `word_crops` / `lines` keep emitting legal samples; populated
+      with one entry by `render_paragraph` so single-paragraph and
+      multi-paragraph samples can be consumed uniformly downstream.
+      Round-trips through the parallel-worker boundary alongside
+      `line_boxes` / `word_boxes`. The renderer itself + multi-
+      paragraph stacking + `paragraph_spacing` recipe field still
+      TODO.)
 
 ### Bbox-aware degradation
 

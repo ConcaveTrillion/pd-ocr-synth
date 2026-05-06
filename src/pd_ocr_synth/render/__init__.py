@@ -18,7 +18,13 @@ from pd_ocr_synth.render.context import RenderContext, branched_seed
 from pd_ocr_synth.render.line import render_line
 from pd_ocr_synth.render.paragraph import render_paragraph
 from pd_ocr_synth.render.run import RunPlan, RunResult, plan_recipe, run_recipe
-from pd_ocr_synth.render.sample import GlyphRun, LineBox, RenderedSample, WordBox
+from pd_ocr_synth.render.sample import (
+    GlyphRun,
+    LineBox,
+    ParagraphBox,
+    RenderedSample,
+    WordBox,
+)
 from pd_ocr_synth.render.sampling import sample_color, sample_value, weighted_choice
 from pd_ocr_synth.render.word_crop import (
     MissingGlyphError,
@@ -31,6 +37,7 @@ __all__ = [
     "GlyphRun",
     "LineBox",
     "MissingGlyphError",
+    "ParagraphBox",
     "RenderContext",
     "RenderError",
     "RenderedSample",

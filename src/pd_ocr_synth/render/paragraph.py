@@ -65,7 +65,13 @@ from PIL import Image
 
 from pd_ocr_synth.render.context import RenderContext
 from pd_ocr_synth.render.line import _group_clusters_into_words
-from pd_ocr_synth.render.sample import GlyphRun, LineBox, RenderedSample, WordBox
+from pd_ocr_synth.render.sample import (
+    GlyphRun,
+    LineBox,
+    ParagraphBox,
+    RenderedSample,
+    WordBox,
+)
 from pd_ocr_synth.render.sampling import sample_color, sample_value
 from pd_ocr_synth.render.word_crop import (
     MissingGlyphError,
@@ -311,6 +317,19 @@ def render_paragraph(
     # line structure.
     paragraph_text = "\n".join(lines)
 
+    # ``paragraph_boxes`` carries one entry — this paragraph's tight
+    # inked union — so a downstream consumer (the M09 ``pages``
+    # renderer, the detection writer's per-paragraph polygons) can
+    # treat single-paragraph and multi-paragraph samples uniformly.
+    # The bbox is exactly the union of ``line_boxes``, which by
+    # construction equals the sample's own bbox here.
+    paragraph_boxes = (
+        ParagraphBox(
+            text=paragraph_text,
+            bbox=(sample_min_x, sample_min_y, sample_max_x, sample_max_y),
+        ),
+    )
+
     return RenderedSample(
         text=paragraph_text,
         image=canvas,
@@ -323,6 +342,7 @@ def render_paragraph(
         glyph_runs=tuple(glyph_runs),
         word_boxes=tuple(word_boxes),
         line_boxes=tuple(line_boxes),
+        paragraph_boxes=paragraph_boxes,
     )
 
 

@@ -602,6 +602,15 @@ def _worker_render(payload: tuple[int, str]) -> tuple[int, dict[str, object]]:
             {"text": lb.text, "bbox": list(lb.bbox)}
             for lb in getattr(sample, "line_boxes", ()) or ()
         ],
+        # ``paragraph_boxes`` mirror the ``line_boxes`` round-trip so
+        # the parent process can rebuild per-paragraph ground truth
+        # for ``pages``-mode samples (and the single-entry degenerate
+        # case from ``paragraphs`` mode). Empty for layouts that
+        # don't emit paragraph GT.
+        "paragraph_boxes": [
+            {"text": pb.text, "bbox": list(pb.bbox)}
+            for pb in getattr(sample, "paragraph_boxes", ()) or ()
+        ],
         "applied_degradations": applied,
     }
 
@@ -665,7 +674,7 @@ def _write_parallel_rendered(
     class _ParallelSample:  # noqa: N801 - one-shot data shim
         pass
 
-    from pd_ocr_synth.render.sample import LineBox, WordBox
+    from pd_ocr_synth.render.sample import LineBox, ParagraphBox, WordBox
 
     s = _ParallelSample()
     s.image = image  # type: ignore[attr-defined]
@@ -685,6 +694,10 @@ def _write_parallel_rendered(
     s.line_boxes = tuple(  # type: ignore[attr-defined]
         LineBox(text=str(lb["text"]), bbox=tuple(lb["bbox"]))  # type: ignore[arg-type]
         for lb in payload.get("line_boxes") or ()
+    )
+    s.paragraph_boxes = tuple(  # type: ignore[attr-defined]
+        ParagraphBox(text=str(pb["text"]), bbox=tuple(pb["bbox"]))  # type: ignore[arg-type]
+        for pb in payload.get("paragraph_boxes") or ()
     )
 
     _writer_write_rendered(
