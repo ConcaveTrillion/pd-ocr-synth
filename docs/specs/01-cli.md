@@ -22,17 +22,20 @@ pd-ocr-synth = "pd_ocr_synth.cli:main"
 | `init <name>` | Scaffold a new recipe directory with a commented template |
 | `list` | List recipes discovered on the recipe search path |
 | `validate <recipe>` | Schema-check a recipe; verify fonts and corpus paths |
+| `lint <recipe>` | Run `validate` + heuristic lint checks (M10) |
 | `describe <recipe>` | Print resolved config + corpus stats (word count, etc.) |
+| `schema` | Emit the recipe JSON Schema (default: write `docs/specs/recipe.schema.json`) |
 | `fetch <recipe>` | Pre-fetch and cache all web/HF corpora for a recipe |
 | `preview <recipe>` | Render N samples to a preview directory for visual review |
 | `render <recipe>` | Full run; writes the dataset to the output destination |
 | `publish <recipe>` | Upload rendered output to a Hugging Face dataset repo (see [10 — Publishing](10-publishing.md)) |
 | `clean <recipe>` | Remove cached corpora (and optionally rendered output) |
-| `audit <output-dir>` | Read back the per-render audit JSONL log written by `render` (M10 stretch) |
+| `audit [output-dir]` | Read back the per-render audit JSONL log written by `render` (M10) |
 
-## Common options
+## Render-family options
 
-These apply to most subcommands:
+Apply to `fetch`, `preview`, and `render` (and to `publish` via
+`--render-first`):
 
 | Flag | Meaning |
 |------|---------|
@@ -43,8 +46,98 @@ These apply to most subcommands:
 | `--cache-dir PATH` | Corpus cache root (default: `~/.cache/pd-ocr-synth/`) |
 | `--no-cache` | Bypass corpus cache (force re-fetch) |
 | `--dry-run` | Validate + plan only; no fetch, no render |
-| `-v, --verbose` | More logging |
-| `-q, --quiet` | Errors only |
+
+## Per-subcommand flags
+
+Flags that aren't part of the render-family set above. Each table is
+the canonical surface for that subcommand — a flag listed here must
+exist in the parser, and a flag in the parser that isn't listed here
+must be added (a meta-test in `tests/test_spec_docs.py` enforces both
+directions).
+
+### `init <name>`
+
+| Flag | Meaning |
+|------|---------|
+| `--dir PATH` | Directory to scaffold under (default: `./recipes`) |
+| `--force` | Overwrite an existing recipe with the same name |
+
+### `validate <recipe>`
+
+| Flag | Meaning |
+|------|---------|
+| `--offline` | Skip network-touching checks |
+
+### `lint <recipe>`
+
+| Flag | Meaning |
+|------|---------|
+| `--offline` | Skip network-touching checks (forwarded to validate) |
+| `--json` | Emit a JSON object of validation + lint issues (machine-readable) |
+| `--strict` | Treat lint warnings as failures: exit 1 if any warning is present (validation errors still take precedence with exit 3); use as a CI / pre-commit gate |
+
+### `describe <recipe>`
+
+| Flag | Meaning |
+|------|---------|
+| `--format {text,json}` | Output format (default: text) |
+
+### `schema`
+
+| Flag | Meaning |
+|------|---------|
+| `-o, --output PATH` | Write the schema to this path instead of stdout |
+
+### `preview <recipe>`
+
+| Flag | Meaning |
+|------|---------|
+| `--no-degrade` | Skip the recipe's degradation pipeline; output raw render only |
+
+### `render <recipe>`
+
+| Flag | Meaning |
+|------|---------|
+| `--force` | Clear destination before render |
+| `--resume` | Resume an interrupted render (mutually exclusive with `--force`) |
+| `--no-audit` | Suppress the per-run audit JSONL line under `<output>/_audit.jsonl` |
+
+### `publish <recipe>`
+
+| Flag | Meaning |
+|------|---------|
+| `--repo OWNER/NAME` | Override the recipe's `publish.hf_dataset.repo` |
+| `--private` / `--public` | Force visibility (overrides recipe default) |
+| `--license SPDX` | Override the recipe's dataset license |
+| `--tag NAME` | Pin the upload to a release tag |
+| `--message TEXT` | Custom commit message for the dataset upload |
+| `--token TOKEN` | HF auth token (overrides env / cached login) |
+| `-o, --output PATH` | Override the local render output path being uploaded |
+| `--render-first` | Run `render` before publishing (chained step) |
+| `--no-create` | Refuse to create the repo if it doesn't exist (default: create on first publish) |
+| `--dry-run` | Preview the publish plan without uploading |
+
+### `clean <recipe>`
+
+| Flag | Meaning |
+|------|---------|
+| `--cache-dir PATH` | Cache root (default: `$PD_OCR_SYNTH_CACHE` or `~/.cache/pd-ocr-synth`) |
+
+### `audit [output-dir]`
+
+The positional `output_dir` is required *unless* `--global` or
+`--audit-file` is passed.
+
+| Flag | Meaning |
+|------|---------|
+| `--audit-file PATH` | Read audit entries from this JSONL path instead of `<output_dir>/_audit.jsonl`; useful for archived or aggregated audit logs |
+| `--global` | Read entries from the global aggregate at `<cache_root>/audit.jsonl` (default `~/.cache/pd-ocr-synth/`); mutually exclusive with `--audit-file` |
+| `--json` | Emit a JSON array of entries (machine-readable) instead of the table |
+| `--limit N` | Only show the most recent N entries (tail behaviour) |
+| `--since ISO` | Only show entries with timestamp >= this ISO-8601 value (e.g. `2026-05-06` or `2026-05-06T10:30:00Z`); applied before `--limit` |
+| `--until ISO` | Only show entries with timestamp <= this ISO-8601 value (same parser as `--since`); applied before `--limit` |
+| `--recipe-sha PREFIX` | Only show entries whose `recipe_sha` starts with this hex prefix (case-insensitive); entries with a null sha are excluded |
+| `--summary` | Print aggregate statistics over the matched entries instead of the per-row table; combine with `--json` for a single JSON object |
 
 ## Recipe resolution
 
@@ -106,7 +199,7 @@ pd-ocr-synth publish gaelic --dry-run                  # preview only
 `lint --strict` upgrades a clean run with warnings (validate or lint)
 from 0 to 1 so it can be used as a CI / pre-commit gate. Validation
 errors keep their stricter code 3 either way — strict never
-_downgrades_ a stricter exit code.
+*downgrades* a stricter exit code.
 
 ## Logging
 
