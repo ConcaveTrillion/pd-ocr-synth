@@ -30,7 +30,7 @@ regression sha-digest pins), `27f4bd1` (audit timezone normalization
 fix), `07dccd1` (audit `schema_version` forward-compat skip),
 `a087054` (FD-leak regression test + Pillow version pin doc).
 
-Test count: 882 passed / 4 skipped under default `make ci`.
+Test count: 890 passed / 4 skipped under default `make ci`.
 
 ## M10 polish — done
 
@@ -144,11 +144,18 @@ shipping or M11 from starting.
   (modern-spelling heuristic for a Gaelic / early-modern recipe),
   per-stage option sanity checks, cross-stage interaction warnings
   (e.g. `binarize` after `noise`).
-- **Visual regression — golden end-to-end pin.** The degraded-sample
-  pin now ships under "Visual regression tests" above (locks one
-  certain `skew` stage on a `lines` render). Still open: a "golden"
-  pinned digest for `run_recipe` end-to-end output (manifest + first
-  sample) so the publish-ready artifact contract is locked.
+- **Visual regression — golden end-to-end pin** (shipped, iter 59;
+  see `tests/test_render_visual_regression_e2e.py`). Pins per-image
+  PNG sha256 + `labels.json` sha256 from a 3-sample `run_recipe`
+  end-to-end run on a tiny canonical `word_crops` recipe, locking the
+  writer's `Image.save(format="PNG")` path, the per-sample RNG fork
+  inside `run_recipe`, the corpus tokenizer split, and the
+  `labels.json` sorted/pretty-printed encoding — all surface area
+  the per-renderer pins under "Visual regression tests" above don't
+  cover. `manifest.jsonl` / `stats.json` / `recipe.snapshot.yaml`
+  remain unpinned because they carry machine-dependent (absolute
+  font paths) or time-dependent (`wall_time_seconds`) fields; a
+  portability shim to pin them too remains a candidate follow-up.
 - **Audit — global aggregate cache.** A
   `~/.cache/pd-ocr-synth/audit.jsonl` aggregate so cross-recipe runs
   share one timeline. Today the audit log is per-output-dir;
