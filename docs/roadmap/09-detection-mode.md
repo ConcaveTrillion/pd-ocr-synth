@@ -16,9 +16,10 @@ Spec: [`06-rendering.md`](../specs/06-rendering.md) +
       (`render_paragraph` primitive lands stacking + per-line/word
       ground truth; `run_recipe` dispatch wires
       `output.mode = detection` + `layout.mode = paragraphs` end-to-end
-      through `DetectionWriter`, splitting paragraph corpus tokens on
-      embedded newlines until the wrap-fitter lands. Wrap-fitter,
-      alignment, indent still TODO.)
+      through `DetectionWriter`. Pure wrap-fitter `fit_lines` lands as
+      a measure-only HarfBuzz-shaped greedy first-fit packer with hard-
+      break preservation and long-word fallback; not yet wired into the
+      paragraph dispatch path. Alignment, indent still TODO.)
 - [ ] `pages` mode — multi-paragraph page synthesis with margins,
       configurable page size, optional headings + drop caps.
 

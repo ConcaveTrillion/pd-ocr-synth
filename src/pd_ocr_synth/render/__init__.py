@@ -25,6 +25,7 @@ from pd_ocr_synth.render.word_crop import (
     RenderError,
     render_word_crop,
 )
+from pd_ocr_synth.render.wrap import fit_lines
 
 __all__ = [
     "GlyphRun",
@@ -37,6 +38,7 @@ __all__ = [
     "RunResult",
     "WordBox",
     "branched_seed",
+    "fit_lines",
     "plan_recipe",
     "render_line",
     "render_paragraph",
