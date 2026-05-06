@@ -386,6 +386,24 @@ def _stats_section(stats: dict[str, Any] | None, recipe: Mapping[str, Any]) -> s
         tokens_unique = stats.get("tokens_unique")
         if isinstance(tokens_unique, int) and tokens_unique > 0:
             lines.append(f"- Tokens (unique): {tokens_unique}")
+        # Detection-mode counters (M09): per-page line / word / paragraph
+        # totals roll up the structural ground truth a detection run
+        # produces. Recognition stats.json doesn't carry these keys, so
+        # ``> 0`` gating keeps the section quiet on recognition cards
+        # rather than emitting "Lines: 0 / Words: 0 / Paragraphs: 0"
+        # noise. Without this, the dataset card silently dropped the
+        # main scale signal a detection consumer wants ("100 pages" is
+        # informative; "100 pages, 800 lines, 4000 words" is what a
+        # trainer plans capacity around).
+        lines_total = stats.get("lines_total")
+        if isinstance(lines_total, int) and lines_total > 0:
+            lines.append(f"- Lines: {lines_total}")
+        words_total = stats.get("words_total")
+        if isinstance(words_total, int) and words_total > 0:
+            lines.append(f"- Words: {words_total}")
+        paragraphs_total = stats.get("paragraphs_total")
+        if isinstance(paragraphs_total, int) and paragraphs_total > 0:
+            lines.append(f"- Paragraphs: {paragraphs_total}")
         wall = stats.get("wall_time_seconds")
         if isinstance(wall, (int, float)) and wall > 0:
             lines.append(f"- Render time: {int(round(float(wall)))}s")

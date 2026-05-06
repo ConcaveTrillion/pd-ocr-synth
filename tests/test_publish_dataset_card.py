@@ -73,8 +73,11 @@ def _stats(
     fonts_used: dict[str, int] | None = None,
     tokens_unique: int = 0,
     wall_time_seconds: float = 0.0,
+    lines_total: int | None = None,
+    words_total: int | None = None,
+    paragraphs_total: int | None = None,
 ) -> dict[str, Any]:
-    return {
+    out: dict[str, Any] = {
         "samples_planned": samples_planned,
         "samples_written": samples_written,
         "samples_skipped": samples_skipped,
@@ -83,6 +86,16 @@ def _stats(
         "tokens_unique": tokens_unique,
         "wall_time_seconds": wall_time_seconds,
     }
+    # Detection-mode keys: only populate when explicitly passed so the
+    # default-shape (recognition) helper output stays byte-identical to
+    # what existed before iter 64 added these fields.
+    if lines_total is not None:
+        out["lines_total"] = lines_total
+    if words_total is not None:
+        out["words_total"] = words_total
+    if paragraphs_total is not None:
+        out["paragraphs_total"] = paragraphs_total
+    return out
 
 
 def _split_card(card_text: str) -> tuple[dict[str, Any], str]:
@@ -314,6 +327,90 @@ def test_body_falls_back_to_recipe_fonts_when_stats_missing() -> None:
     assert "- Samples:" not in body
     assert "- Tokens" not in body
     assert "- Render time" not in body
+
+
+def test_body_renders_detection_stats_lines_words_paragraphs() -> None:
+    """Detection runs persist ``lines_total`` / ``words_total`` /
+    ``paragraphs_total`` in ``stats.json`` (one per page). The Stats
+    section should surface them so a user reading the HF dataset page
+    can see the structural training signal at a glance ("100 pages,
+    800 lines, 4000 words, 100 paragraphs"), not just the page count.
+    Without this regression bar, those counters were silently
+    dropped — the writer accumulated them but the publish path never
+    surfaced them on the card."""
+
+    snapshot = _snapshot(fonts=[{"path": "/abs/bungc.otf"}])
+    stats = _stats(
+        samples_written=100,
+        fonts_used={"bungc.otf": 100},
+        tokens_unique=500,
+        wall_time_seconds=180.0,
+        lines_total=800,
+        words_total=4000,
+        paragraphs_total=100,
+    )
+    card = render_dataset_card(_inputs(snapshot, stats=stats))
+    _, body = _split_card(card)
+    assert "## Stats" in body
+    assert "- Samples: 100" in body
+    assert "- Lines: 800" in body
+    assert "- Words: 4000" in body
+    assert "- Paragraphs: 100" in body
+
+
+def test_body_omits_detection_counters_when_zero_or_absent() -> None:
+    """Recognition-mode runs don't carry ``lines_total`` /
+    ``words_total`` / ``paragraphs_total`` keys at all (the
+    ``RenderStats`` dataclass doesn't define them). And a degenerate
+    detection run with zero rendered samples carries them as 0. In
+    both cases the Stats section must stay quiet — emitting
+    "Lines: 0" would imply zero training signal even on a healthy
+    recognition card."""
+
+    snapshot = _snapshot(fonts=[{"path": "/abs/bungc.otf"}])
+    # Recognition-shape stats (no detection keys at all).
+    recognition_stats = _stats(samples_written=50, tokens_unique=42)
+    card = render_dataset_card(_inputs(snapshot, stats=recognition_stats))
+    _, body = _split_card(card)
+    assert "- Lines:" not in body
+    assert "- Words:" not in body
+    assert "- Paragraphs:" not in body
+
+    # Detection-shape stats with zero counters (sanity: no key emitted).
+    zero_detection_stats = _stats(
+        samples_written=0,
+        fonts_used={},
+        lines_total=0,
+        words_total=0,
+        paragraphs_total=0,
+    )
+    card_zero = render_dataset_card(_inputs(snapshot, stats=zero_detection_stats))
+    _, body_zero = _split_card(card_zero)
+    assert "- Lines:" not in body_zero
+    assert "- Words:" not in body_zero
+    assert "- Paragraphs:" not in body_zero
+
+
+def test_body_renders_detection_stats_paragraphs_optional() -> None:
+    """A pages-mode run might emit only ``lines_total`` and
+    ``words_total`` and an older detection run from before iter 63
+    that didn't track ``paragraphs_total`` should still display Lines
+    + Words. The card must surface present counters and silently skip
+    missing ones, not all-or-nothing."""
+
+    snapshot = _snapshot(fonts=[{"path": "/abs/bungc.otf"}])
+    stats = _stats(
+        samples_written=10,
+        fonts_used={"bungc.otf": 10},
+        lines_total=80,
+        words_total=400,
+        # ``paragraphs_total`` deliberately unset.
+    )
+    card = render_dataset_card(_inputs(snapshot, stats=stats))
+    _, body = _split_card(card)
+    assert "- Lines: 80" in body
+    assert "- Words: 400" in body
+    assert "- Paragraphs:" not in body
 
 
 def test_body_renders_provenance_section_with_corpus_and_recipe_sha() -> None:
