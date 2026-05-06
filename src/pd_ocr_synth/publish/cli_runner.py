@@ -65,6 +65,9 @@ from pd_ocr_synth.publish.auth import (
 )
 from pd_ocr_synth.publish.commit_message import resolve_commit_message
 from pd_ocr_synth.publish.content_sha import ContentShaError
+from pd_ocr_synth.publish.detection import (
+    build_detection_staging,
+)
 from pd_ocr_synth.publish.orchestrator import (
     PublishError,
     PublishResult,
@@ -76,6 +79,7 @@ from pd_ocr_synth.publish.preflight import (
     assert_staging_publish_ready,
 )
 from pd_ocr_synth.publish.recognition import (
+    METADATA_FILENAME,
     StagingError,
     build_recognition_staging,
 )
@@ -182,6 +186,7 @@ def run_publish_dry_run(
     private: bool | None,
     flag_token: str | None,
     license_override: str | None = None,
+    staging_builder: StagingBuilder | None = None,
 ) -> DryRunPlan:
     """Execute the dry-run pipeline and return a structured plan.
 
@@ -225,12 +230,11 @@ def run_publish_dry_run(
     # user's perspective; we don't want to clobber anything next to
     # ``local_output_dir`` and we don't want to leave staging
     # artifacts on disk after the preview.
+    builder = staging_builder or build_recognition_staging
     with tempfile.TemporaryDirectory(prefix="pd-ocr-synth-publish-") as tmp:
         staging = Path(tmp) / "staging"
 
-        result = build_recognition_staging(
-            local_output_dir, staging, license_override=license_override
-        )
+        result = builder(local_output_dir, staging, license_override=license_override)
 
         # Run the same preflight the upload step will run. A failure
         # here is the spec's "local output corrupt" case — exit 6.
@@ -239,8 +243,7 @@ def run_publish_dry_run(
         # Now compute the upload-time facts from the staging dir.
         file_count, total_bytes = _walk_dir_stats(staging)
         front_matter_preview = _front_matter_preview(staging / "README.md")
-        summary = summarize_metadata(staging)
-        summary_block = format_summary(summary)
+        summary_block = _build_summary_block(staging)
 
         # Token resolution. Failure is *not* fatal in dry-run; we
         # report the chain so the user can fix it before the real
@@ -466,6 +469,18 @@ def cmd_publish(
         print(hint, file=sys.stderr)
         return PUBLISH_RENDER_EXIT
 
+    # Dispatch on ``recipe.output.mode``: recognition uses the M08
+    # imagefolder staging path; detection uses the M09 detection
+    # staging path (also imagefolder-shaped today, with ``labels.json``
+    # carrying nested bbox/polygon GT instead of the flat
+    # ``metadata.jsonl``). Spec 10 ultimately calls for parquet for
+    # detection — that lands as a separate transport-side chunk.
+    try:
+        staging_builder = _staging_builder_for(recipe.output.mode)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return PUBLISH_USAGE_EXIT
+
     if dry_run:
         return _run_dry_run(
             local_output=local_output,
@@ -473,6 +488,7 @@ def cmd_publish(
             resolved_private=resolved_private,
             token_flag=token_flag,
             license_override=license_override,
+            staging_builder=staging_builder,
         )
 
     return _run_upload(
@@ -485,6 +501,33 @@ def cmd_publish(
         message=message,
         license_override=license_override,
         transport_factory=transport_factory or make_default_transport,
+        staging_builder=staging_builder,
+    )
+
+
+# Type alias for the staging-builder dispatch — keeps the dispatch
+# table's value column readable. Both ``build_recognition_staging``
+# and ``build_detection_staging`` already match this shape.
+StagingBuilder = Callable[..., "object"]
+
+
+def _staging_builder_for(mode: str) -> StagingBuilder:
+    """Return the staging builder appropriate for ``recipe.output.mode``.
+
+    Raises ``ValueError`` for unknown modes. The recipe schema's
+    ``Literal["recognition", "detection"]`` type catches this at load
+    time, but we double-check here so a future mode added to the
+    schema without a matching publish path produces an actionable
+    error instead of an attribute error from somewhere deep in the
+    runner.
+    """
+
+    if mode == "recognition":
+        return build_recognition_staging
+    if mode == "detection":
+        return build_detection_staging
+    raise ValueError(
+        f"unsupported output.mode {mode!r} for publish; supported modes: recognition, detection"
     )
 
 
@@ -495,6 +538,7 @@ def _run_dry_run(
     resolved_private: bool,
     token_flag: str | None,
     license_override: str | None = None,
+    staging_builder: StagingBuilder | None = None,
 ) -> int:
     """Execute the dry-run path and map its errors to exit codes.
 
@@ -510,6 +554,7 @@ def _run_dry_run(
             private=resolved_private,
             flag_token=token_flag,
             license_override=license_override,
+            staging_builder=staging_builder,
         )
     except StagingError as exc:
         # Local output is structurally incomplete. Spec 10 maps
@@ -538,6 +583,7 @@ def _run_upload(
     message: str | None,
     license_override: str | None,
     transport_factory: TransportFactory,
+    staging_builder: StagingBuilder | None = None,
 ) -> int:
     """Execute the real upload path: build staging, resolve auth, dispatch.
 
@@ -552,10 +598,11 @@ def _run_upload(
     :func:`format_publish_result`.
     """
 
+    builder = staging_builder or build_recognition_staging
     with tempfile.TemporaryDirectory(prefix="pd-ocr-synth-publish-") as tmp:
         staging = Path(tmp) / "staging"
         try:
-            build_recognition_staging(local_output, staging, license_override=license_override)
+            builder(local_output, staging, license_override=license_override)
         except StagingError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return PUBLISH_DESTINATION_EXIT
@@ -727,6 +774,48 @@ def _default_render_first(recipe_path: Path, output_dir: Path, cache_dir: Path |
         force=True,
         progress=False,
     )
+
+
+def _build_summary_block(staging: Path) -> str:
+    """Render the dry-run summary block, picking the right shape.
+
+    Recognition staging dirs ship ``metadata.jsonl`` (one flat row per
+    sample); :func:`summarize_metadata` aggregates fonts / sizes /
+    degradations / corpora over those rows. Detection staging dirs
+    ship ``labels.json`` keyed by page name with nested bbox GT —
+    there's no flat per-row schema to aggregate over, so we surface a
+    single-line "N pages" summary instead.
+
+    The shape is detected by the presence of ``metadata.jsonl`` rather
+    than threading the recipe mode through the dry-run runner: it
+    keeps the runner agnostic of the recipe (matches the rest of the
+    pipeline, which only knows the staging dir on disk) and naturally
+    handles a future hybrid layout that emits both files.
+    """
+
+    if (staging / METADATA_FILENAME).is_file():
+        return format_summary(summarize_metadata(staging))
+
+    # Detection-mode staging: read ``labels.json`` for a page count
+    # only. We deliberately don't try to mine bbox stats here — that
+    # belongs in a richer detection-aware summary helper, which we
+    # land alongside the parquet upload chunk per spec 10. This single-
+    # line preview gives the user a sanity check (page count > 0)
+    # without pretending to do more.
+    labels_path = staging / "labels.json"
+    if labels_path.is_file():
+        try:
+            import json as _json
+
+            data = _json.loads(labels_path.read_text(encoding="utf-8"))
+            n = len(data) if isinstance(data, dict) else 0
+        except (OSError, ValueError):
+            n = 0
+        return f"Pages: {n}"
+
+    # No metadata + no labels.json — should never happen on a
+    # well-built staging dir, but degrade gracefully.
+    return "(no manifest summary available)"
 
 
 def _walk_dir_stats(root: Path) -> tuple[int, int]:

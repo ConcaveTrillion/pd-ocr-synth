@@ -565,3 +565,110 @@ def test_publish_dry_run_without_license_flag_uses_recipe_value(
     captured = capsys.readouterr()
     assert rc == 0, captured.err
     assert "license: cc-by-4.0" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# M09: detection-mode dispatch through ``cmd_publish``
+# ---------------------------------------------------------------------------
+
+
+_RECIPE_DETECTION = """\
+schema_version: 1
+name: publish-detection-smoke
+seed: 11
+output:
+  format: pd-ocr-trainer/v1
+  mode: detection
+  destination: {dest}
+  count: 1
+corpus:
+  - type: local
+    path: ./seed-pages.txt
+fonts:
+  - path: {font}
+    weight: 1.0
+rendering:
+  font_size_pt: 16
+  dpi: 300
+  ink_color: {{ r: 10, g: 10, b: 10 }}
+  background_color: {{ r: 240, g: 235, b: 220 }}
+layout:
+  mode: pages
+  padding_px: 6
+  line_spacing: 1.2
+  paragraph_spacing: 1.0
+"""
+
+# Single page: two short paragraphs of two lines each. Lines stay
+# narrow so we don't need a wrap-fitter under-test here.
+_SEED_PAGES = "ḃeaḋ saoġal mór\nċeann an ḃoṫair\n\nḋuine ḟir oġa\nġloine ṁaṫair óg\n"
+
+
+def _setup_detection_recipe(tmp_path: Path, dest: Path) -> Path:
+    font = _require_font()
+    rp = tmp_path / "recipe-detection.yaml"
+    rp.write_text(_RECIPE_DETECTION.format(font=font, dest=dest), encoding="utf-8")
+    (tmp_path / "seed-pages.txt").write_text(_SEED_PAGES, encoding="utf-8")
+    return rp
+
+
+def test_publish_dry_run_dispatches_detection_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Spec 10 § Format conversion — detection: a recipe with
+    ``output.mode: detection`` must route through the detection
+    staging path, producing a ``data/page_*.png`` layout and a card
+    that announces ``pd-ocr-shape: detection/v1``.
+
+    This is the M09 dispatch contract — the CLI runner picks the
+    right staging builder for the recipe's mode rather than blindly
+    assuming recognition.
+    """
+
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.delenv("HUGGING_FACE_HUB_TOKEN", raising=False)
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf-home"))
+
+    out = tmp_path / "trainer-out-detection"
+    rp = _setup_detection_recipe(tmp_path, dest=out)
+
+    # Render the detection-mode output. The detection writer drops
+    # ``images/page_*.png`` + ``labels.json`` per spec 08.
+    rc = main(
+        [
+            "render",
+            str(rp),
+            "--count",
+            "1",
+            "--output",
+            str(out),
+            "--seed",
+            "11",
+            "--workers",
+            "1",
+        ]
+    )
+    assert rc == 0
+    capsys.readouterr()
+
+    rc = main(
+        [
+            "publish",
+            str(rp),
+            "--repo",
+            "alice/pd-ocr-synth-detection-smoke",
+            "--dry-run",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+
+    # The dry-run preview shows the detection-shape front matter.
+    assert "pd-ocr-shape: detection/v1" in captured.out
+    # Recognition's task category should NOT appear (we'd be lying
+    # about the shape if it did).
+    assert "text-recognition" not in captured.out
+    # Detection's task category should.
+    assert "object-detection" in captured.out

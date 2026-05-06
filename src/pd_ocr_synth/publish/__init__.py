@@ -41,6 +41,9 @@ from pd_ocr_synth.publish.dataset_card import (
     render_dataset_card,
     write_dataset_card,
 )
+from pd_ocr_synth.publish.detection import (
+    build_detection_staging,
+)
 from pd_ocr_synth.publish.idempotency import (
     IdempotencyDecision,
     IdempotencyState,
@@ -62,6 +65,7 @@ from pd_ocr_synth.publish.preflight import (
 from pd_ocr_synth.publish.recognition import (
     DATA_DIRNAME,
     METADATA_FILENAME,
+    StagingError,
     StagingResult,
     build_recognition_staging,
 )
@@ -149,11 +153,13 @@ __all__ = [
     "REDACTED_SENTINEL",
     "ResolvedToken",
     "SdkUnavailableError",
+    "StagingError",
     "StagingResult",
     "SummaryError",
     "TransportError",
     "apply_content_sha_to_readme",
     "assert_staging_publish_ready",
+    "build_detection_staging",
     "build_recognition_staging",
     "check_idempotency",
     "check_required_front_matter",

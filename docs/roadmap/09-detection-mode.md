@@ -256,17 +256,35 @@ future small chunk.
 
 ### HF detection publish path
 
-- [ ] Spec 10 calls for parquet-sharded detection publish via
-      `datasets.Dataset.from_generator(...).push_to_hub(...)`. Today
-      the `publish` CLI path only handles recognition imagefolder
-      (M08). Detection adds: a per-shard generator that reads
-      `images/page_*.png` + `labels.json`, encodes images into bytes
-      for parquet, threads provenance columns through, and a
-      `--shard-size 500MB` knob. Likely a new
-      `pd_ocr_synth.publish.detection` module mirroring
-      `publish.recognition`'s shape. Schema must match spec 10's
-      detection schema exactly (image, size, lines, words, font,
-      degradations).
+- [~] Imagefolder-shaped detection staging lands in
+      `pd_ocr_synth.publish.detection`. `build_detection_staging` reads
+      the local detection layout (`images/page_*.png` + `labels.json`
+      + `recipe.snapshot.yaml`) and emits an HF-shaped staging dir
+      (`data/page_*.png` + `labels.json` + `recipe.snapshot.yaml` +
+      `README.md` with `pd-ocr-shape: detection/v1` and
+      `task_categories: [object-detection]`). `cmd_publish` dispatches
+      on `recipe.output.mode` via `_staging_builder_for` (recognition
+      → `build_recognition_staging`, detection →
+      `build_detection_staging`, unknown → typed `ValueError` mapping
+      to PUBLISH_USAGE_EXIT). The dry-run summary degrades to a single
+      `Pages: N` line for detection (no `metadata.jsonl` to aggregate
+      over). 19 staging tests in `tests/test_publish_detection.py` +
+      3 dispatch tests in `tests/test_publish_cli_runner.py` + 1
+      end-to-end `cmd_publish --dry-run` test in
+      `tests/test_cli_publish.py`. Content-SHA, idempotency,
+      preflight, dataset-card, transport orchestration, token
+      resolution, and `publish_recognition` (which is shape-agnostic
+      `upload_folder`) are all reused as-is from M08 — the
+      imagefolder-shaped detection staging dir uploads through the
+      same path. Spec 10 ultimately calls for parquet-sharded
+      detection via `datasets.Dataset.from_generator(...)
+      .push_to_hub(...)` for the 500 MB shard target; that's a
+      separate transport-side chunk because (a) `datasets` isn't
+      currently a runtime dependency and (b) `push_to_hub` is a
+      different transport surface than `upload_folder`. The
+      imagefolder staging built here is the prerequisite for either
+      upload strategy and works through the existing transport for
+      datasets up to the `upload_large_folder` ceiling.
 
 ## Validation criteria
 

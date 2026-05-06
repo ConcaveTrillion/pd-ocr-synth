@@ -12,15 +12,20 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from pd_ocr_synth.publish.cli_runner import (
     DryRunPlan,
     _format_size_mb,
     _front_matter_preview,
+    _staging_builder_for,
     _walk_dir_stats,
     format_dry_run_plan,
     format_publish_result,
 )
+from pd_ocr_synth.publish.detection import build_detection_staging
 from pd_ocr_synth.publish.orchestrator import PublishResult, PublishState
+from pd_ocr_synth.publish.recognition import build_recognition_staging
 
 # ---------------------------------------------------------------------------
 # _format_size_mb
@@ -268,3 +273,25 @@ def test_format_publish_result_omits_tag_line_when_none() -> None:
 
     text = format_publish_result(result)
     assert "tag:" not in text
+
+
+# ---------------------------------------------------------------------------
+# _staging_builder_for (M09 mode dispatch)
+# ---------------------------------------------------------------------------
+
+
+def test_staging_builder_for_recognition_returns_recognition_builder() -> None:
+    assert _staging_builder_for("recognition") is build_recognition_staging
+
+
+def test_staging_builder_for_detection_returns_detection_builder() -> None:
+    assert _staging_builder_for("detection") is build_detection_staging
+
+
+def test_staging_builder_for_unknown_mode_raises_value_error() -> None:
+    """Defensive: a future schema mode added without a publish path
+    should produce an actionable error, not a silent attribute crash
+    deep in the runner."""
+
+    with pytest.raises(ValueError, match="unsupported output.mode"):
+        _staging_builder_for("not-a-real-mode")

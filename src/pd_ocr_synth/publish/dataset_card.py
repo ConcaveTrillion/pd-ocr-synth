@@ -61,13 +61,16 @@ from pd_ocr_synth.output.snapshot import SNAPSHOT_FILENAME
 # and the tests share the same constant.
 README_FILENAME = "README.md"
 
-# Fixed values per spec 10. ``shape`` is the workspace-wide DATASETS.md
+# Default values per spec 10. ``shape`` is the workspace-wide DATASETS.md
 # contract for recognition output; ``source`` identifies the producer
 # tool so consumers can route different shapes through different
-# loaders.
-_SHAPE = "recognition/v1"
+# loaders. Detection-mode staging overrides ``shape`` / ``task`` via
+# :class:`DatasetCardInputs.shape` and
+# :class:`DatasetCardInputs.task_categories`; the defaults match
+# recognition so existing call sites stay untouched.
+_DEFAULT_SHAPE = "recognition/v1"
 _SOURCE = "pd-ocr-synth"
-_TASK = "text-recognition"
+_DEFAULT_TASK_CATEGORIES: tuple[str, ...] = ("text-recognition",)
 
 # HF size_categories buckets. Picked the closest matching bracket to
 # ``samples`` so the dataset shows up under the right size filter on
@@ -102,6 +105,16 @@ class DatasetCardInputs:
     stats: dict[str, Any] | None = None
     description_override: str | None = None
     license_override: str | None = None
+    # ``shape`` lands as ``pd-ocr-shape`` in the front matter. Default
+    # is the recognition-mode contract; the detection-mode staging
+    # builder overrides this to ``"detection/v1"`` so consumers can
+    # route the two shapes through different loaders (per
+    # ``DATASETS.md``).
+    shape: str = _DEFAULT_SHAPE
+    # ``task_categories`` lands as the HF front-matter key of the same
+    # name. Default matches recognition; detection mode overrides to
+    # ``["object-detection"]`` per HF's task taxonomy.
+    task_categories: tuple[str, ...] | list[str] = _DEFAULT_TASK_CATEGORIES
 
 
 def render_dataset_card(inputs: DatasetCardInputs) -> str:
@@ -224,7 +237,7 @@ def _front_matter(inputs: DatasetCardInputs) -> dict[str, Any]:
     if license_value:
         fm["license"] = str(license_value)
 
-    fm["task_categories"] = [_TASK]
+    fm["task_categories"] = [str(t) for t in inputs.task_categories]
 
     language = _as_string_list(publish.get("language"))
     if language:
@@ -242,7 +255,7 @@ def _front_matter(inputs: DatasetCardInputs) -> dict[str, Any]:
     # pd-ocr conventional keys (see DATASETS.md). These live alongside
     # the standard HF keys; the spec's example also puts them flat at
     # the top level.
-    fm["pd-ocr-shape"] = _SHAPE
+    fm["pd-ocr-shape"] = inputs.shape
     fm["pd-ocr-source"] = _SOURCE
 
     recipe_sha = _recipe_sha(inputs.snapshot_bytes)
