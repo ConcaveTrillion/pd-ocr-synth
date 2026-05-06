@@ -33,8 +33,12 @@ Spec: [`06-rendering.md`](../specs/06-rendering.md) +
       with one entry by `render_paragraph` so single-paragraph and
       multi-paragraph samples can be consumed uniformly downstream.
       Round-trips through the parallel-worker boundary alongside
-      `line_boxes` / `word_boxes`. The renderer itself + multi-
-      paragraph stacking + `paragraph_spacing` recipe field still
+      `line_boxes` / `word_boxes`. The `paragraph_spacing` recipe
+      field is now wired through the `Layout` model and the
+      generated JSON schema; validation accepts it on `pages` mode
+      and warns `layout_key_unused` on every other mode (it has no
+      meaning between lines or for a single-paragraph sample). The
+      `pages`-mode renderer itself + multi-paragraph stacking still
       TODO.)
 
 ### Bbox-aware degradation

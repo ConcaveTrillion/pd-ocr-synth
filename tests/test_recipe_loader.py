@@ -160,6 +160,49 @@ def test_font_size_supports_three_forms(
 
 
 # ---------------------------------------------------------------------------
+# layout.paragraph_spacing — defaults and three-form parsing
+# ---------------------------------------------------------------------------
+
+
+def test_layout_paragraph_spacing_defaults_to_none(write_recipe) -> None:
+    """Omitting paragraph_spacing leaves it ``None`` (recipe-default).
+
+    Mirrors the ``line_spacing`` default contract — both fields opt
+    into varying spacing only when the recipe author explicitly
+    declares them.
+    """
+    recipe = load_recipe(write_recipe(MINIMAL_RECIPE))
+    assert recipe.layout.paragraph_spacing is None
+
+
+@pytest.mark.parametrize(
+    ("yaml_value", "check"),
+    [
+        ("1.4", lambda v: v == 1.4),
+        ("{ min: 1.2, max: 1.8 }", lambda v: isinstance(v, Range) and v.max == 1.8),
+        (
+            "[{ value: 1.2, weight: 0.7 }, { value: 1.6, weight: 0.3 }]",
+            lambda v: (
+                isinstance(v, list)
+                and all(isinstance(x, WeightedChoice) for x in v)
+                and len(v) == 2
+            ),
+        ),
+    ],
+)
+def test_layout_paragraph_spacing_supports_three_forms(
+    write_recipe, yaml_value: str, check
+) -> None:
+    """``paragraph_spacing`` accepts the same scalar/range/choice forms as ``line_spacing``."""
+    yaml_text = MINIMAL_RECIPE.replace(
+        "  mode: word_crops\n  padding_px: 8\n",
+        f"  mode: word_crops\n  padding_px: 8\n  paragraph_spacing: {yaml_value}\n",
+    )
+    recipe = load_recipe(write_recipe(yaml_text))
+    assert check(recipe.layout.paragraph_spacing)
+
+
+# ---------------------------------------------------------------------------
 # text transforms — bare-name vs single-key-mapping forms
 # ---------------------------------------------------------------------------
 

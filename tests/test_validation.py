@@ -198,6 +198,79 @@ def test_layout_mode_warns_on_unused_keys(tmp_path: Path) -> None:
     assert "layout_key_unused" in codes
 
 
+@pytest.mark.parametrize("layout_mode", ["word_crops", "lines", "paragraphs"])
+def test_paragraph_spacing_warns_on_non_pages_modes(
+    tmp_path: Path,
+    writable_font_bytes: bytes,
+    layout_mode: str,
+) -> None:
+    """``paragraph_spacing`` is only meaningful for ``pages`` mode.
+
+    Setting it on ``word_crops`` / ``lines`` / ``paragraphs`` (a single-
+    paragraph sample) emits a ``layout_key_unused`` warning so the user
+    knows the value will be ignored.
+    """
+    font = tmp_path / "fake.otf"
+    font.write_bytes(writable_font_bytes)
+    seed = _make_file(tmp_path / "seed.txt", "hello\n")
+    yaml_text = _minimal_yaml(font=str(font), dest=str(tmp_path / "out"), corpus=str(seed))
+    # Build a mode-appropriate layout block plus the paragraph_spacing key.
+    if layout_mode == "word_crops":
+        new_layout = "layout:\n  mode: word_crops\n  padding_px: 8\n  paragraph_spacing: 1.4\n"
+    else:
+        new_layout = (
+            f"layout:\n"
+            f"  mode: {layout_mode}\n"
+            f"  padding_px: 8\n"
+            f"  max_width_px: 800\n"
+            f"  paragraph_spacing: 1.4\n"
+        )
+    yaml_text = yaml_text.replace(
+        "layout:\n  mode: word_crops\n  padding_px: 8\n",
+        new_layout,
+    )
+    # paragraphs/pages need detection output mode for the pairing check.
+    if layout_mode in {"paragraphs", "pages"}:
+        yaml_text = yaml_text.replace("mode: recognition", "mode: detection")
+    recipe = load_recipe(_write(tmp_path, yaml_text))
+    report = validate_recipe(recipe)
+    warning_codes_at_paragraph_spacing = [
+        i.code for i in report.warnings if i.location == "layout.paragraph_spacing"
+    ]
+    assert "layout_key_unused" in warning_codes_at_paragraph_spacing, [
+        i.format() for i in report.issues
+    ]
+
+
+def test_paragraph_spacing_accepted_on_pages_mode(
+    tmp_path: Path, writable_font_bytes: bytes
+) -> None:
+    """``paragraph_spacing`` is permitted on ``pages`` mode without warning."""
+    font = tmp_path / "fake.otf"
+    font.write_bytes(writable_font_bytes)
+    seed = _make_file(tmp_path / "seed.txt", "hello\n")
+    yaml_text = _minimal_yaml(font=str(font), dest=str(tmp_path / "out"), corpus=str(seed))
+    yaml_text = yaml_text.replace(
+        "layout:\n  mode: word_crops\n  padding_px: 8\n",
+        (
+            "layout:\n"
+            "  mode: pages\n"
+            "  padding_px: 8\n"
+            "  max_width_px: 800\n"
+            "  paragraph_spacing: { min: 1.2, max: 1.8 }\n"
+        ),
+    )
+    yaml_text = yaml_text.replace("mode: recognition", "mode: detection")
+    recipe = load_recipe(_write(tmp_path, yaml_text))
+    report = validate_recipe(recipe)
+    # No layout_key_unused warning for paragraph_spacing on pages mode.
+    paragraph_spacing_warnings = [
+        i for i in report.warnings if i.location == "layout.paragraph_spacing"
+    ]
+    assert paragraph_spacing_warnings == [], [i.format() for i in paragraph_spacing_warnings]
+    assert report.is_ok, [i.format() for i in report.issues]
+
+
 def test_known_degradation_set_includes_canonical_kinds() -> None:
     # Spot-check the catalog matches docs/specs/07-degradation.md.
     for k in ("skew", "blur", "paper_texture", "jpeg", "noise", "ink_bleed"):

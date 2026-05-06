@@ -222,6 +222,12 @@ class Layout(_Frozen):
     baseline_jitter_px: IntRangeOrChoice | None = None
     max_width_px: int | None = None
     line_spacing: FloatRangeOrChoice | None = None
+    # Vertical gap *between* paragraphs on a page, expressed as a
+    # multiplier of the rendered line height (same units as
+    # ``line_spacing``). Only meaningful for ``mode='pages'`` — a
+    # ``paragraphs``-mode sample is a single paragraph by construction.
+    # See docs/specs/06-rendering.md §pages and the M09 roadmap.
+    paragraph_spacing: FloatRangeOrChoice | None = None
 
 
 # ---------------------------------------------------------------------------

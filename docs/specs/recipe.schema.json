@@ -399,6 +399,27 @@
           ],
           "default": null,
           "title": "Line Spacing"
+        },
+        "paragraph_spacing": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "#/$defs/Range_float_"
+            },
+            {
+              "items": {
+                "$ref": "#/$defs/WeightedChoice_float_"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Paragraph Spacing"
         }
       },
       "required": [

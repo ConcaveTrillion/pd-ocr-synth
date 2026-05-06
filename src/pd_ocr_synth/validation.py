@@ -67,8 +67,11 @@ KNOWN_DEGRADATION_KINDS: frozenset[str] = frozenset(
 _LAYOUT_KEYS_BY_MODE: dict[str, frozenset[str]] = {
     "word_crops": frozenset({"padding_px", "baseline_jitter_px"}),
     "lines": frozenset({"padding_px", "max_width_px", "line_spacing"}),
+    # ``paragraph_spacing`` is the vertical gap between *paragraphs* on a
+    # page, so it's only meaningful for ``pages`` mode — a
+    # ``paragraphs`` sample renders a single paragraph by construction.
     "paragraphs": frozenset({"padding_px", "max_width_px", "line_spacing"}),
-    "pages": frozenset({"padding_px", "max_width_px", "line_spacing"}),
+    "pages": frozenset({"padding_px", "max_width_px", "line_spacing", "paragraph_spacing"}),
 }
 
 # Per docs/specs/08-output-format.md §Modes:
@@ -258,6 +261,7 @@ def _check_layout(recipe: Recipe) -> list[ValidationIssue]:
         "baseline_jitter_px": recipe.layout.baseline_jitter_px,
         "max_width_px": recipe.layout.max_width_px,
         "line_spacing": recipe.layout.line_spacing,
+        "paragraph_spacing": recipe.layout.paragraph_spacing,
     }
     out: list[ValidationIssue] = []
     for key, value in set_keys.items():
