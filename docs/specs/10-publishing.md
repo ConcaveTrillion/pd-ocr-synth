@@ -28,7 +28,8 @@ emits one HF dataset repo containing:
 | Path | Source | Notes |
 |------|--------|-------|
 | `data/*.png` | `<destination>/images/` | Recognition mode |
-| `data/*.parquet` | Built from local images + `pages.json` | Detection mode |
+| `data/*.parquet` | Built from local images + `labels.json` | Detection mode (parquet path; future) |
+| `data/page_*.png` + `labels.json` | Copied verbatim from `<destination>/` | Detection mode (imagefolder path; current) |
 | `metadata.jsonl` | Built from local `labels.json` + `manifest.jsonl` | Recognition only |
 | `recipe.snapshot.yaml` | Copied from local output | Provenance |
 | `README.md` | Generated; see "Dataset card" | Auto-generated |
@@ -56,8 +57,22 @@ columns are flat strings/numbers/lists; nothing nested.
 
 ## Format conversion — detection
 
-Detection mode reads `pages.json` + the image files and writes parquet
-shards via `datasets.Dataset.from_generator(...).push_to_hub(...)`.
+Detection mode reads `labels.json` + the image files. Two upload paths
+are supported:
+
+- **Imagefolder (current).** `labels.json` is copied verbatim alongside
+  the page images under `data/`. The trainer's `DetectionDataset`
+  reader consumes the same `labels.json` schema documented in
+  [08 — Output format](08-output-format.md), so the local pull path
+  and the HF pull path are symmetrical. (An earlier draft of this
+  section specified `pages.json`; the trainer's existing reader is
+  the canonical contract — same precedent that landed `labels.json`
+  over the original `pages.json`/`labels.csv` drafts in spec 08.)
+- **Parquet (future).** `labels.json` projects into the schema below
+  and ships as parquet shards via
+  `datasets.Dataset.from_generator(...).push_to_hub(...)`. Not yet
+  implemented (see spec 09 for sequencing); the imagefolder path is
+  the contract until then.
 
 Schema:
 ```python

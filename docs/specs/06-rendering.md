@@ -166,7 +166,9 @@ Regardless of layout mode, each rendered sample emits:
 | `words` | (lines/paragraphs/pages) per-word bbox + text |
 
 This metadata flows into the manifest (spec 08). Detection-mode output
-uses `lines`/`words` to write `pages.json`-compatible records.
+uses `lines`/`words` to write `labels.json`-compatible records (an
+earlier draft of spec 08 called this file `pages.json`; the trainer's
+`DetectionDataset` reader is the canonical contract).
 
 ## Rendering pitfalls
 
