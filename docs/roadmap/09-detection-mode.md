@@ -11,7 +11,7 @@ Spec: [`06-rendering.md`](../specs/06-rendering.md) +
 
 ### Layouts
 
-- [ ] `lines` mode — N words on a single baseline; line-level GT.
+- [x] `lines` mode — N words on a single baseline; line-level GT.
 - [ ] `paragraphs` mode — wrapped block; per-line + per-word bboxes.
 - [ ] `pages` mode — multi-paragraph page synthesis with margins,
       configurable page size, optional headings + drop caps.

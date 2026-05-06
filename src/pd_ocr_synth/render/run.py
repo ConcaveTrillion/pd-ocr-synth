@@ -11,9 +11,15 @@ profile layout described in :mod:`pd_ocr_synth.output.recognition`:
 5. Honor ``--force`` / ``--resume`` semantics, including snapshot
    integrity checks.
 
-Word-crop layout is the only mode supported in M07 — line, paragraph,
-and page layouts (and detection-mode output) are M09. Anything else
-raises :class:`RenderError` up front so callers fail loudly.
+Two recognition layouts are wired in:
+
+- ``word_crops`` (M07) — one word per sample.
+- ``lines`` (M09) — one line per sample, with per-word bboxes
+  carried through the manifest.
+
+Detection-mode layouts (``paragraphs`` / ``pages``) still raise
+:class:`RenderError` up front — those land later in M09 with a
+distinct writer.
 
 Determinism is the same as :mod:`pd_ocr_synth.render.preview`: the
 per-token pick is keyed on ``seed ^ 0xC0FFEE``; per-sample render +
@@ -37,12 +43,18 @@ from pd_ocr_synth.corpus.runner import collect_corpus_text
 from pd_ocr_synth.degradation import DegradationError, apply_degradation
 from pd_ocr_synth.output import RecognitionWriter
 from pd_ocr_synth.render.context import RenderContext
+from pd_ocr_synth.render.line import render_line
 from pd_ocr_synth.render.word_crop import (
     MissingGlyphError,
     RenderError,
     render_word_crop,
 )
 from pd_ocr_synth.tokenization import tokenize
+
+# Layout modes that the recognition writer understands. ``paragraphs``
+# and ``pages`` are detection-mode layouts and will be routed through
+# a different writer when M09's detection chunk lands.
+_SUPPORTED_RECOGNITION_LAYOUTS: frozenset[str] = frozenset({"word_crops", "lines"})
 
 if TYPE_CHECKING:
     from pd_ocr_synth.recipe import Recipe
@@ -111,10 +123,11 @@ def plan_recipe(
     should pre-fetch first via ``pd-ocr-synth fetch``.
     """
 
-    if recipe.layout.mode != "word_crops":
+    if recipe.layout.mode not in _SUPPORTED_RECOGNITION_LAYOUTS:
         raise RenderError(
-            f"render only supports layout.mode=word_crops in M07; got {recipe.layout.mode!r}. "
-            "Lines / paragraphs / pages land in M09."
+            f"render does not yet support layout.mode={recipe.layout.mode!r}; "
+            f"recognition writer accepts {sorted(_SUPPORTED_RECOGNITION_LAYOUTS)}. "
+            "Detection-mode layouts (paragraphs / pages) land in a later M09 chunk."
         )
 
     effective_count = count if count is not None else recipe.output.count
@@ -173,9 +186,10 @@ def run_recipe(
     sample index → identical output bytes regardless of ``workers``.
     """
 
-    if recipe.layout.mode != "word_crops":
+    if recipe.layout.mode not in _SUPPORTED_RECOGNITION_LAYOUTS:
         raise RenderError(
-            f"render only supports layout.mode=word_crops in M07; got {recipe.layout.mode!r}"
+            f"render does not yet support layout.mode={recipe.layout.mode!r}; "
+            f"recognition writer accepts {sorted(_SUPPORTED_RECOGNITION_LAYOUTS)}."
         )
 
     effective_count = count if count is not None else recipe.output.count
@@ -279,7 +293,10 @@ def _render_sample(
     """
 
     try:
-        sample = render_word_crop(text, recipe=recipe, ctx=ctx)
+        if recipe.layout.mode == "lines":
+            sample = render_line(text, recipe=recipe, ctx=ctx)
+        else:
+            sample = render_word_crop(text, recipe=recipe, ctx=ctx)
     except MissingGlyphError as exc:
         return (
             None,
@@ -415,6 +432,7 @@ def _worker_render(payload: tuple[int, str]) -> tuple[int, dict[str, object]]:
         "background_color": list(sample.background_color),
         "size": list(sample.size),
         "bbox": list(sample.bbox),
+        "word_boxes": [{"text": wb.text, "bbox": list(wb.bbox)} for wb in sample.word_boxes],
         "applied_degradations": applied,
     }
 
@@ -472,6 +490,8 @@ def _write_parallel_rendered(writer: RecognitionWriter, index: int, payload: dic
     class _ParallelSample:  # noqa: N801 - one-shot data shim
         pass
 
+    from pd_ocr_synth.render.sample import WordBox
+
     s = _ParallelSample()
     s.image = image  # type: ignore[attr-defined]
     s.text = payload["text"]  # type: ignore[attr-defined]
@@ -483,6 +503,10 @@ def _write_parallel_rendered(writer: RecognitionWriter, index: int, payload: dic
     s.size = tuple(payload["size"])  # type: ignore[attr-defined]
     s.bbox = tuple(payload["bbox"])  # type: ignore[attr-defined]
     s.glyph_runs = ()  # type: ignore[attr-defined]
+    s.word_boxes = tuple(  # type: ignore[attr-defined]
+        WordBox(text=str(wb["text"]), bbox=tuple(wb["bbox"]))  # type: ignore[arg-type]
+        for wb in payload.get("word_boxes") or ()
+    )
 
     writer.write_rendered(
         index,

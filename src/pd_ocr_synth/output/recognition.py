@@ -359,6 +359,13 @@ class RecognitionWriter:
             "transforms_applied": [t.name for t in self.recipe.text_transforms],
             "degradations_applied": list(applied_degradations),
         }
+        # Per-word ground truth lands here for ``lines``-mode samples;
+        # ``word_crops`` produces an empty tuple (the sample IS the
+        # word) and we skip the field entirely so existing manifests
+        # stay byte-identical to the M07 schema.
+        word_boxes = getattr(sample, "word_boxes", ()) or ()
+        if word_boxes:
+            record["word_boxes"] = [{"text": wb.text, "bbox": list(wb.bbox)} for wb in word_boxes]
         self._manifest[idx] = record
         self.stats.record_render(font_name=font_path.name)
 
