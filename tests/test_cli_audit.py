@@ -1005,3 +1005,195 @@ def test_audit_summary_skips_null_recipe_sha_for_distinct_count(
     assert payload["distinct_recipe_shas"] == 1
     # And only that entry shows up in top_recipe_shas.
     assert payload["top_recipe_shas"] == [{"recipe_sha": "a" * 12, "count": 1}]
+
+
+# ---------------------------------------------------------------------------
+# --audit-file override (M10 stretch QoL): read from a non-default path
+# ---------------------------------------------------------------------------
+#
+# The default lookup is ``<output_dir>/_audit.jsonl``. ``--audit-file PATH``
+# overrides that so users can replay archived staging-dir logs or aggregate
+# files without copying them into a render dir. Contract under test:
+#
+# - The flag-pointed file is read; the canonical file under output_dir is
+#   not opened (and need not exist).
+# - The output_dir positional is still required; argparse rejects a missing
+#   one as a usage error — covered implicitly by other audit tests.
+# - Missing flag-pointed file maps to exit 6 (destination-family) with a
+#   clear "--audit-file does not exist" error.
+# - The flag composes with --json, --since, --recipe-sha, --limit, --summary.
+
+
+def test_audit_audit_file_reads_from_override_path(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--audit-file PATH`` reads from PATH instead of <output_dir>/_audit.jsonl.
+
+    Pins the override resolution: when the flag is set, the canonical
+    location under ``output_dir`` is not touched. We seed the override
+    path with one set of entries and the default location with a
+    different set; the resulting JSON must be the override's, not the
+    default's.
+    """
+
+    # Default location (would be read without the flag).
+    out = tmp_path / "render-out"
+    _seed_audit(out, [_make_entry(seed=999, recipe_name="ignored-default")])
+
+    # Override location (this is what the flag points at).
+    archive = tmp_path / "archived" / "audit.jsonl"
+    archive.parent.mkdir(parents=True)
+    append_audit_entry(archive, _make_entry(seed=42, recipe_name="archived-recipe"))
+    append_audit_entry(archive, _make_entry(seed=43, recipe_name="archived-recipe"))
+
+    rc = main(["audit", str(out), "--audit-file", str(archive), "--json"])
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+
+    payload = json.loads(captured.out)
+    # Two entries from the override path; the default-location row
+    # (``seed=999``) must not appear.
+    assert [entry["seed"] for entry in payload] == [42, 43]
+    assert all(entry["recipe_name"] == "archived-recipe" for entry in payload)
+
+
+def test_audit_audit_file_does_not_require_default_file(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """When ``--audit-file`` is set, the default file is not required.
+
+    The output_dir positional is still passed (argparse demands it) and
+    must exist (it's a real dir on disk in this test), but the canonical
+    ``_audit.jsonl`` need not be present. Pins that the override truly
+    overrides — not augments.
+    """
+
+    out = tmp_path / "render-out"
+    out.mkdir()
+    # Note: NO ``_audit.jsonl`` here. The default-only case (no flag)
+    # would exit 6 with "no audit file at ..." — see
+    # ``test_audit_missing_file_is_destination_error``.
+
+    archive = tmp_path / "elsewhere.jsonl"
+    append_audit_entry(archive, _make_entry(seed=7))
+
+    rc = main(["audit", str(out), "--audit-file", str(archive), "--json"])
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+
+    payload = json.loads(captured.out)
+    assert [entry["seed"] for entry in payload] == [7]
+
+
+def test_audit_audit_file_missing_path_is_destination_error(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A non-existent ``--audit-file`` path → exit 6 with a clear message.
+
+    Same family as a missing default file: the consumer pointed us at
+    something that isn't there. The error message names the flag so
+    the user knows which input was wrong.
+    """
+
+    out = tmp_path / "render-out"
+    out.mkdir()
+    bogus = tmp_path / "nope.jsonl"
+    assert not bogus.exists()
+
+    rc = main(["audit", str(out), "--audit-file", str(bogus)])
+    captured = capsys.readouterr()
+    assert rc == 6
+    assert "--audit-file does not exist" in captured.err
+    assert str(bogus) in captured.err
+
+
+def test_audit_audit_file_composes_with_filters(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--audit-file`` composes with ``--since`` / ``--recipe-sha`` / ``--limit``.
+
+    A single end-to-end smoke test of filter composition is enough —
+    the per-filter behaviour is already covered by the default-path
+    tests above, and the override path uses the same filter pipeline.
+    """
+
+    out = tmp_path / "render-out"
+    out.mkdir()
+    archive = tmp_path / "archive.jsonl"
+    sha_a = "a" * 64
+    sha_b = "b" * 64
+    for entry in [
+        _make_entry(timestamp=_ts(1), seed=1, recipe_sha=sha_a),
+        _make_entry(timestamp=_ts(2), seed=2, recipe_sha=sha_b),
+        _make_entry(timestamp=_ts(3), seed=3, recipe_sha=sha_a),
+        _make_entry(timestamp=_ts(4), seed=4, recipe_sha=sha_a),
+    ]:
+        append_audit_entry(archive, entry)
+
+    rc = main(
+        [
+            "audit",
+            str(out),
+            "--audit-file",
+            str(archive),
+            "--json",
+            "--since",
+            _ts(2),
+            "--recipe-sha",
+            "a" * 8,
+            "--limit",
+            "1",
+        ],
+    )
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+
+    payload = json.loads(captured.out)
+    # ``--since 2`` keeps rows 2, 3, 4. ``--recipe-sha aaaa...`` drops row 2
+    # (which is sha_b). ``--limit 1`` tails to the most recent (seed 4).
+    assert [entry["seed"] for entry in payload] == [4]
+
+
+def test_audit_audit_file_with_summary_aggregates_override_only(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--audit-file`` + ``--summary`` aggregates the override file's rows.
+
+    Locks that the summary path uses the same resolution: rows from
+    the default location are not silently mixed in with the override.
+    """
+
+    out = tmp_path / "render-out"
+    # Seed the default location with rows that *would* skew the summary
+    # if the override resolution were broken.
+    _seed_audit(
+        out,
+        [
+            _make_entry(count=999, rendered=999, skipped=0),
+            _make_entry(count=999, rendered=999, skipped=0),
+            _make_entry(count=999, rendered=999, skipped=0),
+        ],
+    )
+
+    archive = tmp_path / "small.jsonl"
+    append_audit_entry(archive, _make_entry(count=10, rendered=10, skipped=0))
+    append_audit_entry(archive, _make_entry(count=20, rendered=18, skipped=2))
+
+    rc = main(
+        ["audit", str(out), "--audit-file", str(archive), "--summary", "--json"],
+    )
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+
+    payload = json.loads(captured.out)
+    # If the default file were leaking in, entry_count would be 5 and
+    # total_count would dwarf 30.
+    assert payload["entry_count"] == 2
+    assert payload["total_count"] == 30
+    assert payload["total_rendered"] == 28
+    assert payload["total_skipped"] == 2

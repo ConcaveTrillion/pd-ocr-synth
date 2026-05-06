@@ -193,6 +193,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="render output directory containing _audit.jsonl",
     )
     p_audit.add_argument(
+        "--audit-file",
+        dest="audit_file",
+        help=(
+            "read audit entries from this JSONL path instead of "
+            "<output_dir>/_audit.jsonl; useful for archived or aggregated "
+            "audit logs. <output_dir> is still required as context but is "
+            "not opened when this flag is set"
+        ),
+    )
+    p_audit.add_argument(
         "--json",
         action="store_true",
         help="emit a JSON array of entries (machine-readable) instead of the table",
@@ -1106,6 +1116,7 @@ def _cmd_audit(
     until: str | None = None,
     recipe_sha: str | None = None,
     summary: bool = False,
+    audit_file: str | None = None,
 ) -> int:
     """Read back the per-render audit log written by ``render``.
 
@@ -1165,6 +1176,16 @@ def _cmd_audit(
     - ``6`` — output dir doesn't exist or has no audit file. We reuse
       the destination-invalid family because the consumer pointed us
       at something that isn't a valid render output.
+
+    ``--audit-file PATH`` overrides the default
+    ``<output_dir>/_audit.jsonl`` lookup; pass any JSONL file (e.g. an
+    archived staging-dir audit log, or an aggregate file built by
+    concatenating per-output-dir logs). The positional ``output_dir``
+    is still required as a contextual argument for error messages, but
+    it is **not** opened when ``--audit-file`` is set — only the file
+    pointed at by the flag is read. Missing flag-pointed files still
+    map to exit 6 (destination-family) because the consumer pointed us
+    at something that isn't there.
     """
 
     from pd_ocr_synth.audit import AUDIT_FILENAME, read_audit_entries
@@ -1204,18 +1225,33 @@ def _cmd_audit(
             return USAGE_EXIT
 
     output_dir = Path(output_dir_arg).expanduser()
-    if not output_dir.exists():
-        print(f"error: output dir does not exist: {output_dir}", file=sys.stderr)
-        return DESTINATION_EXIT
-
-    audit_path = output_dir / AUDIT_FILENAME
-    if not audit_path.is_file():
-        print(
-            f"error: no audit file at {audit_path} "
-            "(was the render run with --no-audit or PD_OCR_SYNTH_NO_AUDIT?)",
-            file=sys.stderr,
-        )
-        return DESTINATION_EXIT
+    if audit_file is None:
+        # Default: read from <output_dir>/_audit.jsonl. The output dir
+        # has to exist and the canonical filename has to be present.
+        if not output_dir.exists():
+            print(f"error: output dir does not exist: {output_dir}", file=sys.stderr)
+            return DESTINATION_EXIT
+        audit_path = output_dir / AUDIT_FILENAME
+        if not audit_path.is_file():
+            print(
+                f"error: no audit file at {audit_path} "
+                "(was the render run with --no-audit or PD_OCR_SYNTH_NO_AUDIT?)",
+                file=sys.stderr,
+            )
+            return DESTINATION_EXIT
+    else:
+        # ``--audit-file`` override: read from the explicit path. The
+        # ``output_dir`` is purely positional context here — we don't
+        # touch it. Missing override file maps to exit 6 (same family
+        # as a missing default file: the consumer pointed us at
+        # something that isn't there).
+        audit_path = Path(audit_file).expanduser()
+        if not audit_path.is_file():
+            print(
+                f"error: --audit-file does not exist: {audit_path}",
+                file=sys.stderr,
+            )
+            return DESTINATION_EXIT
 
     entries = read_audit_entries(audit_path)
 
@@ -1360,6 +1396,7 @@ _IMPLEMENTED_DISPATCH = {
         until=args.until,
         recipe_sha=args.recipe_sha,
         summary=args.summary,
+        audit_file=args.audit_file,
     ),
 }
 

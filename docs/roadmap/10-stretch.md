@@ -87,6 +87,13 @@ heading are tracked in **Future work — beyond M10**.
 - [x] `read_audit_entries` skip-with-warning on unknown
       `schema_version` so newer-than-reader log files don't break
       existing tools (`07dccd1`).
+- [x] `--audit-file PATH` overrides the default
+      `<output_dir>/_audit.jsonl` lookup so users can replay archived
+      staging-dir logs or aggregate files without copying them into a
+      render dir. Composes with all existing filters (`--since`,
+      `--until`, `--recipe-sha`, `--limit`, `--summary`, `--json`);
+      missing override path maps to the same exit-6 destination
+      family as a missing default file.
 
 ### Visual regression tests
 
