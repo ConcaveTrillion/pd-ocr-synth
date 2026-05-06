@@ -20,8 +20,8 @@ Spec: [`06-rendering.md`](../specs/06-rendering.md) +
 
 - [ ] Geometric stages update bboxes correctly: `skew`, `perspective`,
       `scale`.
-- [ ] Pixel-only stages pass bboxes through unchanged.
-- [ ] Tests verify bbox round-trip on a fixed seed.
+- [x] Pixel-only stages pass bboxes through unchanged.
+- [x] Tests verify bbox round-trip on a fixed seed.
 
 ### Detection writer
 

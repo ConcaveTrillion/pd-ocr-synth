@@ -26,7 +26,7 @@ from PIL import Image
 
 from pd_ocr_synth.degradation import REGISTRY, DegradationError, apply_degradation
 from pd_ocr_synth.recipe.models import DegradationStage
-from pd_ocr_synth.render.sample import GlyphRun, RenderedSample
+from pd_ocr_synth.render.sample import GlyphRun, RenderedSample, WordBox
 
 # ---------------------------------------------------------------------------
 # fixtures
@@ -376,3 +376,218 @@ def test_pipeline_is_deterministic_under_seed() -> None:
     b = apply_degradation(base, stages, rng=Random(2024))
     assert _png_bytes(a.image) == _png_bytes(b.image)
     assert a.bbox == b.bbox
+
+
+# ---------------------------------------------------------------------------
+# M09: pixel-only stages must pass geometry through unchanged
+# ---------------------------------------------------------------------------
+#
+# Per ``docs/roadmap/09-detection-mode.md`` (Bbox-aware degradation):
+#
+#   - Pixel-only stages pass bboxes through unchanged.
+#   - Tests verify bbox round-trip on a fixed seed.
+#
+# We drive this directly off the live ``REGISTRY`` so that any future
+# pixel-only stage added without thought to bbox/glyph_runs/word_boxes
+# tracking still has to either (a) leave geometry untouched, or
+# (b) get registered as a geometry stage and own that contract
+# explicitly. A pixel stage that silently shifts text relative to its
+# reported bboxes would break detection-mode annotations downstream;
+# this test is the tripwire.
+
+
+def _pixel_stage_options(
+    kind: str, *, paper_texture_dir: Path | None = None
+) -> dict[str, object] | None:
+    """Options for ``kind`` that guarantee a non-noop application.
+
+    Returning ``None`` means "no usable non-noop config without extra
+    fixtures, skip"; the only such stage today is ``paper_texture``
+    when ``paper_texture_dir`` is not supplied.
+
+    Why force non-noop: a stage that becomes a noop (e.g. ``sigma=0``,
+    ``factor=1.0``) trivially preserves every field — that's not what
+    we want to lock down. We want to confirm that a stage which
+    *actually* mutates pixels still leaves geometry alone.
+    """
+
+    if kind == "blur":
+        return {"filter": "gaussian", "sigma": 1.5}
+    if kind == "noise":
+        return {"noise_kind": "gaussian", "stddev": 8}
+    if kind == "brightness":
+        return {"factor": 0.8}
+    if kind == "contrast":
+        return {"factor": 1.3}
+    if kind == "gamma":
+        return {"gamma": 1.4}
+    if kind == "ink_bleed":
+        return {"iterations": 1, "kernel_size_px": 1}
+    if kind == "ink_thin":
+        return {"iterations": 1, "kernel_size_px": 1}
+    if kind == "jpeg":
+        return {"quality": 60}
+    if kind == "webp":
+        return {"quality": 60}
+    if kind == "grayscale":
+        return {"method": "luminosity"}
+    if kind == "foxing":
+        return {"count": 3, "radius_px": 4, "color": [120, 60, 30], "opacity": 0.5}
+    if kind == "paper_texture":
+        if paper_texture_dir is None:
+            return None
+        return {
+            "directory": str(paper_texture_dir),
+            "blend": "multiply",
+            "opacity": 0.4,
+        }
+    # Unknown pixel stage: no defaults, caller will skip.
+    return None
+
+
+def _make_textured_sample() -> RenderedSample:
+    """Sample variant with a non-empty ``word_boxes`` and multi-cluster glyphs.
+
+    The pixel-only invariant should hold for *every* geometry slot
+    (``bbox``, ``glyph_runs``, ``word_boxes``), not just the top-level
+    bbox. So the fixture has to populate all three.
+    """
+
+    width, height = 96, 32
+    bg = (240, 235, 220)
+    ink = (20, 18, 16)
+    img = Image.new("RGB", (width, height), color=bg)
+    pad = 4
+    inked = Image.new("RGB", (width - 2 * pad, height - 2 * pad), color=ink)
+    img.paste(inked, (pad, pad))
+    bbox = (pad, pad, width - pad, height - pad)
+    # Two synthetic word boxes + matching glyph runs. Coordinates are
+    # arbitrary — they only need to round-trip byte-equal.
+    word_boxes = (
+        WordBox(text="alpha", bbox=(pad, pad, 40, height - pad)),
+        WordBox(text="beta", bbox=(48, pad, width - pad, height - pad)),
+    )
+    glyph_runs = (
+        GlyphRun(cluster=0, bbox=(pad, pad, 12, height - pad)),
+        GlyphRun(cluster=1, bbox=(14, pad, 26, height - pad)),
+        GlyphRun(cluster=2, bbox=(48, pad, 60, height - pad)),
+        GlyphRun(cluster=3, bbox=(62, pad, 78, height - pad)),
+    )
+    return RenderedSample(
+        text="alpha beta",
+        image=img,
+        bbox=bbox,
+        font_path=None,  # type: ignore[arg-type]  # not used by pipeline
+        font_size_pt=14.0,
+        dpi=300,
+        ink_color=ink,
+        background_color=bg,
+        glyph_runs=glyph_runs,
+        word_boxes=word_boxes,
+    )
+
+
+def _registered_pixel_kinds() -> list[str]:
+    # Force registration via a no-op call.
+    apply_degradation(_make_sample(), [], rng=Random(0))
+    return sorted(k for k, entry in REGISTRY.items() if entry.shape == "pixel")
+
+
+def _build_paper_texture_dir(tmp_path: Path) -> Path:
+    """Tiny synthetic texture so paper_texture has a dir to read from."""
+
+    tex_dir = tmp_path / "textures-invariant"
+    tex_dir.mkdir()
+    rng_np = np.random.default_rng(0)
+    arr = (rng_np.random((32, 32, 3)) * 200 + 30).astype(np.uint8)
+    Image.fromarray(arr, mode="RGB").save(tex_dir / "t0.png")
+    return tex_dir
+
+
+def test_pixel_stages_preserve_bbox_glyph_runs_and_word_boxes(tmp_path: Path) -> None:
+    """Property test: every registered pixel stage leaves geometry untouched.
+
+    Iterates the live ``REGISTRY``. For each pixel-shape entry we build
+    a ``RenderedSample`` with non-empty ``bbox``, ``glyph_runs``, and
+    ``word_boxes``, apply the stage with options that guarantee a real
+    (non-noop) pixel mutation, and assert all geometry fields are
+    byte-equal to the input. We also assert pixels actually changed —
+    otherwise the test trivially passes via the noop path.
+    """
+
+    base = _make_textured_sample()
+    base_pixels = _png_bytes(base.image)
+
+    pixel_kinds = _registered_pixel_kinds()
+    # Expect *all* M06 pixel stages plus foxing + paper_texture; if the
+    # registry shrinks below this, we want a clear failure rather than
+    # a silently shrunk property test.
+    expected = {
+        "blur",
+        "noise",
+        "brightness",
+        "contrast",
+        "gamma",
+        "ink_bleed",
+        "ink_thin",
+        "jpeg",
+        "webp",
+        "grayscale",
+        "foxing",
+        "paper_texture",
+    }
+    assert expected <= set(pixel_kinds)
+
+    paper_dir = _build_paper_texture_dir(tmp_path)
+    seen_kinds: list[str] = []
+
+    for kind in pixel_kinds:
+        opts = _pixel_stage_options(kind, paper_texture_dir=paper_dir)
+        if opts is None:
+            pytest.fail(
+                f"pixel stage {kind!r} has no non-noop options recipe in "
+                f"_pixel_stage_options; add one so the bbox-invariant "
+                f"property test covers it"
+            )
+        stage = _stage(kind, probability=1.0, **opts)
+        out = apply_degradation(base, [stage], rng=Random(1234))
+
+        # Geometry fields: byte-equal round-trip.
+        assert out.bbox == base.bbox, f"{kind} mutated bbox"
+        assert out.glyph_runs == base.glyph_runs, f"{kind} mutated glyph_runs"
+        assert out.word_boxes == base.word_boxes, f"{kind} mutated word_boxes"
+        assert out.image.size == base.image.size, f"{kind} mutated image size"
+
+        # Sanity: the stage actually did something to the pixels.
+        # (Otherwise the test is meaningless — a noop stage trivially
+        # preserves every field.)
+        assert _png_bytes(out.image) != base_pixels, (
+            f"pixel stage {kind!r} did not modify image; "
+            f"_pixel_stage_options must use a non-noop config"
+        )
+        seen_kinds.append(kind)
+
+    # Belt-and-braces: confirm we exercised every pixel stage we found.
+    assert sorted(seen_kinds) == pixel_kinds
+
+
+def test_pixel_stages_preserve_geometry_with_empty_optional_fields() -> None:
+    """The invariant must also hold when ``glyph_runs`` / ``word_boxes`` are empty.
+
+    Word-crops mode (M07) does not populate ``word_boxes``; some
+    callers may not populate ``glyph_runs`` either. Empty tuples must
+    round-trip as empty tuples.
+    """
+
+    base = _make_sample()
+    # Replace defaults with explicit empties to make the contract obvious.
+    from dataclasses import replace as dc_replace
+
+    base = dc_replace(base, glyph_runs=(), word_boxes=())
+
+    stage = _stage("blur", probability=1.0, filter="gaussian", sigma=1.5)
+    out = apply_degradation(base, [stage], rng=Random(0))
+
+    assert out.glyph_runs == ()
+    assert out.word_boxes == ()
+    assert out.bbox == base.bbox
