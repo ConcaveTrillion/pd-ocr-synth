@@ -18,8 +18,13 @@ Spec: [`06-rendering.md`](../specs/06-rendering.md) +
       `output.mode = detection` + `layout.mode = paragraphs` end-to-end
       through `DetectionWriter`. Pure wrap-fitter `fit_lines` lands as
       a measure-only HarfBuzz-shaped greedy first-fit packer with hard-
-      break preservation and long-word fallback; not yet wired into the
-      paragraph dispatch path. Alignment, indent still TODO.)
+      break preservation and long-word fallback. Wrap-fitter is now
+      wired into the paragraphs dispatch path: when
+      `layout.max_width_px` is set, long single-line corpus tokens
+      wrap across multiple lines using the same font + pixel size the
+      renderer paints with (pre-sampled `ParagraphStyle` threaded
+      through both `fit_lines` and `render_paragraph`). Alignment and
+      indent still TODO.)
 - [ ] `pages` mode — multi-paragraph page synthesis with margins,
       configurable page size, optional headings + drop caps.
 

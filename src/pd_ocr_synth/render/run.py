@@ -27,12 +27,22 @@ Layouts not yet wired:
 
 Paragraph input shape: tokenization yields one paragraph per sample
 (blank-line-separated). ``render_paragraph`` requires a pre-fitted
-``list[str]`` of lines, so until the wrap-fitter lands we split each
-paragraph token on its embedded newlines (after a ``str.splitlines``
-filter that drops empties). A paragraph with no embedded newlines
-becomes a single-line paragraph — still a legal detection-mode sample
-because ``DetectionWriter`` only requires per-line + per-word ground
-truth, not multiple lines.
+``list[str]`` of lines, which we produce in one of two ways:
+
+- ``layout.max_width_px`` is set → the wrap-fitter
+  (:func:`pd_ocr_synth.render.wrap.fit_lines`) shapes each candidate
+  line against the paragraph's pre-sampled font + pixel size and
+  greedy-packs words into lines that fit. Hard newlines in the
+  corpus token are preserved as line breaks. To keep the wrap budget
+  aligned with what the renderer paints, we pre-sample a
+  :class:`pd_ocr_synth.render.paragraph.ParagraphStyle` and thread
+  it through both ``fit_lines`` and ``render_paragraph``.
+- ``layout.max_width_px`` is not set → split on embedded newlines
+  only (after a ``str.splitlines`` + empty-line filter). A
+  paragraph with no embedded newlines becomes a single-line
+  paragraph, still a legal detection-mode sample because
+  ``DetectionWriter`` only requires per-line + per-word ground truth,
+  not multiple lines.
 
 Determinism is the same as :mod:`pd_ocr_synth.render.preview`: the
 per-token pick is keyed on ``seed ^ 0xC0FFEE``; per-sample render +
@@ -57,12 +67,17 @@ from pd_ocr_synth.degradation import DegradationError, apply_degradation
 from pd_ocr_synth.output import DetectionWriter, RecognitionWriter
 from pd_ocr_synth.render.context import RenderContext
 from pd_ocr_synth.render.line import render_line
-from pd_ocr_synth.render.paragraph import render_paragraph
+from pd_ocr_synth.render.paragraph import (
+    ParagraphStyle,
+    render_paragraph,
+    sample_paragraph_style,
+)
 from pd_ocr_synth.render.word_crop import (
     MissingGlyphError,
     RenderError,
     render_word_crop,
 )
+from pd_ocr_synth.render.wrap import fit_lines
 from pd_ocr_synth.tokenization import tokenize
 
 # Layout modes wired through ``run_recipe``'s render dispatch. Each
@@ -311,23 +326,57 @@ def _writer_class_for(recipe: Recipe) -> type:
     raise RenderError(f"unknown output.mode={mode!r}; expected recognition or detection")
 
 
-def _split_paragraph_into_lines(token: str) -> list[str]:
+def _split_paragraph_into_lines(
+    token: str,
+    *,
+    recipe: Recipe,
+    ctx: RenderContext,
+    style: ParagraphStyle,
+) -> list[str]:
     """Split a paragraph corpus token into the ``list[str]`` that
     ``render_paragraph`` expects.
 
-    Spec 06 has ``layout.mode = paragraphs`` and a yet-to-land wrap-
-    fitter that turns a free-form word stream into a fitted line list.
-    Until the wrap-fitter ships, we honor whatever line structure
-    already exists in the input — split on embedded newlines, drop
-    empties. A single-line paragraph token becomes a one-element list,
-    which ``render_paragraph`` accepts (the primitive renders any
-    ``len(lines) >= 1``).
+    Per spec 06 ``layout.max_width_px`` (when set) drives the wrap
+    budget. We fan out to :func:`fit_lines`, which shapes each
+    candidate line through HarfBuzz against the **same** font + pixel
+    size the renderer will paint with — that's why the call site pre-
+    samples a :class:`ParagraphStyle` and threads it through here:
+    sampling twice would consume RNG state and the wrap budget would
+    drift away from the painted line.
 
-    This keeps the wiring honest: once the wrap-fitter lands, callers
-    can hand it a ``lines`` argument computed from the full paragraph
-    token + ``layout.max_width_px``, replacing this helper.
+    Hard line breaks in ``token`` (already-newline-separated lines)
+    are preserved by ``fit_lines``: each chunk wraps independently and
+    the results are concatenated. A token with no embedded newlines
+    becomes one or more wrapped lines.
+
+    When ``layout.max_width_px`` is **not** set the recipe author has
+    opted out of wrap fitting — fall back to the previous ``\n``-only
+    split. A single-line paragraph token then becomes a one-element
+    list, still legal for :func:`render_paragraph`.
     """
 
+    max_width_px = recipe.layout.max_width_px
+    if max_width_px is not None and max_width_px > 0:
+        handles = ctx.font_handles(style.font_path)
+        # ``fit_lines`` measures via HarfBuzz. The freetype face's
+        # pixel-size has already been set by ``render_paragraph`` /
+        # the next render call, but ``fit_lines`` only reads
+        # ``handles.hb_face`` so the freetype state doesn't matter
+        # here.
+        lines = fit_lines(
+            token,
+            max_width_px=max_width_px,
+            handles=handles,
+            pixel_size=style.pixel_size,
+            features=style.font_features,
+        )
+        if lines:
+            return lines
+        # ``fit_lines`` returns ``[]`` for empty / whitespace-only
+        # input. Fall through to the legacy splitlines path so an
+        # all-whitespace token still surfaces as a render error from
+        # ``render_paragraph`` (rather than from us, with a less
+        # informative message).
     return [line.strip() for line in token.splitlines() if line.strip()] or [token.strip()]
 
 
@@ -351,7 +400,14 @@ def _render_sample(
         if recipe.layout.mode == "lines":
             sample = render_line(text, recipe=recipe, ctx=ctx)
         elif recipe.layout.mode == "paragraphs":
-            lines = _split_paragraph_into_lines(text)
+            # Pre-sample the paragraph style **once** so wrap-fitting
+            # measures against the same font + pixel size the renderer
+            # will paint with. ``render_paragraph`` honors the
+            # ``presampled`` arg and skips its own RNG draws when
+            # given, keeping bit-identical output to the un-pre-
+            # sampled path on the same seed.
+            style = sample_paragraph_style(recipe, ctx)
+            lines = _split_paragraph_into_lines(text, recipe=recipe, ctx=ctx, style=style)
             if not lines:
                 return (
                     None,
@@ -359,7 +415,7 @@ def _render_sample(
                     "render_error",
                     {"text": text, "message": "paragraph token has no non-empty lines"},
                 )
-            sample = render_paragraph(lines, recipe=recipe, ctx=ctx)
+            sample = render_paragraph(lines, recipe=recipe, ctx=ctx, presampled=style)
         else:
             sample = render_word_crop(text, recipe=recipe, ctx=ctx)
     except MissingGlyphError as exc:

@@ -338,3 +338,313 @@ def test_render_paragraphs_parallel_carries_line_boxes_through_workers(
         assert "unassigned_words" not in entry, (
             f"parallel-rendered {name} unexpectedly had unassigned words: {entry}"
         )
+
+
+# ---------------------------------------------------------------------------
+# M09 wrap-fitter wiring
+# ---------------------------------------------------------------------------
+
+
+# Recipe with ``layout.max_width_px`` set: the wrap-fitter should split
+# a long single-line corpus token across multiple lines so each fits
+# the budget. Single-paragraph (no blank line) so the tokenizer hands
+# the renderer a single multi-word token.
+_WRAP_RECIPE = """\
+schema_version: 1
+name: render-paragraphs-wrap
+seed: 31
+output:
+  format: pd-ocr-trainer/v1
+  mode: detection
+  destination: ./trainer-out
+  count: 1
+corpus:
+  - type: local
+    path: ./seed.txt
+fonts:
+  - path: {font}
+    weight: 1.0
+rendering:
+  font_size_pt: 16
+  dpi: 300
+  ink_color: {{ r: 10, g: 10, b: 10 }}
+  background_color: {{ r: 240, g: 235, b: 220 }}
+layout:
+  mode: paragraphs
+  padding_px: 4
+  line_spacing: 1.2
+  max_width_px: {max_width}
+"""
+
+# Long single-line paragraph (no embedded newlines) so the only path
+# from corpus token to multiple lines is the wrap-fitter. Eight short
+# Gaelic words; at a tight pixel budget they have to wrap.
+_WRAP_SEED = "ḃeaḋ saoġal mór ċeann an ḃoṫair agus ḋuine\n"
+
+
+def _setup_wrap(tmp_path: Path, max_width: int) -> Path:
+    font = _require_font()
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    rp = tmp_path / "recipe.yaml"
+    rp.write_text(
+        _WRAP_RECIPE.format(font=font, max_width=max_width),
+        encoding="utf-8",
+    )
+    (tmp_path / "seed.txt").write_text(_WRAP_SEED, encoding="utf-8")
+    return rp
+
+
+def _run_wrap(tmp_path: Path, *, max_width: int, out_name: str = "trainer-out") -> Path:
+    rp = _setup_wrap(tmp_path, max_width)
+    out = tmp_path / out_name
+    rc = main(
+        [
+            "render",
+            str(rp),
+            "--count",
+            "1",
+            "--output",
+            str(out),
+            "--seed",
+            "31",
+            "--workers",
+            "1",
+        ]
+    )
+    assert rc == 0
+    return out
+
+
+def test_wrap_fitter_splits_long_token_across_multiple_lines(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A long single-line corpus token wraps to multiple lines when
+    ``layout.max_width_px`` is tight.
+
+    Without the wrap-fitter wired into ``_split_paragraph_into_lines``,
+    the long token would land as a single line whose painted width
+    blows past the budget. With the wrap-fitter wired, the renderer
+    sees ``len(lines) > 1`` and the labels carry one polygon per
+    wrapped line.
+    """
+
+    _ = capsys
+    out = _run_wrap(tmp_path, max_width=180)
+
+    labels = json.loads((out / LABELS_FILENAME).read_text(encoding="utf-8"))
+    assert len(labels) == 1
+    (entry,) = labels.values()
+    lines = entry["lines"]
+    assert len(lines) > 1, f"expected wrap to multiple lines, got: {[ln['text'] for ln in lines]}"
+    # Each wrapped line is non-empty and the joined text recovers the
+    # original word stream (whitespace-normalized).
+    joined = " ".join(ln["text"] for ln in lines)
+    assert joined.split() == _WRAP_SEED.split()
+
+
+def test_wrap_fitter_grows_image_height_with_more_lines(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A tighter ``max_width_px`` produces more wrapped lines and a
+    taller image.
+
+    Sanity check that the wrap-fitter is actually feeding line count
+    into the renderer (rather than e.g. silently being a no-op):
+    halving the budget should increase the page height.
+    """
+
+    _ = capsys
+    wide = _run_wrap(tmp_path / "wide", max_width=400, out_name="out")
+    narrow = _run_wrap(tmp_path / "narrow", max_width=160, out_name="out")
+
+    wide_labels = json.loads((wide / LABELS_FILENAME).read_text(encoding="utf-8"))
+    narrow_labels = json.loads((narrow / LABELS_FILENAME).read_text(encoding="utf-8"))
+    (wide_entry,) = wide_labels.values()
+    (narrow_entry,) = narrow_labels.values()
+
+    wide_lines = len(wide_entry["lines"])
+    narrow_lines = len(narrow_entry["lines"])
+    assert narrow_lines > wide_lines, (
+        f"narrow budget ({narrow_lines} lines) did not exceed wide budget ({wide_lines} lines)"
+    )
+
+    _, wide_h = wide_entry["img_dimensions"]
+    _, narrow_h = narrow_entry["img_dimensions"]
+    assert narrow_h > wide_h, (
+        f"narrow page height ({narrow_h}) did not exceed wide page height ({wide_h})"
+    )
+
+
+def test_wrap_fitter_lines_stay_within_page_canvas(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Every wrapped line's polygon stays inside the page canvas.
+
+    The wrap budget is on shaped width, not painted bbox; tiny
+    overshoot is possible if the renderer's padding interacts oddly
+    with cluster bboxes. This test pins the invariant the trainer
+    actually depends on: polygons fit the page.
+    """
+
+    _ = capsys
+    out = _run_wrap(tmp_path, max_width=200)
+    labels = json.loads((out / LABELS_FILENAME).read_text(encoding="utf-8"))
+    (entry,) = labels.values()
+    w, h = entry["img_dimensions"]
+    for poly in entry["polygons"]:
+        for x, y in poly:
+            assert 0 <= x <= w, f"polygon x={x} out of bounds [0, {w}]"
+            assert 0 <= y <= h, f"polygon y={y} out of bounds [0, {h}]"
+
+
+def test_wrap_fitter_is_deterministic(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Same recipe + same seed → identical wrapped lines across runs.
+
+    Pre-sampling the paragraph style and threading it through
+    ``fit_lines`` + ``render_paragraph`` must not change the
+    determinism contract: re-running the same recipe yields the same
+    on-disk labels.
+    """
+
+    _ = capsys
+    out_a = _run_wrap(tmp_path / "a", max_width=180, out_name="out")
+    out_b = _run_wrap(tmp_path / "b", max_width=180, out_name="out")
+    labels_a = json.loads((out_a / LABELS_FILENAME).read_text(encoding="utf-8"))
+    labels_b = json.loads((out_b / LABELS_FILENAME).read_text(encoding="utf-8"))
+    assert labels_a == labels_b
+
+
+# Recipe with embedded newlines in the corpus token + a wrap budget.
+# The wrap-fitter should preserve the hard breaks while wrapping any
+# still-too-long chunks. Two-line corpus token: line 1 fits, line 2
+# is long enough to need wrapping.
+_HARDBREAK_RECIPE = _WRAP_RECIPE
+_HARDBREAK_SEED = "ḃeaḋ saoġal\nċeann an ḃoṫair agus ḋuine ṁór\n"
+
+
+def test_wrap_fitter_preserves_hard_newlines(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Hard newlines in the corpus token are preserved across wrapping.
+
+    Legacy behavior: a paragraph token that already carries line
+    structure (e.g. poetry) keeps its hard breaks; ``fit_lines``
+    wraps each chunk independently and concatenates results. Verify
+    that splitting the line that *already fits* doesn't happen — the
+    fitter should not merge a short hard-broken line with the next
+    one.
+    """
+
+    _ = capsys
+    font = _require_font()
+    rp = tmp_path / "recipe.yaml"
+    rp.write_text(
+        _HARDBREAK_RECIPE.format(font=font, max_width=400),
+        encoding="utf-8",
+    )
+    (tmp_path / "seed.txt").write_text(_HARDBREAK_SEED, encoding="utf-8")
+    out = tmp_path / "trainer-out"
+    rc = main(
+        [
+            "render",
+            str(rp),
+            "--count",
+            "1",
+            "--output",
+            str(out),
+            "--seed",
+            "31",
+            "--workers",
+            "1",
+        ]
+    )
+    assert rc == 0
+
+    labels = json.loads((out / LABELS_FILENAME).read_text(encoding="utf-8"))
+    (entry,) = labels.values()
+    line_texts = [ln["text"] for ln in entry["lines"]]
+    # Hard-broken line 1 stays on its own and isn't merged with line 2.
+    assert "ḃeaḋ saoġal" in line_texts, (
+        f"expected first hard-broken line to be preserved; got {line_texts}"
+    )
+    # The joined text recovers the original word stream.
+    joined = " ".join(line_texts)
+    assert joined.split() == _HARDBREAK_SEED.split()
+
+
+# Recipe **without** ``layout.max_width_px``: the legacy ``\n``-only
+# split path is exercised. A single-line corpus token becomes a one-
+# element line list — the wrap-fitter is intentionally not engaged.
+_NOWRAP_RECIPE = """\
+schema_version: 1
+name: render-paragraphs-nowrap
+seed: 31
+output:
+  format: pd-ocr-trainer/v1
+  mode: detection
+  destination: ./trainer-out
+  count: 1
+corpus:
+  - type: local
+    path: ./seed.txt
+fonts:
+  - path: {font}
+    weight: 1.0
+rendering:
+  font_size_pt: 16
+  dpi: 300
+  ink_color: {{ r: 10, g: 10, b: 10 }}
+  background_color: {{ r: 240, g: 235, b: 220 }}
+layout:
+  mode: paragraphs
+  padding_px: 4
+  line_spacing: 1.2
+"""
+
+
+def test_wrap_fitter_disabled_when_max_width_px_unset(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """No ``max_width_px`` → legacy ``\\n``-only split path.
+
+    A single-line corpus token must remain a single rendered line —
+    ``fit_lines`` is never engaged because the recipe author opted
+    out by leaving the budget unset.
+    """
+
+    _ = capsys
+    font = _require_font()
+    rp = tmp_path / "recipe.yaml"
+    rp.write_text(_NOWRAP_RECIPE.format(font=font), encoding="utf-8")
+    (tmp_path / "seed.txt").write_text(_WRAP_SEED, encoding="utf-8")
+    out = tmp_path / "trainer-out"
+    rc = main(
+        [
+            "render",
+            str(rp),
+            "--count",
+            "1",
+            "--output",
+            str(out),
+            "--seed",
+            "31",
+            "--workers",
+            "1",
+        ]
+    )
+    assert rc == 0
+
+    labels = json.loads((out / LABELS_FILENAME).read_text(encoding="utf-8"))
+    (entry,) = labels.values()
+    assert len(entry["lines"]) == 1, (
+        f"expected single-line render with no max_width_px, got "
+        f"{[ln['text'] for ln in entry['lines']]}"
+    )

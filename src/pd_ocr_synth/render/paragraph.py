@@ -57,6 +57,8 @@ a paragraph-wide decision).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PIL import Image
@@ -87,26 +89,44 @@ if TYPE_CHECKING:
 _DEFAULT_LINE_SPACING_MULTIPLIER = 1.2
 
 
-def render_paragraph(
-    lines: list[str],
-    *,
-    recipe: Recipe,
-    ctx: RenderContext,
-) -> RenderedSample:
-    """Render ``lines`` as one ``paragraphs``-mode sample.
+@dataclass(frozen=True, slots=True)
+class ParagraphStyle:
+    """RNG-sampled style for one paragraph render.
 
-    See module docstring for the full contract.
+    Captures every random draw ``render_paragraph`` would make from
+    its ``ctx.rng`` so a caller can pre-sample once, run the wrap-
+    fitter against the same font + pixel size, and hand the result
+    back into ``render_paragraph`` without consuming a second helping
+    of RNG state. This is the seam the M09 wrap-fitter uses to make
+    the wrap budget match what the renderer actually paints.
 
-    Raises:
-        RenderError: if ``lines`` is empty, or any line is empty /
-            whitespace-only / contains an embedded newline, or
-            shaping returns zero glyphs for any line, or no usable
-            font is available.
-        MissingGlyphError: if the chosen font lacks any non-whitespace
-            codepoint anywhere in the paragraph.
+    Returned by :func:`sample_paragraph_style`. When passed to
+    :func:`render_paragraph` via ``presampled``, the renderer skips
+    its internal sampling block and uses these values verbatim.
     """
 
-    _validate_lines(lines)
+    font_path: Path
+    font_features: dict | None
+    font_size_pt: float
+    dpi: int
+    ink_color: tuple[int, int, int]
+    background_color: tuple[int, int, int]
+    padding_px: int
+    spacing_multiplier: float
+    pixel_size: int
+
+
+def sample_paragraph_style(recipe: Recipe, ctx: RenderContext) -> ParagraphStyle:
+    """Pre-sample every RNG-driven knob :func:`render_paragraph` reads.
+
+    Consumes RNG state from ``ctx.rng`` in the **exact same order** as
+    :func:`render_paragraph`'s internal sampling, so a caller that
+    pre-samples and then passes the result back in via ``presampled``
+    sees a render bit-identical to the un-pre-sampled path.
+
+    Raises :class:`RenderError` if no usable font is available, same
+    as :func:`render_paragraph`.
+    """
 
     font = _pick_font(recipe, ctx.rng)
     font_size_pt = float(sample_value(recipe.rendering.font_size_pt, ctx.rng))
@@ -122,17 +142,74 @@ def render_paragraph(
             ctx.rng,
         )
     )
+    pixel_size = max(1, int(round(font_size_pt * dpi / 72.0)))
+    return ParagraphStyle(
+        font_path=font.path,
+        font_features=font.features,
+        font_size_pt=font_size_pt,
+        dpi=dpi,
+        ink_color=ink,
+        background_color=bg,
+        padding_px=padding,
+        spacing_multiplier=spacing_mul,
+        pixel_size=pixel_size,
+    )
+
+
+def render_paragraph(
+    lines: list[str],
+    *,
+    recipe: Recipe,
+    ctx: RenderContext,
+    presampled: ParagraphStyle | None = None,
+) -> RenderedSample:
+    """Render ``lines`` as one ``paragraphs``-mode sample.
+
+    See module docstring for the full contract.
+
+    If ``presampled`` is provided, the renderer skips its internal
+    RNG-driven style sampling and reuses those values. This is how
+    the M09 wrap-fitter call site (``run_recipe`` paragraphs dispatch)
+    keeps the wrap budget aligned with what the renderer paints —
+    the same font + pixel size measured by ``fit_lines`` is the one
+    used here. Direct callers (tests, the preview UI) can omit the
+    kwarg and get the historical behavior.
+
+    Raises:
+        RenderError: if ``lines`` is empty, or any line is empty /
+            whitespace-only / contains an embedded newline, or
+            shaping returns zero glyphs for any line, or no usable
+            font is available.
+        MissingGlyphError: if the chosen font lacks any non-whitespace
+            codepoint anywhere in the paragraph.
+    """
+
+    _validate_lines(lines)
+
+    if presampled is None:
+        style = sample_paragraph_style(recipe, ctx)
+    else:
+        style = presampled
+
+    font_path = style.font_path
+    font_features = style.font_features
+    font_size_pt = style.font_size_pt
+    dpi = style.dpi
+    ink = style.ink_color
+    bg = style.background_color
+    padding = style.padding_px
+    spacing_mul = style.spacing_multiplier
+    pixel_size = style.pixel_size
 
     # Coverage check across the whole paragraph: a font that misses a
     # codepoint on line 3 is just as unusable as one that misses on
     # line 0, and we'd rather fail fast than render half a paragraph.
     joined_non_ws = "".join(ch for line in lines for ch in line if not ch.isspace())
-    missing = _missing_codepoints(font.path, joined_non_ws)
+    missing = _missing_codepoints(font_path, joined_non_ws)
     if missing:
-        raise MissingGlyphError("\n".join(lines), font.path, missing)
+        raise MissingGlyphError("\n".join(lines), font_path, missing)
 
-    handles = ctx.font_handles(font.path)
-    pixel_size = max(1, int(round(font_size_pt * dpi / 72.0)))
+    handles = ctx.font_handles(font_path)
     handles.ft_face.set_pixel_sizes(pixel_size, pixel_size)
 
     # The face's nominal line height in pixels at this size — the
@@ -148,7 +225,7 @@ def render_paragraph(
             text=line,
             handles=handles,
             pixel_size=pixel_size,
-            features=font.features,
+            features=font_features,
             ink=ink,
             bg=bg,
         )
@@ -238,7 +315,7 @@ def render_paragraph(
         text=paragraph_text,
         image=canvas,
         bbox=(sample_min_x, sample_min_y, sample_max_x, sample_max_y),
-        font_path=font.path,
+        font_path=font_path,
         font_size_pt=font_size_pt,
         dpi=dpi,
         ink_color=ink,
