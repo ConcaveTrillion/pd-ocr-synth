@@ -14,7 +14,11 @@ Spec: [`06-rendering.md`](../specs/06-rendering.md) +
 - [x] `lines` mode — N words on a single baseline; line-level GT.
 - [~] `paragraphs` mode — wrapped block; per-line + per-word bboxes.
       (`render_paragraph` primitive lands stacking + per-line/word
-      ground truth; wrap-fitter, alignment, indent still TODO.)
+      ground truth; `run_recipe` dispatch wires
+      `output.mode = detection` + `layout.mode = paragraphs` end-to-end
+      through `DetectionWriter`, splitting paragraph corpus tokens on
+      embedded newlines until the wrap-fitter lands. Wrap-fitter,
+      alignment, indent still TODO.)
 - [ ] `pages` mode — multi-paragraph page synthesis with margins,
       configurable page size, optional headings + drop caps.
 
@@ -27,14 +31,14 @@ Spec: [`06-rendering.md`](../specs/06-rendering.md) +
 
 ### Detection writer
 
-- [~] Emit local `pd-ocr-trainer/v1` detection layout:
+- [x] Emit local `pd-ocr-trainer/v1` detection layout:
       `images/page_*.png`, `labels.json`, `manifest.jsonl`,
       `recipe.snapshot.yaml`, `stats.json`.
-      (`DetectionWriter` scaffolding lands with full force/resume
-      semantics + bbox→polygon expansion; `run_recipe` dispatch wire-up
-      still TODO. Filename matches the trainer's `labels.json` reader,
-      not the spec's earlier `pages.json` draft — see spec 08 §Detection
-      mode layout.)
+      (`DetectionWriter` lands with full force/resume semantics +
+      bbox→polygon expansion; `run_recipe` end-to-end dispatch wired
+      through `paragraphs` layout. Filename matches the trainer's
+      `labels.json` reader, not the spec's earlier `pages.json` draft —
+      see spec 08 §Detection mode layout.)
 - [ ] `labels.json` schema confirmed against
       `pd-ocr-trainer/dataset_store.py` (cross-project integration test).
 

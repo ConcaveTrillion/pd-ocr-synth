@@ -1,25 +1,38 @@
-"""End-to-end render orchestration for recognition mode (M07).
+"""End-to-end render orchestration for recognition + detection (M07/M09).
 
 ``run_recipe`` ties M03-M06 together into the trainer-consumable
-profile layout described in :mod:`pd_ocr_synth.output.recognition`:
+profile layout described in :mod:`pd_ocr_synth.output`:
 
 1. Run corpus providers + recipe-level text transforms.
 2. Tokenize for the recipe's layout mode.
 3. Pick ``count`` deterministic samples.
-4. Render + degrade each sample, streaming results into a
-   :class:`RecognitionWriter`.
+4. Render + degrade each sample, streaming results into the writer
+   that matches ``output.mode`` (recognition or detection).
 5. Honor ``--force`` / ``--resume`` semantics, including snapshot
    integrity checks.
 
-Two recognition layouts are wired in:
+Layouts wired in:
 
-- ``word_crops`` (M07) — one word per sample.
-- ``lines`` (M09) — one line per sample, with per-word bboxes
-  carried through the manifest.
+- ``recognition`` + ``word_crops`` (M07) — one word per sample.
+- ``recognition`` + ``lines`` (M09) — one line per sample, with
+  per-word bboxes carried through the manifest.
+- ``detection`` + ``paragraphs`` (M09) — multi-line paragraph per
+  sample, with per-line + per-word bboxes carried into ``labels.json``.
 
-Detection-mode layouts (``paragraphs`` / ``pages``) still raise
-:class:`RenderError` up front — those land later in M09 with a
-distinct writer.
+Layouts not yet wired:
+
+- ``detection`` + ``pages`` — multi-paragraph page synthesis is
+  the next M09 chunk; ``run_recipe`` raises :class:`RenderError`
+  up front for it.
+
+Paragraph input shape: tokenization yields one paragraph per sample
+(blank-line-separated). ``render_paragraph`` requires a pre-fitted
+``list[str]`` of lines, so until the wrap-fitter lands we split each
+paragraph token on its embedded newlines (after a ``str.splitlines``
+filter that drops empties). A paragraph with no embedded newlines
+becomes a single-line paragraph — still a legal detection-mode sample
+because ``DetectionWriter`` only requires per-line + per-word ground
+truth, not multiple lines.
 
 Determinism is the same as :mod:`pd_ocr_synth.render.preview`: the
 per-token pick is keyed on ``seed ^ 0xC0FFEE``; per-sample render +
@@ -41,9 +54,10 @@ from typing import TYPE_CHECKING
 from pd_ocr_synth.corpus import CacheStore, ProviderContext, default_cache_root
 from pd_ocr_synth.corpus.runner import collect_corpus_text
 from pd_ocr_synth.degradation import DegradationError, apply_degradation
-from pd_ocr_synth.output import RecognitionWriter
+from pd_ocr_synth.output import DetectionWriter, RecognitionWriter
 from pd_ocr_synth.render.context import RenderContext
 from pd_ocr_synth.render.line import render_line
+from pd_ocr_synth.render.paragraph import render_paragraph
 from pd_ocr_synth.render.word_crop import (
     MissingGlyphError,
     RenderError,
@@ -51,10 +65,13 @@ from pd_ocr_synth.render.word_crop import (
 )
 from pd_ocr_synth.tokenization import tokenize
 
-# Layout modes that the recognition writer understands. ``paragraphs``
-# and ``pages`` are detection-mode layouts and will be routed through
-# a different writer when M09's detection chunk lands.
-_SUPPORTED_RECOGNITION_LAYOUTS: frozenset[str] = frozenset({"word_crops", "lines"})
+# Layout modes wired through ``run_recipe``'s render dispatch. Each
+# entry must also be paired with a compatible ``output.mode`` (per
+# ``pd_ocr_synth.validation``) — ``word_crops`` / ``lines`` go with
+# the recognition writer; ``paragraphs`` goes with the detection
+# writer. ``pages`` lands in the next M09 chunk and raises a
+# :class:`RenderError` up front today.
+_SUPPORTED_LAYOUTS: frozenset[str] = frozenset({"word_crops", "lines", "paragraphs"})
 
 if TYPE_CHECKING:
     from pd_ocr_synth.recipe import Recipe
@@ -123,11 +140,11 @@ def plan_recipe(
     should pre-fetch first via ``pd-ocr-synth fetch``.
     """
 
-    if recipe.layout.mode not in _SUPPORTED_RECOGNITION_LAYOUTS:
+    if recipe.layout.mode not in _SUPPORTED_LAYOUTS:
         raise RenderError(
             f"render does not yet support layout.mode={recipe.layout.mode!r}; "
-            f"recognition writer accepts {sorted(_SUPPORTED_RECOGNITION_LAYOUTS)}. "
-            "Detection-mode layouts (paragraphs / pages) land in a later M09 chunk."
+            f"current dispatch accepts {sorted(_SUPPORTED_LAYOUTS)}. "
+            "``pages`` layout lands in a later M09 chunk."
         )
 
     effective_count = count if count is not None else recipe.output.count
@@ -186,10 +203,10 @@ def run_recipe(
     sample index → identical output bytes regardless of ``workers``.
     """
 
-    if recipe.layout.mode not in _SUPPORTED_RECOGNITION_LAYOUTS:
+    if recipe.layout.mode not in _SUPPORTED_LAYOUTS:
         raise RenderError(
             f"render does not yet support layout.mode={recipe.layout.mode!r}; "
-            f"recognition writer accepts {sorted(_SUPPORTED_RECOGNITION_LAYOUTS)}."
+            f"current dispatch accepts {sorted(_SUPPORTED_LAYOUTS)}."
         )
 
     effective_count = count if count is not None else recipe.output.count
@@ -214,7 +231,8 @@ def run_recipe(
     started = time.monotonic()
     progress_reporter = _ProgressReporter(total=effective_count, enabled=progress)
 
-    with RecognitionWriter.open(
+    writer_cls = _writer_class_for(recipe)
+    with writer_cls.open(
         recipe,
         output_dir,
         seed=effective_seed,
@@ -276,6 +294,43 @@ def run_recipe(
 # ---------------------------------------------------------------------------
 
 
+def _writer_class_for(recipe: Recipe) -> type:
+    """Pick the writer class that matches ``recipe.output.mode``.
+
+    Validation already enforces the output.mode/layout.mode pairing
+    (see :mod:`pd_ocr_synth.validation`); this helper just routes a
+    valid pair to the right concrete writer. Detection mode lights up
+    in M09; recognition has been the M07 default.
+    """
+
+    mode = recipe.output.mode
+    if mode == "recognition":
+        return RecognitionWriter
+    if mode == "detection":
+        return DetectionWriter
+    raise RenderError(f"unknown output.mode={mode!r}; expected recognition or detection")
+
+
+def _split_paragraph_into_lines(token: str) -> list[str]:
+    """Split a paragraph corpus token into the ``list[str]`` that
+    ``render_paragraph`` expects.
+
+    Spec 06 has ``layout.mode = paragraphs`` and a yet-to-land wrap-
+    fitter that turns a free-form word stream into a fitted line list.
+    Until the wrap-fitter ships, we honor whatever line structure
+    already exists in the input — split on embedded newlines, drop
+    empties. A single-line paragraph token becomes a one-element list,
+    which ``render_paragraph`` accepts (the primitive renders any
+    ``len(lines) >= 1``).
+
+    This keeps the wiring honest: once the wrap-fitter lands, callers
+    can hand it a ``lines`` argument computed from the full paragraph
+    token + ``layout.max_width_px``, replacing this helper.
+    """
+
+    return [line.strip() for line in token.splitlines() if line.strip()] or [token.strip()]
+
+
 def _render_sample(
     *,
     recipe: Recipe,
@@ -295,6 +350,16 @@ def _render_sample(
     try:
         if recipe.layout.mode == "lines":
             sample = render_line(text, recipe=recipe, ctx=ctx)
+        elif recipe.layout.mode == "paragraphs":
+            lines = _split_paragraph_into_lines(text)
+            if not lines:
+                return (
+                    None,
+                    [],
+                    "render_error",
+                    {"text": text, "message": "paragraph token has no non-empty lines"},
+                )
+            sample = render_paragraph(lines, recipe=recipe, ctx=ctx)
         else:
             sample = render_word_crop(text, recipe=recipe, ctx=ctx)
     except MissingGlyphError as exc:
@@ -344,7 +409,7 @@ def _drive_serial(
     *,
     pending: Sequence[tuple[int, str]],
     recipe: Recipe,
-    writer: RecognitionWriter,
+    writer: RecognitionWriter | DetectionWriter,
     seed: int,
     progress: _ProgressReporter,
 ) -> None:
@@ -358,15 +423,54 @@ def _drive_serial(
             apply_degrade=True,
         )
         if sample is None:
-            writer.write_skipped(index, reason=str(reason), text=token, details=details)
+            _writer_write_skipped(writer, index, reason=str(reason), text=token, details=details)
         else:
-            writer.write_rendered(
-                index,
-                sample,
-                text=token,
-                applied_degradations=applied,
-            )
+            _writer_write_rendered(writer, index, sample, text=token, applied=applied)
         progress.tick()
+
+
+def _writer_write_rendered(
+    writer: RecognitionWriter | DetectionWriter,
+    index: int,
+    sample: object,
+    *,
+    text: str,
+    applied: list[dict[str, object]],
+) -> None:
+    """Call ``write_rendered`` with the kwargs each writer accepts.
+
+    ``RecognitionWriter`` keys the on-disk label off the caller's
+    ``text``; ``DetectionWriter`` derives per-line text from the
+    sample's ``line_boxes`` so it doesn't accept a ``text`` kwarg.
+    Centralizing the branch here keeps the drive loop writer-agnostic.
+    """
+
+    if isinstance(writer, RecognitionWriter):
+        writer.write_rendered(index, sample, text=text, applied_degradations=applied)
+    else:
+        writer.write_rendered(index, sample, applied_degradations=applied)
+
+
+def _writer_write_skipped(
+    writer: RecognitionWriter | DetectionWriter,
+    index: int,
+    *,
+    reason: str,
+    text: str,
+    details: dict[str, object],
+) -> None:
+    """Mirror of :func:`_writer_write_rendered` for skip records."""
+
+    if isinstance(writer, RecognitionWriter):
+        writer.write_skipped(index, reason=reason, text=text, details=details)
+    else:
+        # Detection writer's skip record has no top-level ``text`` slot
+        # (the sample-shaped payload would normally come from line_boxes
+        # on success). We still surface the source token in ``details``
+        # so the manifest carries provenance — same precedent as the
+        # ``missing_glyph`` details dict.
+        merged = {"text": text, **details} if text and "text" not in details else dict(details)
+        writer.write_skipped(index, reason=reason, details=merged)
 
 
 # ---------------------------------------------------------------------------
@@ -433,6 +537,15 @@ def _worker_render(payload: tuple[int, str]) -> tuple[int, dict[str, object]]:
         "size": list(sample.size),
         "bbox": list(sample.bbox),
         "word_boxes": [{"text": wb.text, "bbox": list(wb.bbox)} for wb in sample.word_boxes],
+        # ``line_boxes`` ride alongside ``word_boxes`` so the parent
+        # process can rebuild a paragraph-shaped sample shim for the
+        # detection writer. Empty for layouts that don't emit line GT
+        # (``word_crops`` / ``lines``) — same shape as the in-process
+        # path.
+        "line_boxes": [
+            {"text": lb.text, "bbox": list(lb.bbox)}
+            for lb in getattr(sample, "line_boxes", ()) or ()
+        ],
         "applied_degradations": applied,
     }
 
@@ -441,7 +554,7 @@ def _drive_parallel(
     *,
     pending: Sequence[tuple[int, str]],
     recipe: Recipe,
-    writer: RecognitionWriter,
+    writer: RecognitionWriter | DetectionWriter,
     recipe_path: Path,
     seed: int,
     workers: int,
@@ -461,7 +574,8 @@ def _drive_parallel(
     ) as pool:
         for index, payload in pool.imap_unordered(_worker_render, list(pending), chunksize=1):
             if payload["status"] == "skipped":
-                writer.write_skipped(
+                _writer_write_skipped(
+                    writer,
                     index,
                     reason=str(payload["reason"]),
                     text=str(payload.get("text") or ""),
@@ -472,12 +586,17 @@ def _drive_parallel(
             progress.tick()
 
 
-def _write_parallel_rendered(writer: RecognitionWriter, index: int, payload: dict) -> None:
+def _write_parallel_rendered(
+    writer: RecognitionWriter | DetectionWriter, index: int, payload: dict
+) -> None:
     """Decode the worker's pickled PNG bytes back into a sample stub.
 
     The writer expects something duck-typed as a ``RenderedSample``;
     we build a minimal ad-hoc object so the writer can ``image.save(...)``
-    and read the recorded metadata.
+    and read the recorded metadata. Both ``word_boxes`` and
+    ``line_boxes`` are reconstructed from the payload so paragraph
+    detection runs round-trip per-line ground truth through the worker
+    boundary the same way recognition rounds-trip per-word boxes.
     """
 
     from io import BytesIO
@@ -490,7 +609,7 @@ def _write_parallel_rendered(writer: RecognitionWriter, index: int, payload: dic
     class _ParallelSample:  # noqa: N801 - one-shot data shim
         pass
 
-    from pd_ocr_synth.render.sample import WordBox
+    from pd_ocr_synth.render.sample import LineBox, WordBox
 
     s = _ParallelSample()
     s.image = image  # type: ignore[attr-defined]
@@ -507,12 +626,17 @@ def _write_parallel_rendered(writer: RecognitionWriter, index: int, payload: dic
         WordBox(text=str(wb["text"]), bbox=tuple(wb["bbox"]))  # type: ignore[arg-type]
         for wb in payload.get("word_boxes") or ()
     )
+    s.line_boxes = tuple(  # type: ignore[attr-defined]
+        LineBox(text=str(lb["text"]), bbox=tuple(lb["bbox"]))  # type: ignore[arg-type]
+        for lb in payload.get("line_boxes") or ()
+    )
 
-    writer.write_rendered(
+    _writer_write_rendered(
+        writer,
         index,
         s,
         text=payload["text"],
-        applied_degradations=payload.get("applied_degradations") or [],
+        applied=payload.get("applied_degradations") or [],
     )
 
 

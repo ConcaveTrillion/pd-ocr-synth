@@ -152,6 +152,11 @@ class DetectionStats:
     detection-specific counters (lines + words) since "samples" at the
     page granularity hides the volume of training signal each page
     actually produces.
+
+    ``tokens_unique`` matches the recognition-mode stats field — the
+    count of unique corpus tokens (paragraphs, in this mode) that
+    were attempted across the run. The ``run_recipe`` driver fills
+    this after the dispatch loop completes.
     """
 
     samples_planned: int = 0
@@ -161,6 +166,7 @@ class DetectionStats:
     fonts_used: dict[str, int] = field(default_factory=dict)
     lines_total: int = 0
     words_total: int = 0
+    tokens_unique: int = 0
     wall_time_seconds: float = 0.0
 
     def record_skip(self, reason: str) -> None:
