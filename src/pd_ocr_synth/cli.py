@@ -515,16 +515,30 @@ def _cmd_describe(recipe_arg: str, *, output_format: str) -> int:
     if output_format == "json":
         print(json.dumps(payload, indent=2, sort_keys=False))
     else:
+        # Headline summary. The full resolved recipe is dumped as JSON
+        # below, so every field is reachable; this block surfaces the
+        # values an author most commonly wants to eyeball before
+        # running ``preview``/``render``. Optional/absent fields are
+        # only printed when populated to keep the summary tight.
         print(f"recipe: {recipe.name}")
         print(f"source: {recipe.source_path}")
         print(f"schema_version: {recipe.schema_version}")
+        if recipe.description:
+            print(f"description: {recipe.description}")
+        print(f"seed: {recipe.seed}")
+        print(f"output.format: {recipe.output.format}")
         print(f"output.mode: {recipe.output.mode}")
         print(f"output.destination: {recipe.output.destination}")
         print(f"output.count: {recipe.output.count}")
         print(f"corpus: {len(recipe.corpus)} entries (not fetched)")
         print(f"text_transforms: {len(recipe.text_transforms)}")
         print(f"fonts: {len(recipe.fonts)}")
+        print(f"rendering.shaping_engine: {recipe.rendering.shaping_engine}")
+        print(f"rendering.font_size_pt: {recipe.rendering.font_size_pt}")
+        print(f"rendering.dpi: {recipe.rendering.dpi}")
         print(f"layout.mode: {recipe.layout.mode}")
+        if recipe.degradation_presets:
+            print(f"degradation_presets: {len(recipe.degradation_presets)} groups")
         print(f"degradation: {len(recipe.degradation)} stages")
         if recipe.publish and recipe.publish.hf_dataset:
             print(f"publish.hf_dataset.repo: {recipe.publish.hf_dataset.repo}")
