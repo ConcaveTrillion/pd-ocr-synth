@@ -112,6 +112,22 @@ def compute_content_sha(staging_dir: Path) -> str:
       identically to lexicographic; non-ASCII metadata names (we don't
       currently emit any) would sort by UTF-8 byte order.
 
+    Idempotency w.r.t. the embedded SHA line: when the staging README
+    already carries a ``pd-ocr-content-sha:`` front-matter line (e.g.
+    after :func:`apply_content_sha_to_readme` has run), that line is
+    stripped before the README is hashed. This makes the digest
+    invariant across the apply-then-recompute cycle the upload
+    orchestrator relies on:
+
+        digest1 = compute_content_sha(staging)        # before embed
+        apply_content_sha_to_readme(staging, digest1) # writes line
+        digest2 = compute_content_sha(staging)        # after embed
+        assert digest1 == digest2
+
+    Without this strip, the post-apply README bytes differ from the
+    pre-apply ones and the orchestrator would never see ``UP_TO_DATE``
+    on a re-publish.
+
     Parameters
     ----------
     staging_dir:
@@ -136,10 +152,15 @@ def compute_content_sha(staging_dir: Path) -> str:
     if not root.is_dir():
         raise ContentShaError(f"staging path is not a directory: {root}")
 
+    readme_path = root / README_FILENAME
+
     entries: list[tuple[str, str]] = []
     for path in _walk_files(root):
         relpath = path.relative_to(root).as_posix()
-        entries.append((relpath, _hash_file(path)))
+        if path == readme_path:
+            entries.append((relpath, _hash_readme_without_content_sha(path)))
+        else:
+            entries.append((relpath, _hash_file(path)))
 
     # Sort by relpath only. The per-file SHA is fully determined by
     # the relpath in a built staging dir, so a separate tie-break
@@ -241,6 +262,25 @@ def _hash_file(path: Path) -> str:
                 break
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _hash_readme_without_content_sha(path: Path) -> str:
+    """SHA-256 of the README's bytes with any ``pd-ocr-content-sha`` line removed.
+
+    Used by :func:`compute_content_sha` so the digest is invariant
+    across the apply-then-recompute cycle. The README is small (a few
+    KB at most), so reading it whole and re-encoding is fine.
+
+    The strip is byte-faithful to the regex
+    :data:`_CONTENT_SHA_LINE_RE`'s match — same anchors, same
+    line-terminator handling — so a README that has *no* such line
+    hashes to exactly what :func:`_hash_file` would produce, and the
+    pre-embed staging-builder digest stays unchanged.
+    """
+
+    text = path.read_text(encoding="utf-8")
+    stripped = _CONTENT_SHA_LINE_RE.sub("", text)
+    return hashlib.sha256(stripped.encode("utf-8")).hexdigest()
 
 
 # Match a top-level YAML key line for ``pd-ocr-content-sha``. Tolerant

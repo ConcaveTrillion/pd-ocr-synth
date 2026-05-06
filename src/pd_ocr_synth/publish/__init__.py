@@ -42,6 +42,12 @@ from pd_ocr_synth.publish.idempotency import (
     IdempotencyState,
     check_idempotency,
 )
+from pd_ocr_synth.publish.orchestrator import (
+    PublishError,
+    PublishResult,
+    PublishState,
+    publish_recognition,
+)
 from pd_ocr_synth.publish.preflight import (
     REQUIRED_FRONT_MATTER_KEYS,
     PreflightError,
@@ -87,6 +93,9 @@ __all__ = [
     "ManifestSummary",
     "PreflightError",
     "PreflightReport",
+    "PublishError",
+    "PublishResult",
+    "PublishState",
     "ResolvedToken",
     "StagingResult",
     "SummaryError",
@@ -100,6 +109,7 @@ __all__ = [
     "format_resolution_chain",
     "format_summary",
     "load_card_inputs",
+    "publish_recognition",
     "render_dataset_card",
     "resolve_hf_token",
     "summarize_metadata",

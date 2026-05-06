@@ -451,3 +451,46 @@ def test_full_round_trip_compute_then_embed(tmp_path: Path) -> None:
     front_matter, _, body = text.partition("\n---\n")
     assert f"{CONTENT_SHA_KEY}:" in front_matter
     assert f"{CONTENT_SHA_KEY}:" not in body
+
+
+def test_compute_content_sha_is_invariant_after_apply(tmp_path: Path) -> None:
+    """The upload orchestrator's idempotency loop depends on
+    ``compute_content_sha`` returning the same value before and after
+    :func:`apply_content_sha_to_readme` writes the digest into the
+    README. Without this invariance, a re-publish over an unchanged
+    staging dir would never see ``UP_TO_DATE``.
+    """
+
+    staging = _build_staging(tmp_path)
+    digest_before = compute_content_sha(staging)
+
+    apply_content_sha_to_readme(staging, digest_before)
+    digest_after = compute_content_sha(staging)
+
+    assert digest_before == digest_after
+
+
+def test_compute_content_sha_invariant_holds_for_any_pinned_value(
+    tmp_path: Path,
+) -> None:
+    """A README with a *different* (e.g. stale or tampered)
+    ``pd-ocr-content-sha`` value must still hash to the canonical
+    pre-embed digest. The line is stripped before hashing regardless
+    of its current value.
+    """
+
+    staging = _build_staging(tmp_path)
+    canonical = compute_content_sha(staging)
+
+    # First apply: legitimate digest.
+    apply_content_sha_to_readme(staging, canonical)
+    assert compute_content_sha(staging) == canonical
+
+    # Second apply: a stale value (e.g. left over from a previous
+    # build). The hash is still the canonical pre-embed digest.
+    apply_content_sha_to_readme(staging, "0" * 64)
+    assert compute_content_sha(staging) == canonical
+
+    # Even an obviously-bogus value (not a hex digest at all).
+    apply_content_sha_to_readme(staging, "definitely-not-a-real-sha")
+    assert compute_content_sha(staging) == canonical
