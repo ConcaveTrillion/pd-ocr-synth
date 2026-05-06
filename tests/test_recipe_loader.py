@@ -240,6 +240,47 @@ def test_corpus_discriminator_rejects_unknown_type(write_recipe) -> None:
         load_recipe(write_recipe(yaml_text))
 
 
+def test_web_corpus_field_path_loads_from_yaml(write_recipe) -> None:
+    """``field_path`` is documented in spec 04 as the JSON sub-tree
+    selector for ``parser: json``. Until iter 96 it was missing from
+    ``WebCorpus`` and pydantic's ``extra='forbid'`` rejected it at
+    load time, leaving the option unreachable from any YAML recipe and
+    making the web provider's ``field_path``-aware ``cache_key`` (iter
+    95) effectively dead code from the loader's perspective.
+
+    This regression test pins the load path: a recipe that names
+    ``field_path`` must (a) parse cleanly, (b) round-trip the value
+    onto the typed model, and (c) include it in the ``model_dump``
+    that the corpus runner hands to ``WebProvider.fetch``. If anyone
+    re-removes the field, all three assertions fail at once.
+    """
+
+    yaml_text = MINIMAL_RECIPE.replace(
+        "  - type: local\n    path: ./seed.txt\n",
+        (
+            "  - type: local\n    path: ./seed.txt\n"
+            "  - type: web\n"
+            "    url: https://example.com/api.json\n"
+            "    parser: json\n"
+            "    field_path: $.entries[*].body\n"
+        ),
+    )
+    recipe = load_recipe(write_recipe(yaml_text))
+    web_entries = [c for c in recipe.corpus if isinstance(c, WebCorpus)]
+    assert len(web_entries) == 1
+    web = web_entries[0]
+    assert web.field_path == "$.entries[*].body"
+    # Default is ``None`` for any WebCorpus that omits the key. Other
+    # web entries in real recipes (e.g. plain HTML) must keep that
+    # default so they don't accidentally invalidate cached payloads.
+    assert WebCorpus(type="web", url="https://x").field_path is None
+    # The runner reaches the provider via ``model_dump``. The dump
+    # must include ``field_path`` so iter-95's ``cache_key`` actually
+    # sees the value supplied by the recipe author.
+    dumped = web.model_dump(mode="python")
+    assert dumped["field_path"] == "$.entries[*].body"
+
+
 # ---------------------------------------------------------------------------
 # loader error paths
 # ---------------------------------------------------------------------------

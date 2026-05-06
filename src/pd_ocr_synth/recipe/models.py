@@ -107,6 +107,12 @@ class WebCorpus(_CorpusBase):
     type: Literal["web"]
     url: str
     parser: str | None = None
+    # JSONPath-lite selector applied when ``parser == "json"`` (see spec
+    # 04 "Parsers" table). ``None`` returns the whole decoded body. The
+    # field is part of the web provider's cache key, so two recipes
+    # pulling different sub-trees from the same URL each get their own
+    # cache slot.
+    field_path: str | None = None
 
 
 class LocalCorpus(_CorpusBase):

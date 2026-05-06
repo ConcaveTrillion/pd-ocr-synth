@@ -809,6 +809,18 @@
           ],
           "default": null,
           "title": "Parser"
+        },
+        "field_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Field Path"
         }
       },
       "required": [
