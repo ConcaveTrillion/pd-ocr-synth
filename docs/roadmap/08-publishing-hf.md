@@ -11,18 +11,20 @@ Spec: [`10-publishing.md`](../specs/10-publishing.md).
 
 ### `pd_ocr_synth.publish.recognition`
 
-- [ ] Read local recognition output: `images/`, `labels.json`,
+- [x] Read local recognition output: `images/`, `labels.json`,
       `manifest.jsonl`, `recipe.snapshot.yaml`, `stats.json`.
-- [ ] Build HF imagefolder layout in a staging dir:
-  - `data/*.png` — copied (or symlinked then materialized).
-  - `metadata.jsonl` — one row per image with `file_name`, `text`,
-    plus flat provenance columns (`font`, `font_size_pt`,
-    `degradations`, `corpus`).
-  - `recipe.snapshot.yaml` — copied as-is.
-  - `README.md` — generated dataset card with the documented YAML
-    front matter (license, task, language, tags, `pd-ocr-shape`,
-    `pd-ocr-source`, `pd-ocr-recipe-sha`,
-    `pd-ocr-render-tool-version`).
+      (`stats.json` is read at README-generation time only; the
+      staging builder doesn't need it.)
+- [x] Build HF imagefolder layout in a staging dir:
+  - [x] `data/*.png` — copied (or symlinked then materialized).
+  - [x] `metadata.jsonl` — one row per image with `file_name`, `text`,
+        plus flat provenance columns (`font`, `font_size_pt`,
+        `degradations`, `corpus`).
+  - [x] `recipe.snapshot.yaml` — copied as-is.
+  - [ ] `README.md` — generated dataset card with the documented YAML
+        front matter (license, task, language, tags, `pd-ocr-shape`,
+        `pd-ocr-source`, `pd-ocr-recipe-sha`,
+        `pd-ocr-render-tool-version`).
 
 ### Auth resolution
 
@@ -56,9 +58,11 @@ Spec: [`10-publishing.md`](../specs/10-publishing.md).
 
 ### Tests
 
-- [ ] Staging-dir build: given a fixture `<destination>/` with 5
+- [x] Staging-dir build: given a fixture `<destination>/` with 5
       samples, produce a valid imagefolder structure with
-      `metadata.jsonl` matching expected content.
+      `metadata.jsonl` matching expected content. Round-trip test
+      against the real `RecognitionWriter` locks the M07/M08
+      manifest contract.
 - [ ] Idempotency: second publish without local changes is a no-op.
 - [ ] `--dry-run`: no network, exits 0, prints the plan.
 - [ ] Auth error path: missing token → exit 7 with the resolution
