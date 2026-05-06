@@ -65,6 +65,23 @@ Gaelic uses the first three; those are the priority of M03.
 - [x] `drop_lines_matching`, `keep_only_lines_matching`,
       `min_line_chars` applied per corpus entry, post-fetch, before
       the entry's text joins the recipe-wide pool.
+- [ ] `max_chars` per-entry truncation (deferred — spec 04 documents
+      the key, the recipe model accepts it on `_CorpusBase`, but no
+      provider or post-fetch stage reads it. Validation now surfaces
+      explicit overrides as `corpus_max_chars_not_implemented` so
+      recipes don't silently lose the truncation they asked for. To
+      implement: apply at the end of `apply_filter` in
+      `corpus/filters.py`, or as a final step inside
+      `collect_corpus_text` if the truncation should be post-join).
+- [ ] `min_word_length` post-tokenization length filter (deferred —
+      same story as `max_chars`: spec 04 documents it, the recipe
+      model accepts it, but tokenization itself doesn't yet exist as
+      a corpus-stage filter — `pd_ocr_synth.tokenization` is the
+      render-time word splitter. Validation now surfaces explicit
+      overrides > 1 as `corpus_min_word_length_not_implemented`. To
+      implement: decide whether the filter runs as a corpus-stage
+      tokenize-then-rejoin pass or as a render-time word-pool filter,
+      then wire and remove the validation guard).
 
 ### CLI surface
 

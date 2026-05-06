@@ -180,6 +180,140 @@ def test_implemented_corpus_providers_pass_clean(
     assert "corpus_provider_not_implemented" not in codes, [i.format() for i in report.issues]
 
 
+def test_corpus_max_chars_override_is_error(tmp_path: Path, writable_font_bytes: bytes) -> None:
+    """Spec-04 ``max_chars`` override is unread; surface as validate-time error.
+
+    ``_CorpusBase.max_chars`` is documented in spec 04 (Common keys
+    table) and accepted by the recipe model, but no provider or
+    post-fetch stage reads it — setting ``max_chars: 1024`` on a
+    corpus entry is silently ignored. Same "worse than a crash" gap
+    the iter-65 / iter-73 / iter-74 / iter-75 / iter-76
+    ``*_not_implemented`` precedents address: surface up front so the
+    user discovers the gap rather than wondering why their truncation
+    knob did nothing.
+
+    The default (``None``, "unlimited") is a no-op and must not fire
+    — only an explicit override is an error.
+    """
+
+    font = tmp_path / "fake.otf"
+    font.write_bytes(writable_font_bytes)
+    seed = _make_file(tmp_path / "seed.txt", "hello world\n")
+    yaml_text = _minimal_yaml(
+        font=str(font),
+        dest=str(tmp_path / "out"),
+        corpus=str(seed),
+    )
+    # Inject ``max_chars: 1024`` into the local corpus entry. The
+    # ``_minimal_yaml`` template anchors on ``    path: <seed>\n``,
+    # so we splice the override right after that line.
+    yaml_text = yaml_text.replace(
+        f"    path: {seed}\n",
+        f"    path: {seed}\n    max_chars: 1024\n",
+    )
+    recipe = load_recipe(_write(tmp_path, yaml_text))
+    report = validate_recipe(recipe)
+    codes = [i.code for i in report.errors]
+    assert "corpus_max_chars_not_implemented" in codes, [i.format() for i in report.issues]
+    msg = next(i.message for i in report.errors if i.code == "corpus_max_chars_not_implemented")
+    # Error message points at the roadmap so the user knows where to
+    # look for status / contribute, matching the existing
+    # ``*_not_implemented`` shape.
+    assert "03-corpus.md" in msg
+    assert "max_chars" in msg
+
+
+def test_corpus_max_chars_default_passes_clean(tmp_path: Path, writable_font_bytes: bytes) -> None:
+    """The default ``max_chars=None`` (unlimited) must not fire the check.
+
+    Companion to ``test_corpus_max_chars_override_is_error``: pin the
+    negative-space invariant that the new check does *not* fire on
+    the documented default. If a future refactor accidentally inverts
+    the polarity (rejecting ``None`` / unset), every recipe that
+    omits the key would suddenly fail to validate.
+    """
+
+    font = tmp_path / "fake.otf"
+    font.write_bytes(writable_font_bytes)
+    seed = _make_file(tmp_path / "seed.txt", "hello\n")
+    yaml_text = _minimal_yaml(
+        font=str(font),
+        dest=str(tmp_path / "out"),
+        corpus=str(seed),
+    )
+    recipe = load_recipe(_write(tmp_path, yaml_text))
+    report = validate_recipe(recipe)
+    codes = [i.code for i in report.errors]
+    assert "corpus_max_chars_not_implemented" not in codes, [i.format() for i in report.issues]
+
+
+def test_corpus_min_word_length_override_is_error(
+    tmp_path: Path, writable_font_bytes: bytes
+) -> None:
+    """Spec-04 ``min_word_length`` override is unread; surface as error.
+
+    ``_CorpusBase.min_word_length`` is documented in spec 04 (Common
+    keys table) as "Drop tokens shorter than this after tokenization"
+    and accepted by the recipe model, but no provider or
+    post-tokenization stage reads it. The default (``1``) is a
+    natural no-op (every non-empty token has ``len >= 1``); only an
+    explicit override > 1 is a non-default the user expects to filter.
+    """
+
+    font = tmp_path / "fake.otf"
+    font.write_bytes(writable_font_bytes)
+    seed = _make_file(tmp_path / "seed.txt", "hello world\n")
+    yaml_text = _minimal_yaml(
+        font=str(font),
+        dest=str(tmp_path / "out"),
+        corpus=str(seed),
+    )
+    yaml_text = yaml_text.replace(
+        f"    path: {seed}\n",
+        f"    path: {seed}\n    min_word_length: 3\n",
+    )
+    recipe = load_recipe(_write(tmp_path, yaml_text))
+    report = validate_recipe(recipe)
+    codes = [i.code for i in report.errors]
+    assert "corpus_min_word_length_not_implemented" in codes, [i.format() for i in report.issues]
+    msg = next(
+        i.message for i in report.errors if i.code == "corpus_min_word_length_not_implemented"
+    )
+    assert "03-corpus.md" in msg
+    assert "min_word_length" in msg
+
+
+def test_corpus_min_word_length_default_passes_clean(
+    tmp_path: Path, writable_font_bytes: bytes
+) -> None:
+    """The default ``min_word_length=1`` (no-op) must not fire the check.
+
+    Companion to ``test_corpus_min_word_length_override_is_error``.
+    Also exercises the explicit-equals-default case (``min_word_length:
+    1``) — a recipe author writing the default out for documentation
+    purposes must not be punished for it.
+    """
+
+    font = tmp_path / "fake.otf"
+    font.write_bytes(writable_font_bytes)
+    seed = _make_file(tmp_path / "seed.txt", "hello\n")
+    yaml_text = _minimal_yaml(
+        font=str(font),
+        dest=str(tmp_path / "out"),
+        corpus=str(seed),
+    )
+    yaml_text = yaml_text.replace(
+        f"    path: {seed}\n",
+        f"    path: {seed}\n    min_word_length: 1\n",
+    )
+    recipe = load_recipe(_write(tmp_path, yaml_text))
+    report = validate_recipe(recipe)
+    codes = [i.code for i in report.errors]
+    assert "corpus_min_word_length_not_implemented" not in codes, [
+        i.format() for i in report.issues
+    ]
+
+
 def test_unimplemented_text_transform_is_error(tmp_path: Path) -> None:
     """Spec-known but not-yet-registered text transforms must error at validate time.
 

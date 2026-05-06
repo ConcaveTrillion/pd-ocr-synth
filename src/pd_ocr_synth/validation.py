@@ -288,6 +288,19 @@ def _check_corpus(recipe: Recipe) -> list[ValidationIssue]:
       catches ``hf_dataset`` (modelled in ``recipe.models`` but not yet
       registered with ``default_registry``); see
       ``docs/roadmap/03-corpus.md`` "Built-in providers" for status.
+    - ``corpus_max_chars_not_implemented`` (error) and
+      ``corpus_min_word_length_not_implemented`` (error): both keys are
+      documented in spec 04 (Common keys table) and modelled on
+      ``_CorpusBase``, but no provider or downstream pipeline reads
+      them. ``max_chars`` is meant to truncate per-entry text after a
+      char limit; ``min_word_length`` is meant to drop short tokens
+      after tokenization. Setting either silently has no effect today
+      — exactly the "worse than a crash" gap the iter-65 / iter-73 /
+      iter-74 / iter-75 / iter-76 ``*_not_implemented`` precedents
+      address. Surface at validate time, point at the spec, and keep
+      the *defaults* (``max_chars=None`` / ``min_word_length=1``,
+      which are no-ops) clean. See
+      ``docs/roadmap/03-corpus.md`` "Closeout notes" for follow-on.
     """
 
     out: list[ValidationIssue] = []
@@ -317,6 +330,43 @@ def _check_corpus(recipe: Recipe) -> list[ValidationIssue]:
                         "See docs/roadmap/03-corpus.md (Built-in providers)."
                     ),
                     location=f"corpus[{i}].type",
+                )
+            )
+        # Orphan per-entry filter keys: documented in spec 04 (Common
+        # keys table) and accepted by ``_CorpusBase`` but unread by any
+        # provider or by the post-fetch pipeline. The defaults
+        # (``max_chars=None`` / ``min_word_length=1``) are no-ops; only
+        # an explicit non-default override needs to error.
+        if entry.max_chars is not None:
+            out.append(
+                ValidationIssue(
+                    severity="error",
+                    code="corpus_max_chars_not_implemented",
+                    message=(
+                        f"corpus[{i}].max_chars is in spec 04 (Common keys) but not yet "
+                        "honored by any M03 provider; the override would be silently "
+                        "ignored. Remove the key (or leave it unset) until truncation "
+                        "lands. See docs/roadmap/03-corpus.md."
+                    ),
+                    location=f"corpus[{i}].max_chars",
+                )
+            )
+        # ``min_word_length`` defaults to 1 (no-op: every non-empty
+        # token passes a >= 1 char check). Anything > 1 is a non-default
+        # override the user expects to filter tokens.
+        if entry.min_word_length > 1:
+            out.append(
+                ValidationIssue(
+                    severity="error",
+                    code="corpus_min_word_length_not_implemented",
+                    message=(
+                        f"corpus[{i}].min_word_length is in spec 04 (Common keys) but "
+                        "not yet honored by any M03/M04 stage; the override would be "
+                        "silently ignored. Remove the key (or set it to 1) until "
+                        "post-tokenization length filtering lands. "
+                        "See docs/roadmap/03-corpus.md."
+                    ),
+                    location=f"corpus[{i}].min_word_length",
                 )
             )
     return out
