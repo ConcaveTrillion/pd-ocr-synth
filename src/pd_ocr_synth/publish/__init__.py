@@ -56,14 +56,23 @@ from pd_ocr_synth.publish.summary import (
     format_summary,
     summarize_metadata,
 )
+from pd_ocr_synth.publish.transport import (
+    CommitInfo,
+    FakeTransport,
+    HfTransport,
+    TransportError,
+)
 
 __all__ = [
     "CONTENT_SHA_ALGORITHM",
     "CONTENT_SHA_KEY",
+    "CommitInfo",
     "ContentShaError",
     "DATA_DIRNAME",
     "DatasetCardInputs",
+    "FakeTransport",
     "HF_TOKEN_ENV_VAR",
+    "HfTransport",
     "METADATA_FILENAME",
     "README_FILENAME",
     "REQUIRED_FRONT_MATTER_KEYS",
@@ -74,6 +83,7 @@ __all__ = [
     "ResolvedToken",
     "StagingResult",
     "SummaryError",
+    "TransportError",
     "apply_content_sha_to_readme",
     "assert_staging_publish_ready",
     "build_recognition_staging",
