@@ -380,6 +380,129 @@ def test_known_degradation_set_includes_canonical_kinds() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Spec ↔ code drift guard for degradation kinds.
+#
+# ``KNOWN_DEGRADATION_KINDS`` is the catalog the validator dispatches
+# against — anything not in this set surfaces ``degradation_kind_unknown``
+# (a *typo* error). Anything in this set but not yet registered with the
+# M06 runtime surfaces ``degradation_kind_not_implemented`` (a clean
+# "future work" gate, see iter 65 fix).
+#
+# That dispatch only works while the catalog is **kept in sync with**
+# ``docs/specs/07-degradation.md``. If a spec PR adds a new kind but
+# forgets ``KNOWN_DEGRADATION_KINDS``, recipes using the spec'd kind
+# fall through to ``degradation_kind_unknown`` and the user gets a
+# misleading "did you typo this?" error instead of a clear "not yet
+# implemented" message. Conversely, if a kind is removed from the spec
+# but the catalog still lists it, ``validate`` happily accepts a kind
+# the docs no longer describe.
+#
+# This pair of meta-tests parses the spec doc and asserts the two sides
+# match. They have to be kept in lockstep — by design — so any drift
+# caught here is a real bug in either the doc or the catalog.
+# ---------------------------------------------------------------------------
+
+
+def _spec_known_degradation_kinds() -> frozenset[str]:
+    """Extract the canonical degradation-kind set from the spec doc.
+
+    Parses h3 headers in ``docs/specs/07-degradation.md`` of the form
+    ``### \\`name\\``` or ``### \\`a\\` / \\`b\\``` (the ``brightness``
+    / ``contrast`` pair). Anything outside the kind catalog is gated
+    by section header so unrelated h3s in future revisions of the doc
+    don't accidentally enter the set.
+    """
+
+    import re
+
+    spec_path = Path(__file__).resolve().parent.parent / "docs" / "specs" / "07-degradation.md"
+    text = spec_path.read_text(encoding="utf-8")
+    # Catalog sections, in spec order. "Composition presets" and
+    # "Custom degradation stages" are not kind catalogs and are
+    # intentionally excluded.
+    catalog_sections = (
+        "## Geometric",
+        "## Optical",
+        "## Print / paper",
+        "## Compression",
+        "## Color space",
+    )
+    kinds: set[str] = set()
+    in_catalog = False
+    h3_re = re.compile(r"^###\s+(.+)$")
+    backtick_re = re.compile(r"`([a-z_][a-z0-9_]*)`")
+    for line in text.splitlines():
+        if line.startswith("## "):
+            in_catalog = line.strip() in catalog_sections
+            continue
+        if not in_catalog:
+            continue
+        m = h3_re.match(line)
+        if not m:
+            continue
+        for name in backtick_re.findall(m.group(1)):
+            kinds.add(name)
+    return frozenset(kinds)
+
+
+def test_known_degradation_kinds_matches_spec_doc() -> None:
+    """``KNOWN_DEGRADATION_KINDS`` must mirror the spec catalog 1:1.
+
+    ``preset`` is the structural marker the loader expands away before
+    the validator runs; it is intentionally accepted by the catalog
+    even though the spec lists it under "Composition presets" rather
+    than as a kind h3. Strip it out for the comparison.
+    """
+
+    spec_kinds = _spec_known_degradation_kinds()
+    catalog_kinds = KNOWN_DEGRADATION_KINDS - {"preset"}
+
+    missing_from_catalog = spec_kinds - catalog_kinds
+    extra_in_catalog = catalog_kinds - spec_kinds
+    assert not missing_from_catalog, (
+        f"docs/specs/07-degradation.md lists kinds not in "
+        f"KNOWN_DEGRADATION_KINDS: {sorted(missing_from_catalog)}. "
+        "Update src/pd_ocr_synth/validation.py:KNOWN_DEGRADATION_KINDS."
+    )
+    assert not extra_in_catalog, (
+        f"KNOWN_DEGRADATION_KINDS lists kinds not in "
+        f"docs/specs/07-degradation.md: {sorted(extra_in_catalog)}. "
+        "Either add the kind to the spec doc or drop it from the catalog."
+    )
+
+
+def test_registered_degradation_kinds_subset_of_spec() -> None:
+    """The M06 runtime registry must only register spec-listed kinds.
+
+    A registered kind absent from the spec catalog would render fine
+    but never be reachable from a validated recipe (the validator would
+    reject it as ``degradation_kind_unknown``). That's a silent gap
+    between what the runtime can do and what users can ask for —
+    catch it here.
+
+    The reverse direction (catalog kinds *not* registered) is
+    intentional and covered by ``degradation_kind_not_implemented`` at
+    validate time, so it's not asserted here.
+    """
+
+    from pd_ocr_synth.degradation.pipeline import (
+        REGISTRY,
+        _ensure_builtins_registered,
+    )
+
+    _ensure_builtins_registered()
+    registered = frozenset(REGISTRY)
+    spec_kinds = _spec_known_degradation_kinds()
+    extra = registered - spec_kinds
+    assert not extra, (
+        f"degradation registry registers kinds not listed in "
+        f"docs/specs/07-degradation.md: {sorted(extra)}. "
+        "Either add the kind to the spec doc or remove the "
+        "register_*_stage call."
+    )
+
+
+# ---------------------------------------------------------------------------
 # paragraph_alignment (M09 paragraph alignment)
 # ---------------------------------------------------------------------------
 
