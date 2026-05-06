@@ -316,15 +316,19 @@ def test_publish_corrupt_local_output_exits_six(
     assert "images" in err.lower()
 
 
-def test_publish_real_upload_returns_not_implemented(
+def test_publish_real_upload_without_token_exits_seven(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Without ``--dry-run`` we return exit 1 with a "use --dry-run" hint
-    until the upload chunk lands. Documented as the bridge state."""
+    """Real upload (no ``--dry-run``) requires a token. Spec 01 maps
+    publish auth failures to exit 7; spec 10 § Errors and recovery
+    pins the same. The auth-error message must name the spec-mandated
+    resolution chain so the user knows how to fix it.
+    """
 
     monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.delenv("HUGGING_FACE_HUB_TOKEN", raising=False)
     monkeypatch.setenv("HF_HOME", str(tmp_path / "hf-home"))
 
     out = tmp_path / "trainer-out"
@@ -334,9 +338,38 @@ def test_publish_real_upload_returns_not_implemented(
 
     rc = main(["publish", str(rp), "--repo", "alice/x"])
     err = capsys.readouterr().err
-    assert rc == 1
-    assert "not implemented" in err.lower()
-    assert "--dry-run" in err
+    assert rc == 7
+    # Auth-error message names every step of the resolution chain so
+    # the user has an actionable fix.
+    assert "--token" in err
+    assert "HF_TOKEN" in err
+
+
+def test_publish_real_upload_with_token_but_no_sdk_exits_seven(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A real upload with a resolved token but no SDK adapter installed
+    still fails at exit 7 — :class:`SdkUnavailableError` is a
+    :class:`TransportError` and lands in the publish-auth branch.
+    Documents the bridge state until the SDK adapter lands.
+    """
+
+    monkeypatch.setenv("HF_TOKEN", "hf_test_token_value_aaaaaaaaaaaaaaaaaaaa")
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf-home"))
+
+    out = tmp_path / "trainer-out"
+    rp = _setup_recipe(tmp_path, with_publish=False, dest=out)
+    _do_render(rp, out)
+    capsys.readouterr()
+
+    rc = main(["publish", str(rp), "--repo", "alice/x"])
+    err = capsys.readouterr().err
+    assert rc == 7
+    # The remediation hint should mention either huggingface_hub or
+    # --dry-run so the user knows how to proceed.
+    assert "huggingface_hub" in err.lower() or "--dry-run" in err
 
 
 def test_publish_private_and_public_mutually_exclusive(

@@ -2,9 +2,10 @@
 
 This module is the glue between the argparse-built CLI surface in
 ``pd_ocr_synth.cli`` and the publish primitives that already exist
-(staging build, preflight, summary, content-SHA, token resolver). The
-split keeps ``cli.py`` short and lets the dry-run flow be exercised in
-isolation by tests that don't need to round-trip through ``main()``.
+(staging build, preflight, summary, content-SHA, token resolver,
+upload orchestrator). The split keeps ``cli.py`` short and lets each
+flow (dry-run preview, real upload) be exercised in isolation by
+tests that don't need to round-trip through ``main()``.
 
 Per ``docs/specs/10-publishing.md`` and ``docs/roadmap/08-publishing-hf.md``:
 
@@ -14,29 +15,38 @@ Per ``docs/specs/10-publishing.md`` and ``docs/roadmap/08-publishing-hf.md``:
 - Auth resolution attempts are reported by *source label only*
   ("flag", "env", "cache") — the token value is never echoed. A
   missing token is **not** fatal in dry-run mode (you can preview
-  without credentials), only in real upload mode (M08 later chunk).
-- Real upload (no ``--dry-run``) is **not yet implemented** here. The
-  CLI returns the documented exit-code-1 stub for that path until the
-  upload chunk lands. (Spec 01 § Exit codes maps real publish failures
-  to exit 7; the dry-run path returns 0 on success.)
+  without credentials), only in real upload mode where the orchestrator
+  needs a transport.
+- Real upload (no ``--dry-run``) calls
+  :func:`pd_ocr_synth.publish.publish_recognition` against the
+  transport produced by ``transport_factory`` (default
+  :func:`pd_ocr_synth.publish.make_default_transport`). The factory
+  is *injectable* so tests substitute a
+  :class:`pd_ocr_synth.publish.FakeTransport` and the production CLI
+  default lazy-imports ``huggingface_hub``. Until the SDK adapter
+  lands, the production factory raises
+  :class:`pd_ocr_synth.publish.SdkUnavailableError`, which is a
+  :class:`pd_ocr_synth.publish.TransportError` and therefore maps to
+  the documented exit-7 publish failure.
 
-Dry-run as the first user-visible publish surface is deliberate: it
-exercises every primitive that landed in earlier chunks end-to-end,
-gives users a pre-flight they can run before committing to an upload,
-and makes the format-conversion work auditable without an HF token.
+Dry-run remains the first user-visible publish surface: it exercises
+every primitive that landed in earlier chunks end-to-end, gives users
+a pre-flight they can run before committing to an upload, and makes
+the format-conversion work auditable without an HF token.
 
-The temp-staging strategy lets ``--dry-run`` work even when a real
-``--repo`` upload would refuse: we never write into the
-``recipe.output.destination``'s parent (which would be presumptuous)
-and the temp dir is auto-cleaned. The cost is that the staging build
-runs each time; that's deliberate — the SHA depends on the staging
-contents, so reusing a stale staging dir would lie about the digest.
+The temp-staging strategy is shared by both modes — we never write
+into ``recipe.output.destination``'s parent (which would be
+presumptuous) and the temp dir is auto-cleaned. The cost is that the
+staging build runs each time; that's deliberate — the SHA depends on
+the staging contents, so reusing a stale staging dir would lie about
+the digest.
 """
 
 from __future__ import annotations
 
 import sys
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -46,6 +56,14 @@ from pd_ocr_synth.publish.auth import (
     format_resolution_chain,
     resolve_hf_token,
 )
+from pd_ocr_synth.publish.commit_message import resolve_commit_message
+from pd_ocr_synth.publish.content_sha import ContentShaError
+from pd_ocr_synth.publish.orchestrator import (
+    PublishError,
+    PublishResult,
+    PublishState,
+    publish_recognition,
+)
 from pd_ocr_synth.publish.preflight import (
     PreflightError,
     assert_staging_publish_ready,
@@ -54,11 +72,20 @@ from pd_ocr_synth.publish.recognition import (
     StagingError,
     build_recognition_staging,
 )
+from pd_ocr_synth.publish.sdk_transport import make_default_transport
 from pd_ocr_synth.publish.summary import (
     SummaryError,
     format_summary,
     summarize_metadata,
 )
+from pd_ocr_synth.publish.transport import HfTransport, TransportError
+
+# Type alias for the injectable transport factory. Production passes
+# :func:`make_default_transport`; tests pass a lambda that closes over
+# a :class:`FakeTransport`. Captured as a named alias so the public
+# :func:`cmd_publish` signature is documented in one place rather than
+# inlining a long callable type.
+TransportFactory = Callable[[str], HfTransport]
 
 # Exit codes (must match ``docs/specs/01-cli.md``). Mirrored here as
 # constants so the CLI dispatch and the runner share one source of
@@ -231,6 +258,10 @@ def cmd_publish(
     token_flag: str | None,
     output_override: str | None,
     dry_run: bool,
+    no_create: bool = False,
+    tag: str | None = None,
+    message: str | None = None,
+    transport_factory: TransportFactory | None = None,
 ) -> int:
     """Top-level dispatch for ``pd-ocr-synth publish``.
 
@@ -239,10 +270,29 @@ def cmd_publish(
     onto the keyword params here so this function is the single place
     that knows about the publish exit-code mapping.
 
-    Real upload (``--dry-run`` False) is not implemented yet — the
-    upload chunk lands later in M08. We return the canonical
-    "not implemented" exit (1) in that case so existing M07-era
-    tooling behavior is preserved.
+    Parameters
+    ----------
+    recipe_arg, repo_flag, private, public, token_flag, output_override, dry_run:
+        Direct passthroughs from the argparse layer; see spec 01's
+        ``publish`` section for semantics.
+    no_create:
+        Spec 10 § Errors and recovery: ``--no-create`` flips
+        ``allow_create=False`` on the orchestrator. A missing repo
+        then fails with exit 7 instead of being auto-created.
+    tag:
+        Spec 10 § Versioning: optional version tag created against
+        the upload commit.
+    message:
+        Spec 10 § Versioning: ``--message <MSG>`` overrides the
+        auto-generated commit message. ``None`` falls back to the
+        ``pd-ocr-synth render @<recipe-sha>`` default.
+    transport_factory:
+        Production callers leave this ``None`` to get the default
+        :func:`make_default_transport` (which currently raises
+        :class:`SdkUnavailableError` until the adapter lands; that
+        error is a :class:`TransportError` and maps to exit 7). Tests
+        inject a fake-returning factory to drive the full upload path
+        hermetically.
     """
 
     if private and public:
@@ -310,16 +360,39 @@ def cmd_publish(
         )
         return PUBLISH_RENDER_EXIT
 
-    if not dry_run:
-        # Real upload chunk hasn't landed. Keep the documented
-        # "not implemented yet" exit so callers don't think we silently
-        # uploaded.
-        print(
-            "publish: real upload is not implemented yet (see docs/roadmap/08-publishing-hf.md). "
-            "Use --dry-run to preview the plan.",
-            file=sys.stderr,
+    if dry_run:
+        return _run_dry_run(
+            local_output=local_output,
+            repo=repo,
+            resolved_private=resolved_private,
+            token_flag=token_flag,
         )
-        return 1
+
+    return _run_upload(
+        local_output=local_output,
+        repo=repo,
+        resolved_private=resolved_private,
+        token_flag=token_flag,
+        no_create=no_create,
+        tag=tag,
+        message=message,
+        transport_factory=transport_factory or make_default_transport,
+    )
+
+
+def _run_dry_run(
+    *,
+    local_output: Path,
+    repo: str,
+    resolved_private: bool,
+    token_flag: str | None,
+) -> int:
+    """Execute the dry-run path and map its errors to exit codes.
+
+    Split out so :func:`cmd_publish` remains a top-level dispatcher
+    rather than a multi-page function. Each branch maps a typed
+    exception onto the documented spec-01 exit code.
+    """
 
     try:
         plan = run_publish_dry_run(
@@ -342,6 +415,144 @@ def cmd_publish(
 
     print(format_dry_run_plan(plan))
     return PUBLISH_OK_EXIT
+
+
+def _run_upload(
+    *,
+    local_output: Path,
+    repo: str,
+    resolved_private: bool,
+    token_flag: str | None,
+    no_create: bool,
+    tag: str | None,
+    message: str | None,
+    transport_factory: TransportFactory,
+) -> int:
+    """Execute the real upload path: build staging, resolve auth, dispatch.
+
+    The sequence mirrors :func:`run_publish_dry_run` for the staging
+    + preflight steps so a corrupt-local-output failure produces the
+    same exit-6 outcome whether or not ``--dry-run`` was passed. From
+    there we diverge: resolve the token (auth failure → exit 7),
+    construct the transport via the injected factory (SDK unavailable
+    → exit 7), and call the orchestrator. The orchestrator's typed
+    exceptions all map to exit 7 (publish-family failures) per
+    spec 01. The :class:`PublishResult` is rendered to stdout via
+    :func:`format_publish_result`.
+    """
+
+    with tempfile.TemporaryDirectory(prefix="pd-ocr-synth-publish-") as tmp:
+        staging = Path(tmp) / "staging"
+        try:
+            build_recognition_staging(local_output, staging)
+        except StagingError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return PUBLISH_DESTINATION_EXIT
+
+        try:
+            preflight_report = assert_staging_publish_ready(staging)
+        except PreflightError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return PUBLISH_DESTINATION_EXIT
+
+        # Resolve auth. Real upload requires a token; we surface the
+        # spec-mandated resolution chain so the user knows which knob
+        # to turn.
+        try:
+            resolved_token: ResolvedToken = resolve_hf_token(flag_token=token_flag)
+        except AuthError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return PUBLISH_AUTH_EXIT
+
+        # Construct the transport. The factory is the seam where
+        # production wires the SDK adapter and tests wire a fake.
+        # ``SdkUnavailableError`` (TransportError subclass) lands
+        # here when the SDK adapter isn't yet installed.
+        try:
+            transport = transport_factory(resolved_token.token)
+        except TransportError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return PUBLISH_AUTH_EXIT
+
+        # Build the commit message: caller's --message, or the spec's
+        # default ``pd-ocr-synth render @<recipe-sha>`` derived from
+        # the staging README's pd-ocr-recipe-sha key.
+        recipe_sha = preflight_report.front_matter.get("pd-ocr-recipe-sha")
+        commit_message = resolve_commit_message(
+            override=message,
+            recipe_sha=recipe_sha if isinstance(recipe_sha, str) else None,
+        )
+
+        try:
+            result = publish_recognition(
+                transport,
+                repo,
+                staging,
+                commit_message=commit_message,
+                private=resolved_private,
+                allow_create=not no_create,
+                tag=tag,
+            )
+        except PreflightError as exc:
+            # The orchestrator re-runs preflight; if it fires here a
+            # local edit happened between our check and its.
+            print(f"error: {exc}", file=sys.stderr)
+            return PUBLISH_DESTINATION_EXIT
+        except ContentShaError as exc:
+            # Could not hash the staging dir. Treat as corrupt local
+            # output rather than an upload-family failure — the
+            # remediation is "fix your render", not "fix your token".
+            print(f"error: {exc}", file=sys.stderr)
+            return PUBLISH_DESTINATION_EXIT
+        except PublishError as exc:
+            # Policy-level failure (e.g. --no-create + missing repo).
+            print(f"error: {exc}", file=sys.stderr)
+            return PUBLISH_AUTH_EXIT
+        except TransportError as exc:
+            # Network / auth / conflict during the actual upload.
+            print(f"error: {exc}", file=sys.stderr)
+            return PUBLISH_AUTH_EXIT
+
+    print(format_publish_result(result))
+    return PUBLISH_OK_EXIT
+
+
+def format_publish_result(result: PublishResult) -> str:
+    """Render a :class:`PublishResult` as the human-readable summary.
+
+    Each :class:`PublishState` gets its own opening line so the user
+    immediately knows what happened (no upload, created repo and
+    uploaded, plain re-upload). The content SHA + commit URL follow
+    so log scrapers can grab them. Tag, when present, is on the last
+    line so a user who didn't ``--tag`` doesn't see clutter.
+
+    Kept separate from :func:`run_publish_dry_run` / its formatter so
+    a regression in either format doesn't cross-pollute the other.
+    """
+
+    lines: list[str] = []
+    if result.state is PublishState.NO_CHANGE:
+        lines.append(f"No changes to upload: {result.repo_id}")
+        lines.append(f"  remote already has pd-ocr-content-sha={result.content_sha[:12]}")
+    elif result.state is PublishState.CREATED:
+        lines.append(f"Created and uploaded: {result.repo_id}")
+        lines.append(f"  commit: {result.commit_sha[:12]}")
+        if result.commit_url:
+            lines.append(f"  url: {result.commit_url}")
+        lines.append(f"  content-sha: {result.content_sha[:12]}")
+    elif result.state is PublishState.UPLOADED:
+        lines.append(f"Uploaded: {result.repo_id}")
+        lines.append(f"  commit: {result.commit_sha[:12]}")
+        if result.commit_url:
+            lines.append(f"  url: {result.commit_url}")
+        lines.append(f"  content-sha: {result.content_sha[:12]}")
+    else:  # pragma: no cover — defensive; StrEnum is exhaustive
+        lines.append(f"Publish completed in unexpected state {result.state!r}")
+
+    if result.tag:
+        lines.append(f"  tag: {result.tag}")
+
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------

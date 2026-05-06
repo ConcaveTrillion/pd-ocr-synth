@@ -23,6 +23,10 @@ from pd_ocr_synth.publish.auth import (
     format_resolution_chain,
     resolve_hf_token,
 )
+from pd_ocr_synth.publish.commit_message import (
+    default_commit_message,
+    resolve_commit_message,
+)
 from pd_ocr_synth.publish.content_sha import (
     CONTENT_SHA_ALGORITHM,
     CONTENT_SHA_KEY,
@@ -61,6 +65,10 @@ from pd_ocr_synth.publish.recognition import (
     StagingResult,
     build_recognition_staging,
 )
+from pd_ocr_synth.publish.sdk_transport import (
+    SdkUnavailableError,
+    make_default_transport,
+)
 from pd_ocr_synth.publish.summary import (
     ManifestSummary,
     SummaryError,
@@ -97,6 +105,7 @@ __all__ = [
     "PublishResult",
     "PublishState",
     "ResolvedToken",
+    "SdkUnavailableError",
     "StagingResult",
     "SummaryError",
     "TransportError",
@@ -106,11 +115,14 @@ __all__ = [
     "check_idempotency",
     "check_required_front_matter",
     "compute_content_sha",
+    "default_commit_message",
     "format_resolution_chain",
     "format_summary",
     "load_card_inputs",
+    "make_default_transport",
     "publish_recognition",
     "render_dataset_card",
+    "resolve_commit_message",
     "resolve_hf_token",
     "summarize_metadata",
     "write_dataset_card",

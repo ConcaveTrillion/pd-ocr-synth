@@ -584,16 +584,20 @@ def _cmd_publish(
     token: str | None,
     output: str | None,
     dry_run: bool,
+    no_create: bool,
+    tag: str | None,
+    message: str | None,
 ) -> int:
     """Dispatch ``publish`` (M08).
 
-    Real upload requires the ``huggingface_hub`` SDK and lands in a
-    later M08 chunk; the dry-run path is fully implemented and
-    exercises every staging primitive. Exit-code mapping matches
-    ``docs/specs/01-cli.md`` (canonical) — note that
-    ``docs/specs/10-publishing.md`` previously said exit 4 for auth;
-    spec 01 wins, and spec 10 was reconciled in the same commit that
-    landed this dispatch.
+    Both dry-run and real upload paths are implemented. Real upload
+    requires the ``huggingface_hub`` SDK; until the adapter chunk
+    lands, the production transport factory raises
+    :class:`pd_ocr_synth.publish.SdkUnavailableError` (a
+    :class:`TransportError`) and the runner maps it to exit 7 with
+    a clear remediation message. Exit-code mapping matches
+    ``docs/specs/01-cli.md`` (canonical) — spec 10 was reconciled in
+    the dry-run dispatch commit.
     """
 
     from pd_ocr_synth.publish.cli_runner import cmd_publish
@@ -606,6 +610,9 @@ def _cmd_publish(
         token_flag=token,
         output_override=output,
         dry_run=dry_run,
+        no_create=no_create,
+        tag=tag,
+        message=message,
     )
 
 
@@ -731,6 +738,9 @@ _IMPLEMENTED_DISPATCH = {
         token=args.token,
         output=args.output,
         dry_run=args.dry_run,
+        no_create=args.no_create,
+        tag=args.tag,
+        message=args.message,
     ),
     "clean": lambda args: _cmd_clean(args.recipe, cache_dir=args.cache_dir),
 }

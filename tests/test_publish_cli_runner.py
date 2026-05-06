@@ -18,7 +18,9 @@ from pd_ocr_synth.publish.cli_runner import (
     _front_matter_preview,
     _walk_dir_stats,
     format_dry_run_plan,
+    format_publish_result,
 )
+from pd_ocr_synth.publish.orchestrator import PublishResult, PublishState
 
 # ---------------------------------------------------------------------------
 # _format_size_mb
@@ -171,3 +173,98 @@ def test_format_dry_run_plan_handles_empty_content_sha() -> None:
 
     text = format_dry_run_plan(plan)
     assert "Content SHA: (none)" in text
+
+
+# ---------------------------------------------------------------------------
+# format_publish_result
+# ---------------------------------------------------------------------------
+
+
+def test_format_publish_result_no_change_state() -> None:
+    """NO_CHANGE → "No changes to upload" line + the remote SHA.
+    No commit-line clutter (there's no new commit)."""
+
+    result = PublishResult(
+        state=PublishState.NO_CHANGE,
+        repo_id="alice/x",
+        content_sha="abcdef0123456789" + "0" * 48,
+        commit_sha="",
+        commit_url="",
+        tag=None,
+    )
+
+    text = format_publish_result(result)
+    assert "No changes to upload: alice/x" in text
+    assert "pd-ocr-content-sha=abcdef012345" in text
+    # NO_CHANGE has no commit; ensure we don't print a bogus SHA line.
+    assert "commit:" not in text
+
+
+def test_format_publish_result_created_state_includes_url() -> None:
+    """CREATED → "Created and uploaded" + commit + url + content-sha."""
+
+    result = PublishResult(
+        state=PublishState.CREATED,
+        repo_id="alice/x",
+        content_sha="f" * 64,
+        commit_sha="0123456789abcdef" + "0" * 24,
+        commit_url="https://huggingface.co/datasets/alice/x/commit/0123",
+        tag=None,
+    )
+
+    text = format_publish_result(result)
+    assert "Created and uploaded: alice/x" in text
+    assert "commit: 0123456789ab" in text  # 12-char short
+    assert "url: https://huggingface.co/" in text
+    assert "content-sha: ffffffffffff" in text
+
+
+def test_format_publish_result_uploaded_state() -> None:
+    """UPLOADED → "Uploaded" prefix (not "Created"); state-distinguishing."""
+
+    result = PublishResult(
+        state=PublishState.UPLOADED,
+        repo_id="alice/x",
+        content_sha="a" * 64,
+        commit_sha="b" * 40,
+        commit_url="",  # no URL — the runner should not emit a bogus line
+        tag=None,
+    )
+
+    text = format_publish_result(result)
+    assert "Uploaded: alice/x" in text
+    assert "Created" not in text
+    assert "commit: bbbbbbbbbbbb" in text
+    # No URL → no url line, not "url: " followed by empty.
+    assert "url: " not in text
+
+
+def test_format_publish_result_includes_tag_when_present() -> None:
+    """Tag, when supplied, lands on its own line so a no-tag publish
+    doesn't see a stray empty line."""
+
+    result = PublishResult(
+        state=PublishState.UPLOADED,
+        repo_id="alice/x",
+        content_sha="a" * 64,
+        commit_sha="b" * 40,
+        commit_url="",
+        tag="v2026.05.06",
+    )
+
+    text = format_publish_result(result)
+    assert "tag: v2026.05.06" in text
+
+
+def test_format_publish_result_omits_tag_line_when_none() -> None:
+    result = PublishResult(
+        state=PublishState.UPLOADED,
+        repo_id="alice/x",
+        content_sha="a" * 64,
+        commit_sha="b" * 40,
+        commit_url="",
+        tag=None,
+    )
+
+    text = format_publish_result(result)
+    assert "tag:" not in text
