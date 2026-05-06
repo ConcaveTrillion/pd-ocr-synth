@@ -625,6 +625,7 @@ def _cmd_preview(
     workers: int | None,
     no_degrade: bool,
     no_cache: bool = False,
+    dry_run: bool = False,
 ) -> int:
     """Render N samples to a preview directory.
 
@@ -635,11 +636,21 @@ def _cmd_preview(
 
     Degradation: applied by default (M06). Pass ``--no-degrade`` to
     skip the pipeline and inspect raw render output.
+
+    ``--dry-run`` reuses the render-side ``plan_recipe`` helper to
+    surface what *would* be rendered (resolved seed / count / fonts /
+    transforms / degradation stages / corpus size) without touching
+    disk. The plan body is identical to ``render --dry-run`` so an
+    author can trial-run a recipe via either subcommand and see the
+    same summary; ``no_degrade`` is reflected in the printed
+    ``degradation`` line so a ``preview --no-degrade --dry-run``
+    consumer doesn't get a misleading list of stages that would have
+    been skipped at render time.
     """
 
     from pd_ocr_synth.recipe import RecipeLoadError, load_recipe
     from pd_ocr_synth.recipe_search import RecipeNotFoundError, resolve_recipe
-    from pd_ocr_synth.render import RenderError
+    from pd_ocr_synth.render import RenderError, plan_recipe
     from pd_ocr_synth.render.preview import (
         DEFAULT_PREVIEW_COUNT,
         resolve_workers,
@@ -674,6 +685,43 @@ def _cmd_preview(
 
     output_dir = Path(output).expanduser() if output else Path("preview") / recipe.name
     cache_root = Path(cache_dir).expanduser() if cache_dir else None
+
+    if dry_run:
+        try:
+            plan = plan_recipe(
+                recipe,
+                output_dir=output_dir,
+                count=sample_count,
+                seed=seed,
+                workers=worker_count,
+                cache_dir=cache_root,
+                no_cache=no_cache,
+            )
+        except RenderError as exc:
+            print(f"error: dry-run failed: {exc}", file=sys.stderr)
+            return RENDER_EXIT
+        # ``--no-degrade`` would suppress the pipeline at render time;
+        # surface that in the plan so a dry-run consumer doesn't get a
+        # misleading list of stages that would have been skipped.
+        degradation_text = (
+            "(skipped via --no-degrade)"
+            if no_degrade
+            else (", ".join(plan.degradation_stages) or "-")
+        )
+        print(f"recipe:           {plan.recipe_name}")
+        print(f"output:           {plan.output_dir}")
+        print(f"count:            {plan.count}")
+        print(f"seed:             {plan.seed}")
+        print(f"workers:          {plan.workers}")
+        print(f"layout.mode:      {plan.layout_mode}")
+        print(
+            f"fonts present:    {plan.fonts_present} (optional missing: {plan.fonts_missing_optional})"
+        )
+        print(f"transforms:       {', '.join(plan.transforms) or '-'}")
+        print(f"degradation:      {degradation_text}")
+        print(f"corpus entries:   {plan.corpus_entries}")
+        print(f"corpus chars:     {plan.corpus_total_chars:,}")
+        return 0
 
     print(f"recipe:  {recipe.name} ({path})")
     print(f"output:  {output_dir}")
@@ -1423,6 +1471,7 @@ _IMPLEMENTED_DISPATCH = {
         workers=args.workers,
         no_degrade=args.no_degrade,
         no_cache=args.no_cache,
+        dry_run=args.dry_run,
     ),
     "render": lambda args: _cmd_render(
         args.recipe,

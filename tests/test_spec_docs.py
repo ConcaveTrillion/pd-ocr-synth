@@ -1014,7 +1014,9 @@ _DEST_READ_EXEMPT: frozenset[str] = frozenset(
 #       table claims they apply to fetch too. ``--dry-run`` is the
 #       most defensible follow-up (validate + plan only); the rest
 #       are spec-side ambiguity (``count`` for fetch is undefined).
-#   preview:dry_run — declared but never implemented for preview.
+#   (preview:dry_run — fixed in iter 81; the dispatch now plumbs
+#    ``args.dry_run`` to ``_cmd_preview`` which delegates to
+#    ``plan_recipe`` for the same dry-run summary as ``render``.)
 _KNOWN_UNREAD_DESTS: frozenset[tuple[str, str]] = frozenset(
     {
         ("fetch", "count"),
@@ -1022,7 +1024,6 @@ _KNOWN_UNREAD_DESTS: frozenset[tuple[str, str]] = frozenset(
         ("fetch", "seed"),
         ("fetch", "workers"),
         ("fetch", "dry_run"),
-        ("preview", "dry_run"),
     }
 )
 

@@ -400,6 +400,205 @@ def test_preview_degradation_is_deterministic_across_workers(
         )
 
 
+# ---------------------------------------------------------------------------
+# Dry-run (parity with ``render --dry-run``)
+# ---------------------------------------------------------------------------
+
+
+def test_preview_dry_run_does_not_write(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``preview --dry-run`` emits a plan and creates nothing on disk.
+
+    Pre-iter-81 the preview subparser declared ``--dry-run`` (via the
+    shared ``_add_common_render_args`` helper) but the dispatch didn't
+    read it, so the flag was a silent no-op: a user who passed
+    ``--dry-run`` got a *real* render. Lock the plumbing so the same
+    drift class fails CI here rather than letting users accidentally
+    write hundreds of PNGs while expecting a plan summary.
+    """
+
+    rp = _setup(tmp_path)
+    out = tmp_path / "preview-out"
+
+    rc = main(
+        [
+            "preview",
+            str(rp),
+            "--count",
+            "3",
+            "--output",
+            str(out),
+            "--seed",
+            "21",
+            "--dry-run",
+        ]
+    )
+    assert rc == 0, capsys.readouterr().err
+    captured = capsys.readouterr().out
+    # Plan body uses the same labels as ``render --dry-run``.
+    assert "recipe:" in captured
+    assert "count:" in captured
+    assert "fonts present:" in captured
+    assert "corpus entries:" in captured
+    assert "corpus chars:" in captured
+    # Nothing materialized on disk: no images, manifest, or stats.
+    assert not (out / "images").exists()
+    assert not (out / "manifest.jsonl").exists()
+    assert not (out / "stats.json").exists()
+
+
+def test_preview_dry_run_no_degrade_marker(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``preview --dry-run --no-degrade`` flags the degradation skip.
+
+    A user who pairs ``--no-degrade`` with ``--dry-run`` should see the
+    pipeline as suppressed in the plan output, not as a list of stages
+    that would in fact be skipped at render time. Mirrors the
+    ``apply_degrade`` plumbing the non-dry-run preview path already
+    honors.
+    """
+
+    rp = _setup(tmp_path, with_degrade=True)
+    out = tmp_path / "preview-out"
+
+    rc = main(
+        [
+            "preview",
+            str(rp),
+            "--count",
+            "3",
+            "--output",
+            str(out),
+            "--seed",
+            "21",
+            "--dry-run",
+            "--no-degrade",
+        ]
+    )
+    assert rc == 0, capsys.readouterr().err
+    captured = capsys.readouterr().out
+    # The marker text appears verbatim — easier to grep than the
+    # absence of stage names.
+    assert "skipped via --no-degrade" in captured
+    # Without the flag, the plan would list ``skew, blur, jpeg``;
+    # with it the line should not name any of them.
+    assert "skew" not in captured
+    assert "blur" not in captured
+    assert "jpeg" not in captured
+    assert not (out / "images").exists()
+
+
+def test_preview_dry_run_default_lists_degradation_stages(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Without ``--no-degrade`` the dry-run plan names each stage.
+
+    Counterpart to the ``--no-degrade`` test above: confirm the default
+    path keeps the existing render-side plan body and lists the stages
+    the recipe declares. This is the contract a recipe author leans on
+    to spot-check "did my degradation pipeline parse?" before kicking
+    a multi-hour render.
+    """
+
+    rp = _setup(tmp_path, with_degrade=True)
+    out = tmp_path / "preview-out"
+
+    rc = main(
+        [
+            "preview",
+            str(rp),
+            "--count",
+            "3",
+            "--output",
+            str(out),
+            "--seed",
+            "21",
+            "--dry-run",
+        ]
+    )
+    assert rc == 0, capsys.readouterr().err
+    captured = capsys.readouterr().out
+    assert "skew" in captured
+    assert "blur" in captured
+    assert "jpeg" in captured
+    assert "skipped via --no-degrade" not in captured
+    assert not (out / "images").exists()
+
+
+def test_preview_dry_run_no_cache_threads_to_plan_recipe(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``preview --dry-run --no-cache`` reaches ``plan_recipe(no_cache=True)``.
+
+    Twin of ``test_render_dry_run_no_cache_threads_to_plan_recipe`` —
+    the dry-run path runs through ``plan_recipe`` rather than
+    ``run_preview``, so verifying the ``no_cache`` plumbing on the
+    non-dry-run path (already done in
+    ``test_preview_no_cache_flag_threads_to_corpus_runner``) is not
+    sufficient. Spy on ``plan_recipe`` directly.
+    """
+
+    rp = _setup(tmp_path)
+
+    from pd_ocr_synth import cli as cli_mod
+    from pd_ocr_synth.render import run as run_mod
+
+    seen: dict[str, object] = {}
+    real = run_mod.plan_recipe
+
+    def spy(*args, **kwargs):  # type: ignore[no-untyped-def]
+        seen["no_cache"] = kwargs.get("no_cache")
+        return real(*args, **kwargs)
+
+    # Patch in both modules: ``cli._cmd_preview`` does
+    # ``from pd_ocr_synth.render import plan_recipe`` so the import is
+    # bound to the package, which re-exports from ``render.run``.
+    monkeypatch.setattr(run_mod, "plan_recipe", spy)
+    monkeypatch.setattr(cli_mod, "_cmd_preview", cli_mod._cmd_preview)
+    # Patch the package-level re-export the CLI imports.
+    import pd_ocr_synth.render as render_pkg
+
+    monkeypatch.setattr(render_pkg, "plan_recipe", spy)
+
+    rc = main(
+        [
+            "preview",
+            str(rp),
+            "--count",
+            "1",
+            "--output",
+            str(tmp_path / "out"),
+            "--dry-run",
+            "--no-cache",
+        ]
+    )
+    assert rc == 0, capsys.readouterr().err
+    assert seen.get("no_cache") is True
+
+    # Default leaves it False so the cache stays warm.
+    seen.clear()
+    rc2 = main(
+        [
+            "preview",
+            str(rp),
+            "--count",
+            "1",
+            "--output",
+            str(tmp_path / "out2"),
+            "--dry-run",
+        ]
+    )
+    assert rc2 == 0, capsys.readouterr().err
+    assert seen.get("no_cache") is False
+
+
 def test_preview_no_cache_flag_threads_to_corpus_runner(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
