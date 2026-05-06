@@ -2,8 +2,8 @@
 
 M01 shipped argument parsing only. M02 implements ``list``, ``validate``,
 ``describe``, ``init``, ``schema``; M03 added ``fetch``/``clean``; M05
-adds ``preview``; M07 adds ``render``. ``publish`` remains a stub until
-M08 lands.
+adds ``preview``; M07 adds ``render``; M08 adds ``publish --dry-run``
+(the real upload path lands in a later M08 chunk).
 """
 
 from __future__ import annotations
@@ -32,9 +32,10 @@ ALL_SUBCOMMANDS = [
     "clean",
 ]
 
-# Subcommands still stubbed after M07. ``publish`` waits on M08;
-# everything else is wired. ``fetch`` + ``clean`` landed in M03,
-# ``preview`` landed in M05, ``render`` landed in M07.
+# Subcommands still fully stubbed after M08-dry-run. ``publish``
+# (without ``--dry-run``) intentionally returns NOT_IMPLEMENTED until
+# the upload chunk lands; that case is asserted directly below rather
+# than via this generic-stub fixture so we can target it precisely.
 STILL_STUBBED: list[str] = []
 
 
@@ -84,9 +85,18 @@ def test_subcommand_stub_returns_not_implemented(subcommand: str) -> None:
     assert rc == 1
 
 
-def test_publish_stub_returns_not_implemented() -> None:
-    rc = main(["publish", "dummy-recipe"])
-    assert rc == 1
+def test_publish_unknown_recipe_exits_three(
+    tmp_path: Path, monkeypatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An unknown recipe is a recipe-resolution error (exit 3),
+    not a publish-specific failure — same as ``validate``/``describe``.
+    """
+
+    monkeypatch.delenv("PD_OCR_SYNTH_RECIPES", raising=False)
+    monkeypatch.chdir(tmp_path)
+    rc = main(["publish", "definitely-not-a-recipe", "--dry-run"])
+    assert rc == 3
+    assert "not found" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------

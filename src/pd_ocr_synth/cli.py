@@ -6,8 +6,8 @@ Subcommands wired to date:
 - M03: ``fetch``, ``clean`` (corpus cache management).
 - M05: ``preview`` (render N samples to a preview directory).
 - M07: ``render`` (full dataset → ``pd-ocr-trainer/v1`` recognition).
-
-``publish`` remains a stub until M08 lands.
+- M08: ``publish --dry-run`` (preview HF upload plan; real upload
+  lands in a later chunk of M08).
 """
 
 from __future__ import annotations
@@ -140,6 +140,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_publish.add_argument("--tag")
     p_publish.add_argument("--message")
     p_publish.add_argument("--token")
+    # ``--output`` is not in spec 10's CLI summary because the spec's
+    # default is ``recipe.output.destination`` and most users never need
+    # to override. We accept it here so dry-run / publish can target a
+    # one-off render at e.g. ``/tmp/...`` without editing the recipe.
+    p_publish.add_argument("-o", "--output", help="override local render output path")
     p_publish.add_argument("--render-first", action="store_true")
     p_publish.add_argument("--no-create", action="store_true")
     p_publish.add_argument("--dry-run", action="store_true")
@@ -570,6 +575,40 @@ def _cmd_render(
     return 0
 
 
+def _cmd_publish(
+    recipe_arg: str,
+    *,
+    repo: str | None,
+    private: bool,
+    public: bool,
+    token: str | None,
+    output: str | None,
+    dry_run: bool,
+) -> int:
+    """Dispatch ``publish`` (M08).
+
+    Real upload requires the ``huggingface_hub`` SDK and lands in a
+    later M08 chunk; the dry-run path is fully implemented and
+    exercises every staging primitive. Exit-code mapping matches
+    ``docs/specs/01-cli.md`` (canonical) — note that
+    ``docs/specs/10-publishing.md`` previously said exit 4 for auth;
+    spec 01 wins, and spec 10 was reconciled in the same commit that
+    landed this dispatch.
+    """
+
+    from pd_ocr_synth.publish.cli_runner import cmd_publish
+
+    return cmd_publish(
+        recipe_arg=recipe_arg,
+        repo_flag=repo,
+        private=private,
+        public=public,
+        token_flag=token,
+        output_override=output,
+        dry_run=dry_run,
+    )
+
+
 def _cmd_clean(recipe_arg: str, *, cache_dir: str | None) -> int:
     """Remove cache entries owned by the given recipe.
 
@@ -682,6 +721,15 @@ _IMPLEMENTED_DISPATCH = {
         workers=args.workers,
         force=args.force,
         resume=args.resume,
+        dry_run=args.dry_run,
+    ),
+    "publish": lambda args: _cmd_publish(
+        args.recipe,
+        repo=args.repo,
+        private=args.private,
+        public=args.public,
+        token=args.token,
+        output=args.output,
         dry_run=args.dry_run,
     ),
     "clean": lambda args: _cmd_clean(args.recipe, cache_dir=args.cache_dir),

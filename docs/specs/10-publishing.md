@@ -225,7 +225,7 @@ Content SHA: 2c4f8e... (no existing commit; first publish)
 | Failure | Behavior |
 |---------|----------|
 | Network error mid-upload | `upload_large_folder` resumes on retry; partial commit ok |
-| Auth error | Exit code 4; print the auth resolution chain |
+| Auth error | Exit code 7; print the auth resolution chain |
 | Repo doesn't exist | Auto-create unless `--no-create` |
 | Missing local render | Exit code 5 with "render first or use --render-first" |
 | Local output corrupt (manifest mismatch) | Exit code 6; refuse to upload partial data |
