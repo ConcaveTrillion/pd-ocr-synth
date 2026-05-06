@@ -398,3 +398,61 @@ def test_preview_degradation_is_deterministic_across_workers(
         assert serial_pngs[name].read_bytes() == parallel_pngs[name].read_bytes(), (
             f"degraded png mismatch at {name} between workers=1 and workers=4"
         )
+
+
+def test_preview_no_cache_flag_threads_to_corpus_runner(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch,
+) -> None:
+    """``preview --no-cache`` must reach ``collect_corpus_text(no_cache=True)``.
+
+    Pre-iter-80 the CLI declared ``--no-cache`` on the preview
+    subparser but the dispatch never read ``args.no_cache``, so the
+    flag was a silent no-op (same drift class as iter 76's
+    antialiasing). Lock the plumbing so a future regression fails CI
+    here rather than letting users silently get cached corpora.
+    """
+
+    rp = _setup(tmp_path)
+
+    from pd_ocr_synth.render import preview as preview_mod
+
+    seen: dict[str, object] = {}
+    real = preview_mod.collect_corpus_text
+
+    def spy(*args, **kwargs):  # type: ignore[no-untyped-def]
+        seen["no_cache"] = kwargs.get("no_cache")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(preview_mod, "collect_corpus_text", spy)
+
+    rc = main(
+        [
+            "preview",
+            str(rp),
+            "--count",
+            "1",
+            "--output",
+            str(tmp_path / "out"),
+            "--no-cache",
+        ]
+    )
+    assert rc == 0, capsys.readouterr().err
+    assert seen.get("no_cache") is True
+
+    # And the default path leaves it False so the per-user cache stays
+    # warm by default.
+    seen.clear()
+    rc2 = main(
+        [
+            "preview",
+            str(rp),
+            "--count",
+            "1",
+            "--output",
+            str(tmp_path / "out2"),
+        ]
+    )
+    assert rc2 == 0, capsys.readouterr().err
+    assert seen.get("no_cache") is False

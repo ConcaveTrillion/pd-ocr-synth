@@ -624,6 +624,7 @@ def _cmd_preview(
     cache_dir: str | None,
     workers: int | None,
     no_degrade: bool,
+    no_cache: bool = False,
 ) -> int:
     """Render N samples to a preview directory.
 
@@ -688,6 +689,7 @@ def _cmd_preview(
             cache_dir=cache_root,
             workers=worker_count,
             apply_degrade=not no_degrade,
+            no_cache=no_cache,
         )
     except RenderError as exc:
         print(f"error: render failed: {exc}", file=sys.stderr)
@@ -715,6 +717,7 @@ def _cmd_render(
     resume: bool,
     dry_run: bool,
     no_audit: bool = False,
+    no_cache: bool = False,
 ) -> int:
     """Render the full recipe dataset into the ``pd-ocr-trainer/v1`` layout.
 
@@ -779,6 +782,7 @@ def _cmd_render(
                 seed=seed,
                 workers=worker_count,
                 cache_dir=cache_root,
+                no_cache=no_cache,
             )
         except RenderError as exc:
             print(f"error: dry-run failed: {exc}", file=sys.stderr)
@@ -818,6 +822,7 @@ def _cmd_render(
             force=force,
             resume=resume,
             audit=not no_audit,
+            no_cache=no_cache,
         )
     except DestinationNotEmptyError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -1417,6 +1422,7 @@ _IMPLEMENTED_DISPATCH = {
         cache_dir=args.cache_dir,
         workers=args.workers,
         no_degrade=args.no_degrade,
+        no_cache=args.no_cache,
     ),
     "render": lambda args: _cmd_render(
         args.recipe,
@@ -1429,6 +1435,7 @@ _IMPLEMENTED_DISPATCH = {
         resume=args.resume,
         dry_run=args.dry_run,
         no_audit=args.no_audit,
+        no_cache=args.no_cache,
     ),
     "publish": lambda args: _cmd_publish(
         args.recipe,

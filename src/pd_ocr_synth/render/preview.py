@@ -108,6 +108,7 @@ def run_preview(
     cache_dir: Path | None = None,
     workers: int = 1,
     apply_degrade: bool = True,
+    no_cache: bool = False,
 ) -> PreviewStats:
     """Render ``count`` samples from ``recipe`` into ``output_dir``.
 
@@ -126,6 +127,10 @@ def run_preview(
     ``degradation`` pipeline against each rendered sample. Pass
     ``False`` to inspect the raw render output (useful when
     debugging the renderer itself).
+
+    ``no_cache`` (default ``False``) wires through the ``--no-cache``
+    CLI flag: when ``True`` the corpus runner bypasses the on-disk
+    cache and re-fetches every web/wikisource entry from upstream.
     """
 
     if recipe.layout.mode != "word_crops":
@@ -145,7 +150,7 @@ def run_preview(
         raise RenderError("recipe has no source_path; load it via load_recipe(path)")
     ctx = ProviderContext(recipe_dir=recipe.source_path.parent, cache=CacheStore(root=cache_root))
 
-    text = collect_corpus_text(recipe, ctx=ctx)
+    text = collect_corpus_text(recipe, ctx=ctx, no_cache=no_cache)
     tokens = tokenize(text, mode=recipe.layout.mode)
     if not tokens:
         raise RenderError("corpus produced no tokens after tokenization")

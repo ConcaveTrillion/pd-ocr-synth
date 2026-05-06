@@ -596,3 +596,90 @@ def test_render_omits_stage_name_when_recipe_does_not_declare_it(
             assert "name" not in stage, (
                 "stage without recipe-declared ``name`` should not synthesise one"
             )
+
+
+# ---------------------------------------------------------------------------
+# --no-cache plumbing (iter 80 drift fix)
+# ---------------------------------------------------------------------------
+
+
+def test_render_no_cache_flag_threads_to_corpus_runner(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch,
+) -> None:
+    """``render --no-cache`` must reach ``collect_corpus_text(no_cache=True)``.
+
+    Pre-iter-80 the CLI declared ``--no-cache`` on the render
+    subparser (inherited from ``_add_common_render_args``) but the
+    dispatch never read ``args.no_cache``, so the flag was a silent
+    no-op (same drift class as iter 76's antialiasing). Lock the
+    plumbing so a future regression fails CI here rather than letting
+    users silently get cached corpora when they explicitly asked for
+    a fresh fetch.
+    """
+
+    rp = _setup(tmp_path)
+
+    from pd_ocr_synth.render import run as run_mod
+
+    seen: dict[str, object] = {}
+    real = run_mod.collect_corpus_text
+
+    def spy(*args, **kwargs):  # type: ignore[no-untyped-def]
+        seen["no_cache"] = kwargs.get("no_cache")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(run_mod, "collect_corpus_text", spy)
+
+    rc = main(
+        [
+            "render",
+            str(rp),
+            "--count",
+            "1",
+            "--output",
+            str(tmp_path / "out"),
+            "--workers",
+            "1",
+            "--no-cache",
+        ]
+    )
+    assert rc == 0, capsys.readouterr().err
+    assert seen.get("no_cache") is True
+
+
+def test_render_dry_run_no_cache_threads_to_plan_recipe(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch,
+) -> None:
+    """``render --dry-run --no-cache`` reaches ``plan_recipe``."""
+
+    rp = _setup(tmp_path)
+
+    from pd_ocr_synth.render import run as run_mod
+
+    seen: dict[str, object] = {}
+    real = run_mod.collect_corpus_text
+
+    def spy(*args, **kwargs):  # type: ignore[no-untyped-def]
+        seen["no_cache"] = kwargs.get("no_cache")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(run_mod, "collect_corpus_text", spy)
+
+    rc = main(
+        [
+            "render",
+            str(rp),
+            "--count",
+            "1",
+            "--output",
+            str(tmp_path / "dryrun-out"),
+            "--dry-run",
+            "--no-cache",
+        ]
+    )
+    assert rc == 0, capsys.readouterr().err
+    assert seen.get("no_cache") is True

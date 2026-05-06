@@ -966,3 +966,172 @@ def test_registered_text_transforms_documented_in_spec_05() -> None:
         "Add a `### `<name>`` section to spec 05 documenting the "
         "options each transform accepts."
     )
+
+
+# ---------------------------------------------------------------------------
+# Argparse dest ↔ dispatch reads (iter 80 audit)
+#
+# Every argparse flag the CLI declares must be read by some code path,
+# otherwise users pass it expecting an effect and get silent
+# drop-on-the-floor — same drift class as iter 76 (antialiasing) and
+# iter 78 (per-stage degradation options).
+#
+# Iter 80 found 8 such silent-ignore drifts across the
+# ``fetch`` / ``preview`` / ``render`` subparsers (mostly inherited
+# from ``_add_common_render_args`` and never plumbed). The fix wired
+# ``--no-cache`` end-to-end for ``preview`` and ``render``; the rest
+# of the iter-80 audit is captured here and below as future drift to
+# be addressed (currently allow-listed so the guard doesn't fire on
+# pre-existing gaps).
+# ---------------------------------------------------------------------------
+
+
+def _cli_source() -> str:
+    cli_path = Path(__file__).resolve().parent.parent / "src" / "pd_ocr_synth" / "cli.py"
+    return cli_path.read_text(encoding="utf-8")
+
+
+# Dests we deliberately do not require a read for. ``command`` is read
+# in ``main()`` to dispatch and never bound to a subparser-level
+# meaning. Positional ``recipe`` and ``output_dir`` and ``name`` are
+# read by every implemented dispatch entry — the broad regex below
+# already counts them, but listing them here documents intent.
+_DEST_READ_EXEMPT: frozenset[str] = frozenset(
+    {
+        "command",  # read in main(), not a subparser dest
+    }
+)
+
+# Known pre-existing silent-ignore drifts the iter-80 audit found.
+# Each entry is a (subparser, dest) pair; the meta-test allow-lists
+# them so it can pass today and start failing the moment the next
+# regression sneaks in. Removing an entry from this set is the gating
+# step when each drift is fixed in a follow-up commit.
+#
+# Notes on each:
+#   fetch:count/output/seed/workers/dry_run — inherited from
+#       ``_add_common_render_args`` but spec 01's render-family
+#       table claims they apply to fetch too. ``--dry-run`` is the
+#       most defensible follow-up (validate + plan only); the rest
+#       are spec-side ambiguity (``count`` for fetch is undefined).
+#   preview:dry_run — declared but never implemented for preview.
+_KNOWN_UNREAD_DESTS: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("fetch", "count"),
+        ("fetch", "output"),
+        ("fetch", "seed"),
+        ("fetch", "workers"),
+        ("fetch", "dry_run"),
+        ("preview", "dry_run"),
+    }
+)
+
+
+def test_every_argparse_dest_is_read_by_dispatch() -> None:
+    """Every argparse flag dest must be read by some ``args.<dest>``.
+
+    Catches the iter-76 / iter-80 drift class: the parser declares a
+    flag, the user passes it, and the dispatch never reads it. The
+    fix is to either implement the flag (preferred) or remove it.
+
+    The CLI module's ``args.<dest>`` reads are the canonical record.
+    Static-scan ``cli.py`` rather than running the parser — that way
+    we catch a removed dispatch line even if argparse still accepts
+    the flag.
+
+    Allow-listed pre-existing gaps live in ``_KNOWN_UNREAD_DESTS``;
+    fixing each is a separate commit that also removes the entry.
+    """
+
+    parser = build_parser()
+    sub_map = _argparse_subparsers(parser)
+
+    cli_src = _cli_source()
+    read_pattern = re.compile(r"\bargs\.([a-z_][a-z0-9_]*)")
+    read_dests: set[str] = set(read_pattern.findall(cli_src))
+
+    drift: list[str] = []
+    for sub_name, sub_parser in sub_map.items():
+        for action in sub_parser._actions:  # noqa: SLF001
+            dest = action.dest
+            if dest in _DEST_READ_EXEMPT:
+                continue
+            if dest in {"help", "version"}:
+                continue
+            if (sub_name, dest) in _KNOWN_UNREAD_DESTS:
+                continue
+            if not action.option_strings and dest in {"recipe"}:
+                # Positional ``recipe`` is read on every implemented
+                # subcommand; the regex picks it up.
+                pass
+            if dest not in read_dests:
+                drift.append(
+                    f"  {sub_name}: --{action.option_strings[0] if action.option_strings else dest} (dest={dest!r})"
+                )
+
+    assert not drift, (
+        "argparse declares flags that no dispatch path reads — "
+        "users pass them and get silent no-op (same drift class as "
+        "iter 76 antialiasing and iter 78 per-stage options).\n"
+        "Either implement the flag (plumb args.<dest> through the "
+        "dispatch lambda + cmd helper) or remove the add_argument "
+        "call.\nUnread:\n" + "\n".join(drift)
+    )
+
+
+def test_known_unread_dests_are_actually_unread() -> None:
+    """Sanity-check that the allow-list itself isn't stale.
+
+    If a previously-unread dest gets wired up in a follow-up commit,
+    its ``_KNOWN_UNREAD_DESTS`` entry should be removed at the same
+    time. This test catches the case where someone adds the read but
+    forgets to delete the allow-list entry, which would mask future
+    regressions of the same flag.
+    """
+
+    cli_src = _cli_source()
+
+    parser = build_parser()
+    sub_map = _argparse_subparsers(parser)
+
+    stale: list[tuple[str, str]] = []
+    for sub_name, dest in _KNOWN_UNREAD_DESTS:
+        # The allow-list entry only makes sense if (a) the subparser
+        # still exists and (b) the dest actually appears as a flag on
+        # that subparser. If both are true and the dispatch now reads
+        # ``args.<dest>``, drop the allow-list entry — the drift is
+        # gone. We also need to be careful: a dest like ``output``
+        # is read globally (publish, schema, render, ...). To keep
+        # the allow-list useful we only flag the entry as stale when
+        # there's strong evidence the *specific* subparser's
+        # dispatch path now reads it. Use a conservative heuristic:
+        # if the dispatch lambda for this subparser passes
+        # ``args.<dest>`` literally, it's wired.
+        if sub_name not in sub_map:
+            stale.append((sub_name, dest))
+            continue
+        # Find the dispatch lambda block for this subparser. The
+        # dispatch dict in cli.py uses ``"<name>": lambda args: ...``
+        # so we slice around that signature.
+        marker = f'"{sub_name}": lambda args:'
+        idx = cli_src.find(marker)
+        if idx == -1:
+            # Subparser exists but has no dispatch entry yet (e.g.
+            # only a stub). Allow-list entries for stubs are fine.
+            continue
+        # Find the closing of this lambda's argument call. The
+        # dispatch dict entries are short — the next ``"<word>":
+        # lambda args:`` or the closing ``}`` of the dict marks the
+        # end. Take everything up to whichever comes first.
+        rest = cli_src[idx + len(marker) :]
+        next_entry = re.search(r'\n\s*"[a-z_]+": lambda args:', rest)
+        end = next_entry.start() if next_entry else rest.find("\n}")
+        block = rest[:end] if end != -1 else rest
+        if dest in set(re.findall(r"\bargs\.([a-z_][a-z0-9_]*)", block)):
+            stale.append((sub_name, dest))
+
+    assert not stale, (
+        "stale entries in _KNOWN_UNREAD_DESTS — the dispatch now "
+        "reads these flags but they're still allow-listed. Remove "
+        f"them: {sorted(stale)}"
+    )

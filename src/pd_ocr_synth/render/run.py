@@ -172,12 +172,18 @@ def plan_recipe(
     seed: int | None = None,
     workers: int = 1,
     cache_dir: Path | None = None,
+    no_cache: bool = False,
 ) -> RunPlan:
     """Compute the dry-run plan without writing.
 
     Touches the network only insofar as the corpus runner does (to
     determine total chars). Callers that want a fully offline plan
     should pre-fetch first via ``pd-ocr-synth fetch``.
+
+    ``no_cache`` (default ``False``) forwards the ``--no-cache`` CLI
+    flag through to ``collect_corpus_text``: when ``True`` the corpus
+    runner bypasses the on-disk cache and re-fetches every cache-aware
+    provider from upstream.
     """
 
     if recipe.layout.mode not in _SUPPORTED_LAYOUTS:
@@ -199,7 +205,7 @@ def plan_recipe(
     if recipe.source_path is None:
         raise RenderError("recipe has no source_path; load it via load_recipe(path)")
     ctx = ProviderContext(recipe_dir=recipe.source_path.parent, cache=CacheStore(root=cache_root))
-    text = collect_corpus_text(recipe, ctx=ctx)
+    text = collect_corpus_text(recipe, ctx=ctx, no_cache=no_cache)
 
     return RunPlan(
         recipe_name=recipe.name,
@@ -229,6 +235,7 @@ def run_recipe(
     resume: bool = False,
     progress: bool = True,
     audit: bool = True,
+    no_cache: bool = False,
 ) -> RunResult:
     """Render the full dataset for ``recipe`` into ``output_dir``.
 
@@ -244,6 +251,11 @@ def run_recipe(
     suppress (the CLI ``--no-audit`` flag wires through here). The
     env var ``PD_OCR_SYNTH_NO_AUDIT=1`` overrides the kwarg globally;
     this is checked inside ``should_emit_audit``.
+
+    ``no_cache`` (default ``False``) forwards the ``--no-cache`` CLI
+    flag through to ``collect_corpus_text``: when ``True`` the corpus
+    runner bypasses the on-disk cache and re-fetches every cache-aware
+    provider from upstream.
 
     Determinism contract: same recipe + same effective seed + same
     sample index → identical output bytes regardless of ``workers``.
@@ -269,7 +281,7 @@ def run_recipe(
         raise RenderError("recipe has no source_path; load it via load_recipe(path)")
     ctx = ProviderContext(recipe_dir=recipe.source_path.parent, cache=CacheStore(root=cache_root))
 
-    text = collect_corpus_text(recipe, ctx=ctx)
+    text = collect_corpus_text(recipe, ctx=ctx, no_cache=no_cache)
     tokens = tokenize(text, mode=recipe.layout.mode)
     if not tokens:
         raise RenderError("corpus produced no tokens after tokenization")
