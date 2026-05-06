@@ -50,6 +50,12 @@ from pd_ocr_synth.publish.recognition import (
     StagingResult,
     build_recognition_staging,
 )
+from pd_ocr_synth.publish.summary import (
+    ManifestSummary,
+    SummaryError,
+    format_summary,
+    summarize_metadata,
+)
 
 __all__ = [
     "CONTENT_SHA_ALGORITHM",
@@ -62,18 +68,22 @@ __all__ = [
     "README_FILENAME",
     "REQUIRED_FRONT_MATTER_KEYS",
     "AuthError",
+    "ManifestSummary",
     "PreflightError",
     "PreflightReport",
     "ResolvedToken",
     "StagingResult",
+    "SummaryError",
     "apply_content_sha_to_readme",
     "assert_staging_publish_ready",
     "build_recognition_staging",
     "check_required_front_matter",
     "compute_content_sha",
     "format_resolution_chain",
+    "format_summary",
     "load_card_inputs",
     "render_dataset_card",
     "resolve_hf_token",
+    "summarize_metadata",
     "write_dataset_card",
 ]
