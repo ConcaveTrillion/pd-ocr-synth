@@ -943,6 +943,74 @@ def test_render_page_alignment_right_word_boxes_stay_inside_canvas(
         assert 0 <= y0 < y1 <= h, f"word {wb.text!r} bbox out of canvas: {wb.bbox}, canvas={w}x{h}"
 
 
+def test_render_page_alignment_justify_stretches_non_last_lines_per_paragraph(
+    tmp_path: Path,
+) -> None:
+    """Justify stretches non-last multi-word lines per paragraph independently.
+
+    Same per-paragraph scoping as ``"center"`` / ``"right"``: each
+    paragraph's non-last multi-word lines stretch to that paragraph's
+    own max line width, not the page's. Last lines remain left-
+    aligned.
+    """
+
+    # Two paragraphs, each with a long line and a short multi-word
+    # line. The short line in each paragraph is the LAST line so it
+    # stays left. To exercise the justify path we need a mid-paragraph
+    # short line — give each paragraph 3 lines: short, long, short.
+    paragraphs = [
+        ["alpha beta", "alpha beta gamma delta", "mu nu"],
+        ["theta iota", "theta iota kappa lambda", "rho sigma"],
+    ]
+
+    recipe_left = _build_aligned_recipe(tmp_path, "left")
+    recipe_just = _build_aligned_recipe(tmp_path, "justify")
+
+    ctx_left = RenderContext.for_seed(recipe_left.seed)
+    ctx_left.reseed_for_sample(0)
+    sample_left = render_page(paragraphs, recipe=recipe_left, ctx=ctx_left)
+
+    ctx_just = RenderContext.for_seed(recipe_just.seed)
+    ctx_just.reseed_for_sample(0)
+    sample_just = render_page(paragraphs, recipe=recipe_just, ctx=ctx_just)
+
+    assert len(sample_left.line_boxes) == len(sample_just.line_boxes) == 6
+
+    # Paragraph 0: line 0 (non-last, multi-word) stretches to flush
+    # against line 1 (the long line). Line 1 unchanged. Line 2 (last)
+    # unchanged.
+    assert sample_just.line_boxes[1].bbox[2] == sample_left.line_boxes[1].bbox[2]
+    assert sample_just.line_boxes[0].bbox[2] == sample_just.line_boxes[1].bbox[2]
+    assert sample_just.line_boxes[2].bbox[2] == sample_left.line_boxes[2].bbox[2]
+
+    # Paragraph 1: same shape; flush is to paragraph 1's own long line,
+    # not paragraph 0's.
+    assert sample_just.line_boxes[4].bbox[2] == sample_left.line_boxes[4].bbox[2]
+    assert sample_just.line_boxes[3].bbox[2] == sample_just.line_boxes[4].bbox[2]
+    assert sample_just.line_boxes[5].bbox[2] == sample_left.line_boxes[5].bbox[2]
+
+
+def test_render_page_alignment_justify_word_boxes_stay_inside_canvas(
+    tmp_path: Path,
+) -> None:
+    """Justified word boxes still sit inside the page canvas."""
+
+    paragraphs = [
+        ["alpha beta", "alpha beta gamma delta", "mu nu"],
+        ["theta iota", "theta iota kappa lambda", "rho sigma"],
+    ]
+    recipe = _build_aligned_recipe(tmp_path, "justify")
+    ctx = RenderContext.for_seed(recipe.seed)
+    ctx.reseed_for_sample(0)
+    sample = render_page(paragraphs, recipe=recipe, ctx=ctx)
+
+    w, h = sample.size
+    for wb in sample.word_boxes:
+        x0, y0, x1, y1 = wb.bbox
+        assert 0 <= x0 < x1 <= w, f"word {wb.text!r} bbox out of canvas: {wb.bbox}, canvas={w}x{h}"
+        assert 0 <= y0 < y1 <= h, f"word {wb.text!r} bbox out of canvas: {wb.bbox}, canvas={w}x{h}"
+
+
 # ---------------------------------------------------------------------------
 # Explicit page_size_px (fixed-canvas pad)
 # ---------------------------------------------------------------------------

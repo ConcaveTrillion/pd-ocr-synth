@@ -350,7 +350,7 @@ def test_known_degradation_set_includes_canonical_kinds() -> None:
 
 
 @pytest.mark.parametrize("layout_mode", ["paragraphs", "pages"])
-@pytest.mark.parametrize("alignment", ["left", "center", "right"])
+@pytest.mark.parametrize("alignment", ["left", "center", "right", "justify"])
 def test_paragraph_alignment_accepted_on_paragraph_modes(
     tmp_path: Path,
     writable_font_bytes: bytes,
@@ -359,9 +359,9 @@ def test_paragraph_alignment_accepted_on_paragraph_modes(
 ) -> None:
     """``paragraph_alignment`` is permitted on ``paragraphs`` + ``pages`` without warning.
 
-    All three implemented values (``left`` / ``center`` / ``right``)
-    must round-trip through the validator cleanly on both paragraph-
-    style modes.
+    All four implemented values (``left`` / ``center`` / ``right`` /
+    ``justify``) must round-trip through the validator cleanly on
+    both paragraph-style modes.
     """
     font = tmp_path / "fake.otf"
     font.write_bytes(writable_font_bytes)
@@ -425,7 +425,12 @@ def test_paragraph_alignment_warns_on_recognition_modes(
 def test_paragraph_alignment_unknown_value_rejected_at_load(
     tmp_path: Path, writable_font_bytes: bytes
 ) -> None:
-    """Pydantic's ``Literal["left", "center"]`` rejects unknown values at load time."""
+    """Pydantic's Literal rejects unknown alignment values at load time.
+
+    ``"justify"`` joined the supported set in iter 41 — pick a string
+    outside the four-value vocabulary to verify the gate is still
+    enforced.
+    """
     font = tmp_path / "fake.otf"
     font.write_bytes(writable_font_bytes)
     seed = _make_file(tmp_path / "seed.txt", "hello\n")
@@ -437,7 +442,7 @@ def test_paragraph_alignment_unknown_value_rejected_at_load(
             "  mode: paragraphs\n"
             "  padding_px: 8\n"
             "  max_width_px: 800\n"
-            "  paragraph_alignment: justify\n"
+            "  paragraph_alignment: kerning\n"
         ),
     )
     yaml_text = yaml_text.replace("mode: recognition", "mode: detection")

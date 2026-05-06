@@ -150,16 +150,16 @@ future small chunk.
 
 ### Paragraph alignment
 
-- [~] Spec 06 § `paragraphs` advertises
+- [x] Spec 06 § `paragraphs` advertises
       `alignment: justify | left | right | center` and spec 06
       § Ground truth captured per sample documents `lines` /
-      `words` GT regardless of alignment. `"left"`, `"center"`, and
-      `"right"` land as a layout key
-      `paragraph_alignment: Literal["left", "center", "right"] | None = None`
+      `words` GT regardless of alignment. All four values land as a
+      layout key
+      `paragraph_alignment: Literal["left", "center", "right", "justify"] | None = None`
       (`None` and `"left"` both preserve the historical un-aligned
       output bit-for-bit). The validator permits the field on
       `paragraphs` and `pages` modes and warns `layout_key_unused`
-      on `word_crops` / `lines`, parametrized across all three
+      on `word_crops` / `lines`, parametrized across all four
       values (`tests/test_validation.py::test_paragraph_alignment_*`).
       `render_paragraph` applies a per-line offset to image paste,
       glyph runs, word boxes, and line bbox: under `"center"` the
@@ -173,11 +173,23 @@ future small chunk.
       the recipe (no extra wiring); per-paragraph alignment happens
       against each paragraph's own max line width, not the page's
       (`tests/test_render_page.py::*alignment_center_*`,
-      `*alignment_right_*`). `"justify"` is a separate (and
-      genuinely larger) chunk because it needs per-word/inter-glyph
-      stretching, and the spec is silent on whether the last line
-      of a paragraph stretches — it remains rejected at recipe-load
-      time by the pydantic `Literal["left", "center", "right"]`.
+      `*alignment_right_*`). `"justify"` distributes the per-line
+      slack (`paragraph_width - line_natural_width`) across the
+      inter-word gaps in each line by re-shaping eligible lines with
+      a `justify_target_width` and shifting all glyphs in word `i`
+      (for `i >= 1`) right by an accumulating per-gap offset. Per
+      standard book-typesetting practice, the **last line** of a
+      paragraph and **single-word** lines fall back to left
+      alignment (justify-stretching them would either look awkward
+      or require glyph-tracking, neither of which serves OCR
+      training). 8 paragraph-level tests in
+      `tests/test_render_paragraph.py::*alignment_justify_*` lock
+      the right-edge flush, the last-line / single-word / single-
+      line-paragraph fallback, the per-word accumulating offset,
+      glyph-run tracking, and word-box-disjointness invariants;
+      2 page-level tests in
+      `tests/test_render_page.py::*alignment_justify_*` lock the
+      per-paragraph independence and canvas containment.
 
 ### First-line indent for paragraphs
 

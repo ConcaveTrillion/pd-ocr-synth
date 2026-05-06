@@ -64,7 +64,7 @@ from typing import TYPE_CHECKING
 from PIL import Image
 
 from pd_ocr_synth.render.context import RenderContext
-from pd_ocr_synth.render.line import _group_clusters_into_words
+from pd_ocr_synth.render.line import _group_clusters_into_words, _word_spans
 from pd_ocr_synth.render.sample import (
     GlyphRun,
     LineBox,
@@ -205,8 +205,12 @@ def render_paragraph(
     the per-line offset ``paragraph_width - line_natural_width``.
     Lines that are already as wide as the paragraph (the longest
     line, by construction) get a zero offset under both ``"center"``
-    and ``"right"``. ``"justify"`` is spec'd but not yet implemented
-    (per-word stretching) and is rejected at recipe-load time.
+    and ``"right"``. ``"justify"`` distributes the per-line slack
+    (``paragraph_width - line_natural_width``) across the inter-word
+    gaps in each line so the line's right edge is flush with
+    ``paragraph_width``; per standard book-typesetting practice, the
+    last line of the paragraph and any single-word lines fall back
+    to left-alignment.
 
     Raises:
         RenderError: if ``lines`` is empty, or any line is empty /
@@ -223,14 +227,14 @@ def render_paragraph(
             f"render_paragraph: first_line_indent_px must be >= 0, got {first_line_indent_px}"
         )
     alignment = recipe.layout.paragraph_alignment or "left"
-    if alignment not in {"left", "center", "right"}:
+    if alignment not in {"left", "center", "right", "justify"}:
         # Defensive: pydantic's Literal already gates this, and the
-        # validator rejects anything outside {left, center, right}.
-        # The safety net keeps mypy and future literal-additions
-        # honest (e.g. ``"justify"`` lands as a separate chunk).
+        # validator rejects anything outside {left, center, right,
+        # justify}. The safety net keeps mypy and future literal-
+        # additions honest.
         raise RenderError(
             f"render_paragraph: unsupported paragraph_alignment {alignment!r}; "
-            "only 'left', 'center', and 'right' are implemented"
+            "only 'left', 'center', 'right', and 'justify' are implemented"
         )
     _validate_lines(lines)
 
@@ -268,6 +272,9 @@ def render_paragraph(
     line_advance_px = max(1, int(round(line_height_px * spacing_mul)))
 
     # Per-line shaped + composited fragments (no padding around each).
+    # First pass: render every line at its **natural** width. For
+    # justify alignment we'll re-render select lines below once we
+    # know ``paragraph_width``.
     fragments = [
         _shape_and_composite_line(
             text=line,
@@ -292,6 +299,43 @@ def render_paragraph(
     paragraph_width = max(
         (frag.width + (first_line_indent_px if i == 0 else 0)) for i, frag in enumerate(fragments)
     )
+
+    # Justify pass: for ``alignment == "justify"`` re-render lines that
+    # qualify for stretching (multi-word AND not the last line of the
+    # paragraph) so their fragment width equals ``paragraph_width``
+    # minus that line's indent contribution. The first/last/single-
+    # word fallback to natural width keeps the visual contract
+    # consistent with how book typesetters set justified text:
+    #
+    # - Last line of the paragraph: rendered naturally (left-aligned).
+    #   A justified last line typically looks awkwardly stretched.
+    # - Single-line paragraph: the only line is also the last line, so
+    #   it falls under the rule above.
+    # - Single-word line (no inter-word gaps to absorb slack): rendered
+    #   naturally; would be a glyph-stretch problem otherwise.
+    if alignment == "justify":
+        last_index = len(fragments) - 1
+        for i, line in enumerate(lines):
+            indent_i = first_line_indent_px if i == 0 else 0
+            target_i = paragraph_width - indent_i
+            # Skip if this line already fills the paragraph (it's the
+            # longest line, by construction of ``paragraph_width``).
+            if fragments[i].width >= target_i:
+                continue
+            # Skip non-eligible lines.
+            if i == last_index:
+                continue
+            if sum(1 for _ in _word_spans(line)) < 2:
+                continue
+            fragments[i] = _shape_and_composite_line(
+                text=line,
+                handles=handles,
+                pixel_size=pixel_size,
+                features=font_features,
+                ink=ink,
+                bg=bg,
+                justify_target_width=target_i,
+            )
     img_w = paragraph_width + 2 * padding
     # Vertical bounds: first line top = padding; last line bottom =
     # padding + (n-1)*line_advance_px + last fragment height.
@@ -333,7 +377,14 @@ def render_paragraph(
             align_offset = (paragraph_width - line_natural_width) // 2
         elif alignment == "right":
             align_offset = paragraph_width - line_natural_width
-        else:  # "left"
+        else:  # "left" and "justify"
+            # ``justify`` rebuilt the eligible lines above so each
+            # fragment's width equals ``paragraph_width - indent`` —
+            # the line already fills the paragraph and slides to
+            # offset 0 like "left". Non-eligible lines under
+            # ``justify`` (last line, single-word, single-line
+            # paragraph) also fall back to left alignment, matching
+            # standard book-typesetting practice.
             align_offset = 0
         line_left_in_canvas = padding + indent + align_offset
 
@@ -472,12 +523,23 @@ def _shape_and_composite_line(
     features,
     ink: tuple[int, int, int],
     bg: tuple[int, int, int],
+    justify_target_width: int | None = None,
 ) -> _LineFragment:
     """Shape, rasterize, and composite one line into a tight fragment.
 
     Reuses the M09 ``render_line`` shaping + glyph rasterization path,
     but emits a padding-free fragment so the paragraph compositor can
     decide its own per-line offsets.
+
+    When ``justify_target_width`` is set, the inter-word slack
+    (``target_width - natural_width``) is distributed across the
+    inter-word gaps in the line by shifting all glyphs in word ``i``
+    (for ``i >= 1``) right by an accumulating offset. The resulting
+    fragment is exactly ``justify_target_width`` pixels wide. The
+    caller is responsible for only requesting justification on lines
+    where it makes sense (multi-word, non-last-line) — this helper
+    raises :class:`RenderError` if asked to justify a line with fewer
+    than two words.
     """
 
     info_glyphs, positions = _shape(handles.hb_face, text, pixel_size, features)
@@ -503,6 +565,66 @@ def _shape_and_composite_line(
     if not inked:
         raise RenderError(f"line shaped to zero inked glyphs: {text!r}")
 
+    # If justifying, derive a per-glyph x-shift (zero for word 0,
+    # accumulating for words 1..n) and apply it to ``placements``
+    # before computing the canvas extent. The shift is keyed on the
+    # glyph's HarfBuzz ``cluster`` (the input codepoint offset that
+    # produced it), so cluster-spanning glyphs land in whichever word
+    # their cluster falls in. Glyphs whose cluster lies in a whitespace
+    # run (a space glyph between two words) inherit the previous
+    # word's shift — the next non-whitespace word picks up the
+    # incremented shift. This matches what a typesetter would do:
+    # space glyphs visually grow with the gap.
+    if justify_target_width is not None:
+        # Natural extent before any shift.
+        natural_min_x = min(x for _, x, _, _ in inked)
+        natural_max_x = max(x + bm["width"] for bm, x, _, _ in inked)
+        natural_width = max(1, natural_max_x - natural_min_x)
+
+        word_count = sum(1 for _ in _word_spans(text))
+        if word_count < 2:
+            raise RenderError(
+                f"_shape_and_composite_line: justify requires >= 2 words, "
+                f"got {word_count} for {text!r}"
+            )
+        slack = max(0, justify_target_width - natural_width)
+        gap_count = word_count - 1
+        per_gap = slack // gap_count
+        remainder = slack - per_gap * gap_count
+
+        # Word index for each cluster: walk word_spans in order; a
+        # cluster that's strictly less than word i+1's start belongs
+        # to word i (or to the whitespace gap immediately preceding
+        # word i+1, which we still treat as "after word i" for shift
+        # purposes). Use a mapping cluster -> word_index for clarity.
+        spans = _word_spans(text)
+        # ``cumulative_shift_after_word[i]`` is the shift applied to
+        # every glyph whose cluster is >= spans[i+1].start. word 0
+        # gets shift 0; word 1 gets shift ``per_gap + (1 if 1 <=
+        # remainder else 0)``; etc.
+        cumulative: list[int] = [0]
+        for gap_index in range(gap_count):
+            extra = per_gap + (1 if gap_index < remainder else 0)
+            cumulative.append(cumulative[-1] + extra)
+
+        def _shift_for_cluster(cluster: int) -> int:
+            # Find the highest word index ``i`` such that
+            # spans[i].start <= cluster. If cluster falls before
+            # spans[0].start (leading whitespace), shift is 0.
+            shift_index = 0
+            for i, (_, start, _) in enumerate(spans):
+                if cluster >= start:
+                    shift_index = i
+                else:
+                    break
+            return cumulative[shift_index]
+
+        placements = [
+            (bm, x + _shift_for_cluster(cluster), y, cluster) for bm, x, y, cluster in placements
+        ]
+        inked = [(bm, x, y, c) for bm, x, y, c in placements if bm["width"] > 0 and bm["rows"] > 0]
+        # Recompute extent after shift.
+
     min_x = min(x for _, x, _, _ in inked)
     min_y = min(y for _, _, y, _ in inked)
     max_x = max(x + bm["width"] for bm, x, _, _ in inked)
@@ -510,6 +632,19 @@ def _shape_and_composite_line(
 
     width = max(1, max_x - min_x)
     height = max(1, max_y - min_y)
+
+    if justify_target_width is not None:
+        # By construction the rightmost inked glyph after shifting
+        # aligns with ``natural_min_x + natural_width + slack`` =
+        # ``natural_min_x + justify_target_width``, so subtracting
+        # ``min_x`` (= natural_min_x; leftmost glyph is in word 0,
+        # un-shifted) yields ``justify_target_width``. We still clamp
+        # ``width`` to ``justify_target_width`` to absorb any
+        # off-by-one from glyph rasterization rounding (the rightmost
+        # glyph's x1 may sit a pixel inside the target and we still
+        # want the canvas exactly ``target`` wide so the line bbox /
+        # paragraph_width relation is exact).
+        width = max(width, justify_target_width)
 
     canvas = Image.new("RGB", (width, height), color=bg)
     runs: list[GlyphRun] = []

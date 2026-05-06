@@ -439,7 +439,8 @@
               "enum": [
                 "left",
                 "center",
-                "right"
+                "right",
+                "justify"
               ],
               "type": "string"
             },

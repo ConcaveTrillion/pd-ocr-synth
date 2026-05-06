@@ -765,13 +765,14 @@ def test_render_paragraph_alignment_unsupported_value_raises(tmp_path: Path) -> 
     """An out-of-band alignment value (bypassing pydantic) raises RenderError.
 
     The recipe ``Layout`` model's
-    ``Literal["left", "center", "right"]`` rejects unknown values at
-    load time. This test pokes the validation layer directly by
-    mutating an already-loaded recipe via ``model_copy(update=...)`` —
-    the renderer's own defensive check must still fire.
+    ``Literal["left", "center", "right", "justify"]`` rejects unknown
+    values at load time. This test pokes the validation layer
+    directly by mutating an already-loaded recipe via
+    ``model_copy(update=...)`` — the renderer's own defensive check
+    must still fire.
     """
     recipe = _make_aligned_recipe(tmp_path, "left")
-    bad_layout = recipe.layout.model_copy(update={"paragraph_alignment": "justify"})
+    bad_layout = recipe.layout.model_copy(update={"paragraph_alignment": "kerning"})
     bad_recipe = recipe.model_copy(update={"layout": bad_layout})
     ctx = RenderContext.for_seed(bad_recipe.seed)
     ctx.reseed_for_sample(0)
@@ -1027,3 +1028,298 @@ def test_render_paragraph_alignment_right_word_boxes_stay_inside_canvas(
         x0, y0, x1, y1 = wb.bbox
         assert 0 <= x0 < x1 <= w, f"word {wb.text!r} bbox out of canvas: {wb.bbox}, canvas={w}x{h}"
         assert 0 <= y0 < y1 <= h, f"word {wb.text!r} bbox out of canvas: {wb.bbox}, canvas={w}x{h}"
+
+
+# ---------------------------------------------------------------------------
+# Paragraph alignment: justify
+# ---------------------------------------------------------------------------
+
+
+def test_render_paragraph_alignment_justify_non_last_lines_flush_right_edge(
+    tmp_path: Path,
+) -> None:
+    """``paragraph_alignment = "justify"`` flushes non-last multi-word lines to ``paragraph_width``.
+
+    Non-last, multi-word lines stretch their inter-word gaps to fill
+    the paragraph width — the line's right edge sits flush with the
+    longest line's right edge.
+    """
+
+    # Three lines: line 0 multi-word + short, line 1 multi-word +
+    # long (paragraph_width-defining), line 2 multi-word + short.
+    # Line 0 is non-last and multi-word -> should justify (flush
+    # right). Line 2 is the LAST line -> stays left-aligned (no flush).
+    paragraphs = ["alpha beta", "alpha beta gamma delta", "mu nu"]
+
+    recipe_left = _make_aligned_recipe(tmp_path, "left")
+    recipe_just = _make_aligned_recipe(tmp_path, "justify")
+
+    ctx_left = RenderContext.for_seed(recipe_left.seed)
+    ctx_left.reseed_for_sample(0)
+    sample_left = render_paragraph(paragraphs, recipe=recipe_left, ctx=ctx_left)
+
+    ctx_just = RenderContext.for_seed(recipe_just.seed)
+    ctx_just.reseed_for_sample(0)
+    sample_just = render_paragraph(paragraphs, recipe=recipe_just, ctx=ctx_just)
+
+    # Canvas size matches: justify only redistributes inter-word slack
+    # within each line's existing target width; paragraph_width is
+    # fixed at the longest natural line.
+    assert sample_just.size == sample_left.size
+
+    # Line 1 is the longest line -> right edge unchanged.
+    assert sample_just.line_boxes[1].bbox[2] == sample_left.line_boxes[1].bbox[2]
+
+    # Line 0 (non-last, multi-word) flushes its right edge to line 1's
+    # right edge.
+    assert sample_just.line_boxes[0].bbox[2] == sample_just.line_boxes[1].bbox[2]
+
+    # Line 2 (LAST line, multi-word but justify-exempt) keeps its
+    # natural right edge — same as left-aligned.
+    assert sample_just.line_boxes[2].bbox[2] == sample_left.line_boxes[2].bbox[2]
+
+
+def test_render_paragraph_alignment_justify_last_line_stays_left(
+    tmp_path: Path,
+) -> None:
+    """The last line of a justified paragraph stays left-aligned.
+
+    Standard book typography: the last line of a paragraph is not
+    stretched, so word boxes on the last line match the left-aligned
+    sample's word boxes verbatim.
+    """
+
+    paragraphs = ["alpha beta", "alpha beta gamma delta", "mu nu"]
+
+    recipe_left = _make_aligned_recipe(tmp_path, "left")
+    recipe_just = _make_aligned_recipe(tmp_path, "justify")
+
+    ctx_left = RenderContext.for_seed(recipe_left.seed)
+    ctx_left.reseed_for_sample(0)
+    sample_left = render_paragraph(paragraphs, recipe=recipe_left, ctx=ctx_left)
+
+    ctx_just = RenderContext.for_seed(recipe_just.seed)
+    ctx_just.reseed_for_sample(0)
+    sample_just = render_paragraph(paragraphs, recipe=recipe_just, ctx=ctx_just)
+
+    # Last-line word boxes (mu, nu) are pixel-identical to left-align.
+    last_line_y = sample_left.line_boxes[2].bbox[1]
+
+    def _last_line_words(sample) -> list:
+        return sorted(
+            (wb for wb in sample.word_boxes if wb.bbox[1] >= last_line_y),
+            key=lambda w: w.bbox[0],
+        )
+
+    assert [w.bbox for w in _last_line_words(sample_just)] == [
+        w.bbox for w in _last_line_words(sample_left)
+    ]
+
+
+def test_render_paragraph_alignment_justify_single_word_line_stays_left(
+    tmp_path: Path,
+) -> None:
+    """Single-word lines under justify fall back to left-alignment.
+
+    A single-word line has zero inter-word gaps to absorb slack — a
+    "justified" single-word line would be a glyph-stretch problem,
+    not a justify problem. We render it left-aligned instead.
+    """
+
+    # Line 0 is single-word + short; line 1 is multi-word + long
+    # (paragraph_width-defining); line 2 is multi-word so line 0 is
+    # not the last line.
+    paragraphs = ["singleton", "alpha beta gamma delta", "mu nu"]
+
+    recipe_left = _make_aligned_recipe(tmp_path, "left")
+    recipe_just = _make_aligned_recipe(tmp_path, "justify")
+
+    ctx_left = RenderContext.for_seed(recipe_left.seed)
+    ctx_left.reseed_for_sample(0)
+    sample_left = render_paragraph(paragraphs, recipe=recipe_left, ctx=ctx_left)
+
+    ctx_just = RenderContext.for_seed(recipe_just.seed)
+    ctx_just.reseed_for_sample(0)
+    sample_just = render_paragraph(paragraphs, recipe=recipe_just, ctx=ctx_just)
+
+    # Single-word line 0 right edge == left-aligned right edge (no
+    # stretching applied).
+    assert sample_just.line_boxes[0].bbox[2] == sample_left.line_boxes[0].bbox[2]
+    # And by extension does NOT flush to paragraph_width.
+    assert sample_just.line_boxes[0].bbox[2] < sample_just.line_boxes[1].bbox[2]
+
+
+def test_render_paragraph_alignment_justify_single_line_paragraph_stays_left(
+    tmp_path: Path,
+) -> None:
+    """A single-line paragraph stays left-aligned under justify.
+
+    The only line in a single-line paragraph is also the last line —
+    it falls under the last-line-exemption rule and stays at its
+    natural width.
+    """
+    paragraphs = ["alpha beta gamma"]
+
+    recipe_left = _make_aligned_recipe(tmp_path, "left")
+    recipe_just = _make_aligned_recipe(tmp_path, "justify")
+
+    def _render(recipe):
+        ctx = RenderContext.for_seed(recipe.seed)
+        ctx.reseed_for_sample(0)
+        return render_paragraph(paragraphs, recipe=recipe, ctx=ctx)
+
+    sample_left = _render(recipe_left)
+    sample_just = _render(recipe_just)
+
+    # Bbox-identical: single-line paragraph -> last-line-exempt.
+    assert sample_just.size == sample_left.size
+    assert [lb.bbox for lb in sample_just.line_boxes] == [lb.bbox for lb in sample_left.line_boxes]
+    assert [wb.bbox for wb in sample_just.word_boxes] == [wb.bbox for wb in sample_left.word_boxes]
+
+
+def test_render_paragraph_alignment_justify_word_boxes_distribute_slack_evenly(
+    tmp_path: Path,
+) -> None:
+    """Inter-word gaps grow uniformly across a justified line.
+
+    The slack ``paragraph_width - line_natural_width`` is split into
+    ``word_count - 1`` inter-word gaps. Each successive word in the
+    same line shifts right by one extra increment, so word ``i`` (for
+    ``i >= 1``) sits at ``left_x + i * per_gap`` past its natural
+    position.
+    """
+
+    # Use a long paragraph_width-defining line and a justified line
+    # with 4 words (3 gaps) so slack is divisible.
+    paragraphs = ["a b c d", "alpha beta gamma delta epsilon"]
+
+    recipe_left = _make_aligned_recipe(tmp_path, "left")
+    recipe_just = _make_aligned_recipe(tmp_path, "justify")
+
+    ctx_left = RenderContext.for_seed(recipe_left.seed)
+    ctx_left.reseed_for_sample(0)
+    sample_left = render_paragraph(paragraphs, recipe=recipe_left, ctx=ctx_left)
+
+    ctx_just = RenderContext.for_seed(recipe_just.seed)
+    ctx_just.reseed_for_sample(0)
+    sample_just = render_paragraph(paragraphs, recipe=recipe_just, ctx=ctx_just)
+
+    # Words on line 0 ("a b c d"). Word 0 ("a") has zero shift; word
+    # 1 ("b") shifts by per_gap; word 2 by 2*per_gap; word 3 by
+    # 3*per_gap. Per-gap delta is monotonically non-decreasing in
+    # word index (and strictly increasing when slack > 0).
+    def _line0_words(sample):
+        line0_y1 = sample.line_boxes[0].bbox[3]
+        return sorted(
+            (wb for wb in sample.word_boxes if wb.bbox[3] <= line0_y1),
+            key=lambda w: w.bbox[0],
+        )
+
+    line0_left = _line0_words(sample_left)
+    line0_just = _line0_words(sample_just)
+    assert [w.text for w in line0_left] == ["a", "b", "c", "d"]
+    assert [w.text for w in line0_just] == ["a", "b", "c", "d"]
+
+    deltas = [j.bbox[0] - lf.bbox[0] for j, lf in zip(line0_just, line0_left, strict=True)]
+    # Word 0 unshifted; subsequent words shifted by an accumulating
+    # offset. With 3 inter-word gaps and slack S, deltas are
+    # [0, per_gap + r0, 2*per_gap + r0+r1, 3*per_gap + r0+r1+r2]
+    # where r_i is 1 for the first ``S % 3`` gaps and 0 otherwise.
+    # So: monotonic, deltas[0] == 0, deltas grow by either ``per_gap``
+    # or ``per_gap + 1`` each step.
+    assert deltas[0] == 0
+    assert deltas[1] >= deltas[0]
+    assert deltas[2] >= deltas[1]
+    assert deltas[3] >= deltas[2]
+    # Final word right edge is flush with paragraph_width.
+    assert line0_just[-1].bbox[2] == sample_just.line_boxes[1].bbox[2]
+
+
+def test_render_paragraph_alignment_justify_glyph_runs_track_word_offsets(
+    tmp_path: Path,
+) -> None:
+    """Per-cluster glyph_runs shift to follow their word's per-word offset.
+
+    Glyphs in word 0 are unshifted; glyphs in word ``i >= 1`` shift
+    by the same accumulated offset as word ``i``'s left edge moves.
+    """
+
+    paragraphs = ["alpha beta", "alpha beta gamma delta epsilon"]
+
+    recipe_left = _make_aligned_recipe(tmp_path, "left")
+    recipe_just = _make_aligned_recipe(tmp_path, "justify")
+
+    ctx_left = RenderContext.for_seed(recipe_left.seed)
+    ctx_left.reseed_for_sample(0)
+    sample_left = render_paragraph(paragraphs, recipe=recipe_left, ctx=ctx_left)
+
+    ctx_just = RenderContext.for_seed(recipe_just.seed)
+    ctx_just.reseed_for_sample(0)
+    sample_just = render_paragraph(paragraphs, recipe=recipe_just, ctx=ctx_just)
+
+    # Filter glyph runs to line 0 by y-bound (line 1 is below).
+    line0_y1 = sample_left.line_boxes[0].bbox[3]
+
+    def _line0_runs(sample):
+        return sorted(
+            (r for r in sample.glyph_runs if r.bbox[3] <= line0_y1),
+            key=lambda r: r.bbox[0],
+        )
+
+    runs_left = _line0_runs(sample_left)
+    runs_just = _line0_runs(sample_just)
+    assert len(runs_left) == len(runs_just) > 0
+
+    # The leftmost glyph run (in word 0) has zero shift; the rightmost
+    # glyph run (in last word) has the largest shift.
+    delta_first = runs_just[0].bbox[0] - runs_left[0].bbox[0]
+    delta_last = runs_just[-1].bbox[0] - runs_left[-1].bbox[0]
+    assert delta_first == 0
+    assert delta_last > 0
+
+
+def test_render_paragraph_alignment_justify_word_boxes_stay_inside_canvas(
+    tmp_path: Path,
+) -> None:
+    """Justified word boxes still sit inside the paragraph canvas."""
+    paragraphs = ["alpha beta gamma delta epsilon", "mu nu", "x y"]
+    recipe = _make_aligned_recipe(tmp_path, "justify")
+    ctx = RenderContext.for_seed(recipe.seed)
+    ctx.reseed_for_sample(0)
+    sample = render_paragraph(paragraphs, recipe=recipe, ctx=ctx)
+
+    w, h = sample.size
+    for wb in sample.word_boxes:
+        x0, y0, x1, y1 = wb.bbox
+        assert 0 <= x0 < x1 <= w, f"word {wb.text!r} bbox out of canvas: {wb.bbox}, canvas={w}x{h}"
+        assert 0 <= y0 < y1 <= h, f"word {wb.text!r} bbox out of canvas: {wb.bbox}, canvas={w}x{h}"
+
+
+def test_render_paragraph_alignment_justify_word_boxes_remain_disjoint(
+    tmp_path: Path,
+) -> None:
+    """Adjacent justified word boxes do not overlap horizontally.
+
+    Stretching inter-word gaps must not pull words backward into each
+    other; in fact gaps should grow, not shrink. Verifies that, for
+    every pair of consecutive words on a justified line, the next
+    word's ``x0`` is >= the previous word's ``x1``.
+    """
+    paragraphs = ["alpha beta gamma delta epsilon", "mu nu", "x y"]
+    recipe = _make_aligned_recipe(tmp_path, "justify")
+    ctx = RenderContext.for_seed(recipe.seed)
+    ctx.reseed_for_sample(0)
+    sample = render_paragraph(paragraphs, recipe=recipe, ctx=ctx)
+
+    # Group word boxes by line via line_boxes' y-range.
+    for line_box in sample.line_boxes:
+        ly0, ly1 = line_box.bbox[1], line_box.bbox[3]
+        line_words = sorted(
+            (wb for wb in sample.word_boxes if ly0 <= wb.bbox[1] and wb.bbox[3] <= ly1),
+            key=lambda w: w.bbox[0],
+        )
+        for prev, curr in zip(line_words, line_words[1:], strict=False):
+            assert curr.bbox[0] >= prev.bbox[2], (
+                f"justified words overlap on line {line_box.text!r}: "
+                f"{prev.text!r} {prev.bbox} vs {curr.text!r} {curr.bbox}"
+            )

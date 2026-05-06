@@ -243,14 +243,19 @@ class Layout(_Frozen):
     # left-aligned output bit-for-bit. ``"center"`` centers each line
     # within ``paragraph_width`` (the width of the longest line, plus
     # any first-line indent contribution); ``"right"`` flushes each
-    # line to the right edge of ``paragraph_width``. Only meaningful
-    # for ``mode in {paragraphs, pages}`` — recognition-mode samples
-    # are tight crops where alignment is undefined. ``"justify"`` is
-    # advertised by spec 06 but not yet implemented (it requires per-
-    # word/inter-glyph spacing adjustment); it is rejected at recipe-
-    # load time. See docs/roadmap/09-detection-mode.md § Paragraph
-    # alignment.
-    paragraph_alignment: Literal["left", "center", "right"] | None = None
+    # line to the right edge of ``paragraph_width``. ``"justify"``
+    # distributes the per-line slack (``paragraph_width -
+    # line_natural_width``) across the inter-word gaps in that line so
+    # the line's right edge sits flush with ``paragraph_width``. Per
+    # standard book-typesetting practice, the **last line** of a
+    # paragraph and **single-word** lines fall back to left alignment
+    # (a justified single-word line would be a stretched glyph run, not
+    # a justified line; a justified last line typically looks
+    # awkwardly stretched). Only meaningful for ``mode in {paragraphs,
+    # pages}`` — recognition-mode samples are tight crops where
+    # alignment is undefined. See docs/roadmap/09-detection-mode.md §
+    # Paragraph alignment.
+    paragraph_alignment: Literal["left", "center", "right", "justify"] | None = None
     # Explicit fixed page canvas size in pixels (width, height). When
     # set, ``render_page`` produces output of *exactly* this size by
     # rendering content at its natural extent and then padding the
