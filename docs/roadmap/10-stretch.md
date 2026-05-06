@@ -76,7 +76,13 @@ if they start mattering:
   ``--recipe-sha PREFIX`` does a case-insensitive prefix match against
   ``recipe_sha`` (entries with a null SHA are excluded — a SHA filter
   implies "find runs of recipe X"). Filters apply _before_ ``--limit``
-  so "last N matching" composes naturally. Future chunks: a global
+  so "last N matching" composes naturally. _Summary chunk landed:_
+  ``--summary`` aggregates the matched window into entry / sample /
+  runtime totals, distinct recipe-name and recipe-SHA counts, oldest
+  / newest timestamp, and a top-3 recipe-SHA frequency list. Composes
+  with all existing filters (``--since``, ``--until``,
+  ``--recipe-sha``, ``--limit``) so "summarize the last N entries
+  from today" is a one-liner; pair with ``--json`` for a single
+  fixed-shape object suitable for dashboards. Future chunks: a global
   ``~/.cache/pd-ocr-synth/audit.jsonl`` aggregate so cross-recipe runs
-  share one timeline, and an ``--summary`` flag that aggregates
-  runtime / sample counts across the matched window.
+  share one timeline.

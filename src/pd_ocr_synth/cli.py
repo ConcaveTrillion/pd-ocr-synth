@@ -215,6 +215,15 @@ def build_parser() -> argparse.ArgumentParser:
             "(case-insensitive); entries with a null sha are excluded"
         ),
     )
+    p_audit.add_argument(
+        "--summary",
+        action="store_true",
+        help=(
+            "print aggregate statistics over the matched entries instead of "
+            "the per-row table; combine with --json for a single JSON object "
+            "and with --since/--until/--recipe-sha/--limit to scope the window"
+        ),
+    )
 
     p_clean = subparsers.add_parser("clean", help="remove cached corpora for a recipe")
     _add_recipe_arg(p_clean)
@@ -908,6 +917,126 @@ def _parse_audit_timestamp(raw: str) -> str | None:
     return iso.replace("+00:00", "Z")
 
 
+def _summarize_audit_entries(entries: list[dict]) -> dict[str, Any]:
+    """Aggregate a filtered audit-entry list into a summary dict.
+
+    Computed fields (always present so a downstream JSON consumer can
+    rely on the shape — empty values are zero / null / empty list, not
+    missing keys):
+
+    - ``entry_count``: number of audit rows in the matched window.
+    - ``total_count``: summed ``count`` across rows (effective sample
+      target).
+    - ``total_rendered`` / ``total_skipped``: summed ``rendered`` /
+      ``skipped`` across rows (post-filter sample outcome).
+    - ``total_runtime_seconds``: summed ``runtime_seconds``. Rounded to
+      2 decimals to match the table-mode formatting.
+    - ``distinct_recipe_names``: count of unique ``recipe_name`` values.
+    - ``distinct_recipe_shas``: count of unique non-null ``recipe_sha``
+      values. Null SHAs (in-memory recipes) are not counted as a
+      "distinct recipe" because they have no stable identifier.
+    - ``oldest_timestamp`` / ``newest_timestamp``: min / max
+      ``timestamp``. ``None`` when the window is empty. Lex comparison
+      is correct for ISO-8601 UTC strings.
+    - ``top_recipe_shas``: list of ``{"recipe_sha": short, "count": n}``
+      for the top-3 recipe SHAs by run count, descending. SHA is
+      truncated to the first 12 hex chars to match the audit table's
+      readable-but-unambiguous convention. Ties broken by SHA value
+      (lex ascending) so the output is deterministic across runs.
+
+    Pure function for unit-test reach; the CLI handler just dispatches
+    to this and the printer below. Tolerant of partial / malformed
+    rows: missing keys are treated as zero / empty so a hand-corrupted
+    audit file produces a sensible summary rather than a KeyError.
+    """
+
+    from collections import Counter
+
+    n = len(entries)
+    total_count = 0
+    total_rendered = 0
+    total_skipped = 0
+    total_runtime = 0.0
+    names: set[str] = set()
+    sha_counter: Counter[str] = Counter()
+    timestamps: list[str] = []
+    for entry in entries:
+        # Defensive ints: an audit row hand-edited to a string would
+        # otherwise crash the summary. We coerce, falling back to 0.
+        try:
+            total_count += int(entry.get("count", 0) or 0)
+        except (TypeError, ValueError):
+            pass
+        try:
+            total_rendered += int(entry.get("rendered", 0) or 0)
+        except (TypeError, ValueError):
+            pass
+        try:
+            total_skipped += int(entry.get("skipped", 0) or 0)
+        except (TypeError, ValueError):
+            pass
+        runtime = entry.get("runtime_seconds")
+        if isinstance(runtime, int | float):
+            total_runtime += float(runtime)
+        name = entry.get("recipe_name")
+        if isinstance(name, str) and name:
+            names.add(name)
+        sha = entry.get("recipe_sha")
+        if isinstance(sha, str) and sha:
+            sha_counter[sha] += 1
+        ts = entry.get("timestamp")
+        if isinstance(ts, str) and ts:
+            timestamps.append(ts)
+
+    # Top-3 recipe SHAs, with deterministic tie-breaking by SHA value.
+    # ``Counter.most_common`` is insertion-stable on ties, which would
+    # leak entry order into the output; an explicit sort keeps the
+    # summary reproducible regardless of how the audit file was built.
+    top = sorted(sha_counter.items(), key=lambda kv: (-kv[1], kv[0]))[:3]
+    top_payload = [{"recipe_sha": sha[:12], "count": cnt} for sha, cnt in top]
+
+    return {
+        "entry_count": n,
+        "total_count": total_count,
+        "total_rendered": total_rendered,
+        "total_skipped": total_skipped,
+        "total_runtime_seconds": round(total_runtime, 2),
+        "distinct_recipe_names": len(names),
+        "distinct_recipe_shas": len(sha_counter),
+        "oldest_timestamp": min(timestamps) if timestamps else None,
+        "newest_timestamp": max(timestamps) if timestamps else None,
+        "top_recipe_shas": top_payload,
+    }
+
+
+def _print_audit_summary(stats: dict[str, Any]) -> None:
+    """Pretty-print an audit summary in the human-readable text mode.
+
+    Layout is a fixed two-column ``label: value`` block — narrow enough
+    for a 60-col terminal and the most important field (``entry_count``)
+    on the first line so a quick eyeball read is dominated by "did
+    anything match?". The top-recipe-SHAs table follows as a small
+    indented block; suppressed when empty.
+    """
+
+    print(f"entry_count:           {stats['entry_count']}")
+    print(f"total_count:           {stats['total_count']}")
+    print(f"total_rendered:        {stats['total_rendered']}")
+    print(f"total_skipped:         {stats['total_skipped']}")
+    print(f"total_runtime_seconds: {stats['total_runtime_seconds']:.2f}")
+    print(f"distinct_recipe_names: {stats['distinct_recipe_names']}")
+    print(f"distinct_recipe_shas:  {stats['distinct_recipe_shas']}")
+    oldest = stats["oldest_timestamp"] or "-"
+    newest = stats["newest_timestamp"] or "-"
+    print(f"oldest_timestamp:      {oldest}")
+    print(f"newest_timestamp:      {newest}")
+    top = stats["top_recipe_shas"]
+    if top:
+        print("top_recipe_shas:")
+        for row in top:
+            print(f"  {row['recipe_sha']:<12}  {row['count']}")
+
+
 def _cmd_audit(
     output_dir_arg: str,
     *,
@@ -916,6 +1045,7 @@ def _cmd_audit(
     since: str | None = None,
     until: str | None = None,
     recipe_sha: str | None = None,
+    summary: bool = False,
 ) -> int:
     """Read back the per-render audit log written by ``render``.
 
@@ -933,6 +1063,15 @@ def _cmd_audit(
       no SHA — e.g. an in-memory recipe).
     - **json** (``--json``): a JSON array, one object per audit row,
       schema verbatim. Suitable for piping into ``jq`` / scripts.
+    - **summary** (``--summary``): a fixed set of aggregate statistics
+      over the matched window — entry count, distinct recipe SHAs +
+      names, summed sample counts (``count``, ``rendered``,
+      ``skipped``), total wall-time, oldest / newest timestamps, and a
+      top-3 list of recipe SHAs by run count. ``--summary`` composes
+      with all filters (``--since``, ``--until``, ``--recipe-sha``,
+      ``--limit``) so e.g. "summarize the last 10 entries from today"
+      is a one-liner. Combine with ``--json`` for a single object on
+      stdout instead of the human-readable block.
 
     ``--limit N`` keeps only the *most recent* N rows (i.e. the tail);
     a negative or zero value is rejected as a usage error to avoid
@@ -1037,6 +1176,14 @@ def _cmd_audit(
 
     if limit is not None:
         entries = entries[-limit:]
+
+    if summary:
+        stats = _summarize_audit_entries(entries)
+        if as_json:
+            print(json.dumps(stats, indent=2, ensure_ascii=False))
+        else:
+            _print_audit_summary(stats)
+        return 0
 
     if as_json:
         print(json.dumps(entries, indent=2, ensure_ascii=False))
@@ -1147,6 +1294,7 @@ _IMPLEMENTED_DISPATCH = {
         since=args.since,
         until=args.until,
         recipe_sha=args.recipe_sha,
+        summary=args.summary,
     ),
 }
 

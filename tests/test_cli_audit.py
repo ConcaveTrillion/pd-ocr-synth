@@ -606,3 +606,335 @@ def test_audit_since_with_z_suffix_matches_stored_format(
     # string and keep only the 03:00 row.
     payload = json.loads(captured.out)
     assert [entry["seed"] for entry in payload] == [3]
+
+
+# ---------------------------------------------------------------------------
+# --summary aggregate mode (M10 stretch follow-up)
+# ---------------------------------------------------------------------------
+#
+# Contract under test:
+#
+# - ``--summary`` returns a fixed-shape aggregate over the matched
+#   window (post-filter, post-limit) — never the per-row table;
+# - text mode prints a labelled block; JSON mode prints a single
+#   object with every documented key present (zero / null / empty list
+#   for the empty window so consumers can rely on the shape);
+# - composes with ``--since``, ``--until``, ``--recipe-sha``, and
+#   ``--limit`` because the summary fires after those filters in
+#   ``_cmd_audit``;
+# - top_recipe_shas reflects run frequency, with the SHA truncated for
+#   readability and a deterministic tie-break.
+
+
+def test_audit_summary_empty_window_returns_zero_stats(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An empty audit file → all-zero / null summary in JSON mode."""
+
+    out = tmp_path / "render-out"
+    out.mkdir()
+    (out / AUDIT_FILENAME).write_text("", encoding="utf-8")
+
+    rc = main(["audit", str(out), "--summary", "--json"])
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+
+    payload = json.loads(captured.out)
+    assert payload == {
+        "entry_count": 0,
+        "total_count": 0,
+        "total_rendered": 0,
+        "total_skipped": 0,
+        "total_runtime_seconds": 0.0,
+        "distinct_recipe_names": 0,
+        "distinct_recipe_shas": 0,
+        "oldest_timestamp": None,
+        "newest_timestamp": None,
+        "top_recipe_shas": [],
+    }
+
+
+def test_audit_summary_sums_counts_and_runtime(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Aggregates over multiple entries are summed correctly."""
+
+    out = tmp_path / "render-out"
+    _seed_audit(
+        out,
+        [
+            _make_entry(
+                timestamp=_ts(1),
+                count=10,
+                rendered=10,
+                skipped=0,
+                runtime_seconds=1.5,
+            ),
+            _make_entry(
+                timestamp=_ts(2),
+                count=20,
+                rendered=18,
+                skipped=2,
+                runtime_seconds=2.25,
+            ),
+            _make_entry(
+                timestamp=_ts(3),
+                count=30,
+                rendered=25,
+                skipped=5,
+                runtime_seconds=4.0,
+            ),
+        ],
+    )
+
+    rc = main(["audit", str(out), "--summary", "--json"])
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+
+    payload = json.loads(captured.out)
+    assert payload["entry_count"] == 3
+    assert payload["total_count"] == 60
+    assert payload["total_rendered"] == 53
+    assert payload["total_skipped"] == 7
+    assert payload["total_runtime_seconds"] == 7.75
+    # All three entries share the same recipe_name / recipe_sha (the
+    # _make_entry default), so the distinct counts collapse to 1.
+    assert payload["distinct_recipe_names"] == 1
+    assert payload["distinct_recipe_shas"] == 1
+    assert payload["oldest_timestamp"] == _ts(1)
+    assert payload["newest_timestamp"] == _ts(3)
+
+
+def test_audit_summary_top_recipe_shas_ranks_by_run_count(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The top-3 SHAs list is sorted descending by run count.
+
+    Builds five distinct SHAs with frequencies 5, 4, 3, 2, 1 so the
+    ranking and the truncation are both observable.
+    """
+
+    out = tmp_path / "render-out"
+    sha_a = "a" * 64
+    sha_b = "b" * 64
+    sha_c = "c" * 64
+    sha_d = "d" * 64
+    sha_e = "e" * 64
+
+    entries: list[AuditEntry] = []
+    hour = 1
+    for sha, count in [(sha_a, 5), (sha_b, 4), (sha_c, 3), (sha_d, 2), (sha_e, 1)]:
+        for _ in range(count):
+            entries.append(
+                _make_entry(
+                    timestamp=_ts(hour % 24),
+                    recipe_sha=sha,
+                    recipe_name=f"r-{sha[0]}",
+                )
+            )
+            hour += 1
+    _seed_audit(out, entries)
+
+    rc = main(["audit", str(out), "--summary", "--json"])
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+
+    payload = json.loads(captured.out)
+    assert payload["entry_count"] == 15
+    assert payload["distinct_recipe_shas"] == 5
+    assert payload["distinct_recipe_names"] == 5
+    # Top-3 by run count, truncated to 12 hex chars.
+    assert payload["top_recipe_shas"] == [
+        {"recipe_sha": "a" * 12, "count": 5},
+        {"recipe_sha": "b" * 12, "count": 4},
+        {"recipe_sha": "c" * 12, "count": 3},
+    ]
+
+
+def test_audit_summary_respects_filters(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--summary`` aggregates over the *filtered* window, not the file.
+
+    Seeds two SHAs and filters to one of them; the summary should only
+    see that subset.
+    """
+
+    out = tmp_path / "render-out"
+    sha_keep = "1" * 64
+    sha_drop = "2" * 64
+    _seed_audit(
+        out,
+        [
+            _make_entry(timestamp=_ts(1), recipe_sha=sha_keep, count=10, rendered=10, skipped=0),
+            _make_entry(timestamp=_ts(2), recipe_sha=sha_drop, count=99, rendered=99, skipped=0),
+            _make_entry(timestamp=_ts(3), recipe_sha=sha_keep, count=20, rendered=18, skipped=2),
+        ],
+    )
+
+    rc = main(
+        [
+            "audit",
+            str(out),
+            "--summary",
+            "--json",
+            "--recipe-sha",
+            sha_keep[:8],
+        ],
+    )
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+
+    payload = json.loads(captured.out)
+    # Only the two ``sha_keep`` entries should be in the window.
+    assert payload["entry_count"] == 2
+    assert payload["total_count"] == 30
+    assert payload["total_rendered"] == 28
+    assert payload["total_skipped"] == 2
+    assert payload["distinct_recipe_shas"] == 1
+    assert payload["top_recipe_shas"] == [{"recipe_sha": "1" * 12, "count": 2}]
+
+
+def test_audit_summary_respects_limit_tail(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--summary --limit N`` summarizes only the most recent N entries.
+
+    The summary fires after ``--limit`` clamps the window, so a user
+    asking "what did the last 2 runs do?" gets a real answer.
+    """
+
+    out = tmp_path / "render-out"
+    _seed_audit(
+        out,
+        [
+            _make_entry(timestamp=_ts(1), count=10, rendered=10, skipped=0),
+            _make_entry(timestamp=_ts(2), count=20, rendered=20, skipped=0),
+            _make_entry(timestamp=_ts(3), count=30, rendered=30, skipped=0),
+        ],
+    )
+
+    rc = main(["audit", str(out), "--summary", "--json", "--limit", "2"])
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+
+    payload = json.loads(captured.out)
+    assert payload["entry_count"] == 2
+    # The last two rows have count 20 + 30 = 50, not the full 60.
+    assert payload["total_count"] == 50
+    assert payload["oldest_timestamp"] == _ts(2)
+    assert payload["newest_timestamp"] == _ts(3)
+
+
+def test_audit_summary_text_mode_renders_labelled_block(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Default (no ``--json``) emits a human-readable block.
+
+    Asserts each documented label appears on its own line and the
+    top-recipe-shas section surfaces with the truncated SHA + run
+    count.
+    """
+
+    out = tmp_path / "render-out"
+    sha = "f" * 64
+    _seed_audit(
+        out,
+        [
+            _make_entry(
+                timestamp=_ts(1),
+                recipe_sha=sha,
+                count=5,
+                rendered=4,
+                skipped=1,
+                runtime_seconds=2.5,
+            ),
+            _make_entry(
+                timestamp=_ts(2),
+                recipe_sha=sha,
+                count=7,
+                rendered=7,
+                skipped=0,
+                runtime_seconds=3.5,
+            ),
+        ],
+    )
+
+    rc = main(["audit", str(out), "--summary"])
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+
+    stdout = captured.out
+    assert "entry_count:" in stdout
+    assert "total_count:" in stdout
+    assert "total_rendered:" in stdout
+    assert "total_skipped:" in stdout
+    assert "total_runtime_seconds:" in stdout
+    assert "distinct_recipe_names:" in stdout
+    assert "distinct_recipe_shas:" in stdout
+    assert "oldest_timestamp:" in stdout
+    assert "newest_timestamp:" in stdout
+    assert "top_recipe_shas:" in stdout
+    # Truncated SHA (12 chars) and the run count appear in the block.
+    assert ("f" * 12) in stdout
+    # Runtime is the summed 2.5 + 3.5 = 6.00, formatted with 2 decimals.
+    assert "6.00" in stdout
+
+
+def test_audit_summary_text_mode_omits_top_section_when_empty(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An empty window has no SHAs to rank, so the top block is suppressed."""
+
+    out = tmp_path / "render-out"
+    out.mkdir()
+    (out / AUDIT_FILENAME).write_text("", encoding="utf-8")
+
+    rc = main(["audit", str(out), "--summary"])
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+
+    stdout = captured.out
+    assert "entry_count:           0" in stdout
+    # No "top_recipe_shas:" header when the window has no SHAs.
+    assert "top_recipe_shas:" not in stdout
+
+
+def test_audit_summary_skips_null_recipe_sha_for_distinct_count(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """In-memory recipes (null SHA) don't count toward distinct-SHA tally.
+
+    They still count toward ``entry_count`` and the summed metrics —
+    we just can't fingerprint them. This matches the audit reader
+    docstring: a null SHA means "no stable identifier".
+    """
+
+    out = tmp_path / "render-out"
+    _seed_audit(
+        out,
+        [
+            _make_entry(timestamp=_ts(1), recipe_sha=None, count=10, rendered=10, skipped=0),
+            _make_entry(timestamp=_ts(2), recipe_sha="a" * 64, count=20, rendered=20, skipped=0),
+        ],
+    )
+
+    rc = main(["audit", str(out), "--summary", "--json"])
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+
+    payload = json.loads(captured.out)
+    assert payload["entry_count"] == 2
+    assert payload["total_count"] == 30
+    # Only the SHA-bearing entry contributes to the distinct count.
+    assert payload["distinct_recipe_shas"] == 1
+    # And only that entry shows up in top_recipe_shas.
+    assert payload["top_recipe_shas"] == [{"recipe_sha": "a" * 12, "count": 1}]
