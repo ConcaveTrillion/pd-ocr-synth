@@ -256,8 +256,40 @@ def _check_fonts(recipe: Recipe) -> list[ValidationIssue]:
     return out
 
 
+def _registered_corpus_provider_types() -> frozenset[str]:
+    """Return the set of corpus ``type`` discriminators the runtime can dispatch.
+
+    Triggers the lazy default-registry build (which registers M03's
+    builtins). Wrapped in a helper so tests can patch / reuse this when
+    asserting against the runtime set, mirroring the
+    ``_registered_degradation_kinds`` shape used for degradation kinds.
+    """
+
+    from pd_ocr_synth.corpus.registry import default_registry
+
+    return frozenset(default_registry().types())
+
+
 def _check_corpus(recipe: Recipe) -> list[ValidationIssue]:
+    """Per-entry corpus validation.
+
+    - ``local_corpus_missing`` (error): ``LocalCorpus`` paths that don't
+      resolve to a file on disk.
+    - ``corpus_provider_not_implemented`` (error): the recipe model
+      accepts the ``type`` discriminator (so YAML loads cleanly) but
+      the M03 runtime registry doesn't ship a provider for it. Render
+      would raise ``ProviderError(f"unknown corpus provider …")`` in
+      :func:`pd_ocr_synth.corpus.runner.run_providers` deep into the
+      pipeline; surfacing it at validate time mirrors the iter-65
+      ``degradation_kind_not_implemented`` precedent so users discover
+      the gap before paying corpus-fetch + setup costs. Currently this
+      catches ``hf_dataset`` (modelled in ``recipe.models`` but not yet
+      registered with ``default_registry``); see
+      ``docs/roadmap/03-corpus.md`` "Built-in providers" for status.
+    """
+
     out: list[ValidationIssue] = []
+    registered = _registered_corpus_provider_types()
     for i, entry in enumerate(recipe.corpus):
         if isinstance(entry, LocalCorpus) and not entry.path.exists():
             out.append(
@@ -266,6 +298,23 @@ def _check_corpus(recipe: Recipe) -> list[ValidationIssue]:
                     code="local_corpus_missing",
                     message=f"local corpus path does not exist: {entry.path}",
                     location=f"corpus[{i}].path",
+                )
+            )
+        # Recipe-model-accepted-but-not-registered: surface up front
+        # rather than at first fetch. ``entry.type`` is the discriminator
+        # literal pydantic enforces on the corpus union.
+        if entry.type not in registered:
+            out.append(
+                ValidationIssue(
+                    severity="error",
+                    code="corpus_provider_not_implemented",
+                    message=(
+                        f"corpus provider '{entry.type}' is in the recipe schema but not "
+                        f"yet implemented by the M03 runtime; render would raise. "
+                        f"Implemented providers: {', '.join(sorted(registered))}. "
+                        "See docs/roadmap/03-corpus.md (Built-in providers)."
+                    ),
+                    location=f"corpus[{i}].type",
                 )
             )
     return out

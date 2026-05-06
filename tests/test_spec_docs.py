@@ -660,3 +660,185 @@ def test_spec_01_audit_schema_version_matches_constant() -> None:
         f"AUDIT_SCHEMA_VERSION={AUDIT_SCHEMA_VERSION}. Expected substring "
         f"{needle!r}; update the spec to match the constant in audit.py."
     )
+
+
+# ---------------------------------------------------------------------------
+# Spec 04 corpus provider catalog ↔ recipe model + runtime registry
+#
+# Spec 04 has one ``## `<type>` `` heading per documented provider
+# (``local``, ``web``, ``web_list``, ``wikisource``, ``hf_dataset``,
+# ``internet_archive``, ``gutenberg``). The recipe model declares a
+# pydantic discriminated union over the ``type`` field — anything not
+# in the union is rejected at YAML load. The runtime registry registers
+# the M03 builtins; a recipe whose ``type`` model-validates but isn't
+# registered crashes at render with ``ProviderError``.
+#
+# The companion validation check ``corpus_provider_not_implemented``
+# (this iter, mirroring iter 65's degradation pattern) bridges the gap
+# between model-accepted and runtime-registered. This meta-test fixes
+# the remaining drift surface: every provider documented in spec 04 is
+# either (a) registered with the runtime registry, or (b) explicitly
+# tracked as deferred in the M03 roadmap. Without this guard, spec 04
+# could quietly accumulate "documented but not implemented" entries
+# that never get flagged anywhere.
+#
+# Direction-by-direction:
+#   1. Every spec 04 provider name must be either runtime-registered
+#      or roadmap-deferred. A bare spec entry with no roadmap ack is
+#      vapourware — fail.
+#   2. Every runtime-registered provider must appear in spec 04.
+#      Otherwise users have a working feature with no public docs.
+#   3. Every ``CorpusEntry`` union member's ``type`` literal must be
+#      named in spec 04. The recipe model is what gates "valid YAML",
+#      so anything it accepts must be discoverable in the spec.
+# ---------------------------------------------------------------------------
+
+
+_SPEC_04_PROVIDER_HEADER = re.compile(r"^## `([a-z_]+)`\s*$")
+
+
+def _spec_04_provider_names() -> set[str]:
+    """Provider types parsed from ``## `<name>` `` headings in spec 04.
+
+    Only the per-provider section headings match this pattern; the
+    other ``##`` headings (``Common keys``, ``Caching``, etc.) use
+    plain text and are filtered out by the backtick-wrapping regex.
+    """
+
+    names: set[str] = set()
+    for line in _spec_text("04-corpus-providers.md").splitlines():
+        match = _SPEC_04_PROVIDER_HEADER.match(line.rstrip())
+        if match:
+            names.add(match.group(1))
+    return names
+
+
+def _registered_corpus_provider_types() -> set[str]:
+    """Provider type names registered with the runtime ``default_registry``.
+
+    Wrapped in a helper so a future move of the registry source-of-
+    truth (e.g. switching to a different module) is one edit, not
+    spread across every meta-test.
+    """
+
+    from pd_ocr_synth.corpus.registry import default_registry
+
+    return set(default_registry().types())
+
+
+def _model_corpus_provider_types() -> set[str]:
+    """``type`` literal values from the ``CorpusEntry`` discriminated union.
+
+    Walks the union members and reads the ``type`` field's literal
+    annotation. Pydantic v2 stores the literal value on the field's
+    annotation as ``Literal[<value>]``; iterate the union and collect
+    each member's value. A future refactor that flattens or replaces
+    the union would surface here as an ``AssertionError``.
+    """
+
+    from typing import get_args, get_type_hints
+
+    from pd_ocr_synth.recipe.models import (
+        HFDatasetCorpus,
+        LocalCorpus,
+        WebCorpus,
+        WikisourceCorpus,
+    )
+
+    members = (WebCorpus, LocalCorpus, HFDatasetCorpus, WikisourceCorpus)
+    names: set[str] = set()
+    for member in members:
+        hints = get_type_hints(member)
+        type_hint = hints["type"]
+        # Literal[<value>] → tuple of literal values; corpus uses single-
+        # element literals so we just unpack them all to be safe.
+        for arg in get_args(type_hint):
+            names.add(str(arg))
+    return names
+
+
+# Roadmap-tracked deferred providers, per
+# ``docs/roadmap/03-corpus.md`` "Built-in providers". Keep this list
+# short; it should shrink to empty once the providers ship. If a new
+# provider gets added to spec 04 ahead of implementation, it lands
+# here too — but the long-term goal is for this set to equal the empty
+# set and for ``test_spec_04_providers_match_runtime_or_roadmap`` to
+# enforce that direction directly.
+_ROADMAP_DEFERRED_CORPUS_PROVIDERS: frozenset[str] = frozenset(
+    {
+        "web_list",
+        "hf_dataset",
+        "internet_archive",
+        "gutenberg",
+    }
+)
+
+
+def test_spec_04_providers_match_runtime_or_roadmap() -> None:
+    """Every provider documented in spec 04 must be implemented or roadmap-deferred.
+
+    Catches "vapourware drift": a new provider gets a section in spec
+    04 but never lands code, never lands a roadmap entry, and quietly
+    presents itself to recipe authors as a real option. This test
+    mirrors the degradation-kind catalog meta-tests in
+    ``test_validation.py`` (iter 66, ``test_known_degradation_kinds_matches_spec_doc``)
+    but on the corpus side: spec is the user-facing contract; runtime
+    + roadmap are the ground truth.
+    """
+
+    spec_names = _spec_04_provider_names()
+    registered = _registered_corpus_provider_types()
+    accounted_for = registered | _ROADMAP_DEFERRED_CORPUS_PROVIDERS
+    spec_only = sorted(spec_names - accounted_for)
+    assert not spec_only, (
+        "docs/specs/04-corpus-providers.md documents providers that are "
+        "neither registered with default_registry() nor tracked as "
+        f"deferred in docs/roadmap/03-corpus.md: {spec_only}.\n"
+        "Either ship the provider (and add it to default_registry()), "
+        "remove the spec section, or add the name to "
+        "_ROADMAP_DEFERRED_CORPUS_PROVIDERS in this test "
+        "after adding a roadmap entry."
+    )
+
+
+def test_registered_corpus_providers_documented_in_spec_04() -> None:
+    """Every registered provider must have a section in spec 04.
+
+    Reverse direction of the catalog match: a runtime provider with
+    no public spec entry is a working feature recipe authors can't
+    discover. Force the spec update.
+    """
+
+    spec_names = _spec_04_provider_names()
+    registered = _registered_corpus_provider_types()
+    runtime_only = sorted(registered - spec_names)
+    assert not runtime_only, (
+        "default_registry() registers providers missing from "
+        f"docs/specs/04-corpus-providers.md: {runtime_only}.\n"
+        "Add a `## `<name>`` section to spec 04 documenting the "
+        "options each provider accepts."
+    )
+
+
+def test_corpus_model_types_documented_in_spec_04() -> None:
+    """Every ``CorpusEntry`` union member's ``type`` literal must be in spec 04.
+
+    The recipe model is what decides "valid YAML"; if the model
+    accepts a ``type`` value the spec doesn't describe, recipe authors
+    can write YAML that loads but has no documented semantics. This
+    test enforces the model-side ↔ doc-side contract independently of
+    runtime registration so the gap caught by
+    ``corpus_provider_not_implemented`` (model-accepted but not
+    registered) still has a public spec page describing intended
+    behaviour.
+    """
+
+    spec_names = _spec_04_provider_names()
+    model_names = _model_corpus_provider_types()
+    model_only = sorted(model_names - spec_names)
+    assert not model_only, (
+        "CorpusEntry union members' ``type`` literals not documented in "
+        f"docs/specs/04-corpus-providers.md: {model_only}.\n"
+        "Add a `## `<name>`` section to spec 04 (or remove the "
+        "model member if the type was withdrawn)."
+    )

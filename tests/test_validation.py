@@ -111,6 +111,75 @@ def test_missing_local_corpus_is_error(tmp_path: Path) -> None:
     assert "local_corpus_missing" in codes
 
 
+def test_unimplemented_corpus_provider_is_error(tmp_path: Path) -> None:
+    """Spec-known but not-yet-registered corpus types must error at validate time.
+
+    ``hf_dataset`` is in ``recipe.models.CorpusEntry`` (so the YAML
+    loads cleanly through pydantic) but the M03 runtime registry does
+    not register it yet — see ``docs/roadmap/03-corpus.md``
+    "Built-in providers". Calling render on a recipe that uses it would
+    raise ``ProviderError(f"unknown corpus provider 'hf_dataset' …")``
+    deep in :func:`pd_ocr_synth.corpus.runner.run_providers`, well
+    after corpus-fetch + setup costs for any preceding entries.
+
+    Mirrors the iter-65 ``degradation_kind_not_implemented`` precedent:
+    surface the gap up front, with a distinct error code separate from
+    the truly-unknown-type path that pydantic itself rejects.
+    """
+
+    yaml_text = _minimal_yaml(
+        font=str(_make_file(tmp_path / "fake.otf")),
+        dest=str(tmp_path / "out"),
+        corpus=str(_make_file(tmp_path / "seed.txt")),
+    )
+    # Inject a second corpus entry of the unimplemented type *before*
+    # ``fonts:``. Keep the local one so the test exercises the
+    # registered/unregistered interleaving the validator must handle
+    # correctly. ``_minimal_yaml`` keeps a stable layout, so the
+    # ``fonts:\n`` anchor is safe.
+    extra_entry = (
+        "  - type: hf_dataset\n    name: example/irish-corpus\n    split: train\n    field: text\n"
+    )
+    yaml_text = yaml_text.replace("fonts:\n", extra_entry + "fonts:\n")
+    recipe = load_recipe(_write(tmp_path, yaml_text))
+    report = validate_recipe(recipe)
+    codes = [i.code for i in report.errors]
+    assert "corpus_provider_not_implemented" in codes, [i.format() for i in report.issues]
+    msg = next(i.message for i in report.errors if i.code == "corpus_provider_not_implemented")
+    # Error message points at the roadmap so the user knows where to
+    # look for status / contribute, matching the
+    # ``degradation_kind_not_implemented`` shape.
+    assert "03-corpus.md" in msg
+    assert "hf_dataset" in msg
+
+
+def test_implemented_corpus_providers_pass_clean(
+    tmp_path: Path, writable_font_bytes: bytes
+) -> None:
+    """A recipe using only registered providers must validate clean.
+
+    Companion to ``test_unimplemented_corpus_provider_is_error``: pin
+    the negative-space invariant that the new
+    ``corpus_provider_not_implemented`` check does *not* fire for the
+    M03 builtins. If a future refactor accidentally drops ``local`` or
+    ``web`` from the default registry, this test surfaces it
+    immediately rather than as a downstream regression in render.
+    """
+
+    font = tmp_path / "fake.otf"
+    font.write_bytes(writable_font_bytes)
+    seed = _make_file(tmp_path / "seed.txt", "hello\n")
+    yaml_text = _minimal_yaml(
+        font=str(font),
+        dest=str(tmp_path / "out"),
+        corpus=str(seed),
+    )
+    recipe = load_recipe(_write(tmp_path, yaml_text))
+    report = validate_recipe(recipe)
+    codes = [i.code for i in report.errors]
+    assert "corpus_provider_not_implemented" not in codes, [i.format() for i in report.issues]
+
+
 def test_unresolved_env_var_in_destination_is_error(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.delenv("DEFINITELY_UNSET_VAR", raising=False)
     yaml_text = _minimal_yaml(
