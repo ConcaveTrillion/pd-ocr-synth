@@ -37,6 +37,13 @@ from pd_ocr_synth.publish.dataset_card import (
     render_dataset_card,
     write_dataset_card,
 )
+from pd_ocr_synth.publish.preflight import (
+    REQUIRED_FRONT_MATTER_KEYS,
+    PreflightError,
+    PreflightReport,
+    assert_staging_publish_ready,
+    check_required_front_matter,
+)
 from pd_ocr_synth.publish.recognition import (
     DATA_DIRNAME,
     METADATA_FILENAME,
@@ -53,11 +60,16 @@ __all__ = [
     "HF_TOKEN_ENV_VAR",
     "METADATA_FILENAME",
     "README_FILENAME",
+    "REQUIRED_FRONT_MATTER_KEYS",
     "AuthError",
+    "PreflightError",
+    "PreflightReport",
     "ResolvedToken",
     "StagingResult",
     "apply_content_sha_to_readme",
+    "assert_staging_publish_ready",
     "build_recognition_staging",
+    "check_required_front_matter",
     "compute_content_sha",
     "format_resolution_chain",
     "load_card_inputs",
