@@ -116,12 +116,22 @@ following gaps remain — pick any of them as a future small chunk.
       are covered by tests in `test_cli_publish.py` and
       `test_cli_publish_upload.py`; unit-level coverage in
       `test_publish_dataset_card.py`.
-- `--render-first` is accepted by argparse but ignored by
-  `_cmd_publish`. Spec 10 § When to publish: "Pass `--render-first` to
-  chain them." Implementation: when set, run the render step
-  (equivalent to invoking `_cmd_render` against the same recipe) before
-  building the staging dir. Must respect the recipe's count / output
-  unless explicitly overridden.
+- [x] `--render-first` is wired end-to-end: argparse → `_cmd_publish`
+      → `cmd_publish(render_first=...)` → `_default_render_first`
+      (which lazy-imports `run_recipe`) → publish staging build. Spec
+      10 § When to publish ("Pass `--render-first` to chain them") is
+      satisfied; render failures map to RENDER_EXIT (5), distinct
+      from publish-family failures (exit 7). The render callable is
+      injectable for hermetic tests in
+      `tests/test_cli_publish_render_first.py`. The default callable
+      passes `force=True` so a re-run with the flag clears the
+      destination — otherwise the existing render's "non-empty
+      destination" guard would refuse and exit 6, surprising someone
+      who just asked us to chain render + publish. Recipe-level
+      `count` / `seed` / `workers` are NOT plumbed through the chain;
+      `--render-first` runs the recipe as written. Users who want a
+      smoke-sized subset render separately (`render -c N`) and then
+      run plain `publish`.
 
 ### Commit-message limitation
 

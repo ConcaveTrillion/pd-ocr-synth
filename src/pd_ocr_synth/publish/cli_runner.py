@@ -28,6 +28,13 @@ Per ``docs/specs/10-publishing.md`` and ``docs/roadmap/08-publishing-hf.md``:
   :class:`pd_ocr_synth.publish.SdkUnavailableError`, which is a
   :class:`pd_ocr_synth.publish.TransportError` and therefore maps to
   the documented exit-7 publish failure.
+- ``--render-first`` (spec 10 § When to publish) chains a render
+  step in front of the publish pipeline so a single command produces
+  the local layout AND ships it. The render callable is *injectable*
+  so tests don't pay the real-rendering cost; the production default
+  delegates to :func:`pd_ocr_synth.render.run_recipe`. Render failure
+  short-circuits with exit 5 (the spec-01 RENDER_EXIT), distinct from
+  publish-family failures (exit 7).
 
 Dry-run remains the first user-visible publish surface: it exercises
 every primitive that landed in earlier chunks end-to-end, gives users
@@ -86,6 +93,24 @@ from pd_ocr_synth.publish.transport import HfTransport, TransportError
 # :func:`cmd_publish` signature is documented in one place rather than
 # inlining a long callable type.
 TransportFactory = Callable[[str], HfTransport]
+
+
+# Type alias for the injectable render callable used by
+# ``--render-first``. Implementation must accept the recipe path,
+# the resolved output dir, and a cache_dir override (or ``None`` for
+# the default). It runs to completion or raises — the runner does NOT
+# pass count/seed/workers because spec 10 § When to publish describes
+# ``--render-first`` as "render before publishing", i.e. produce
+# whatever the recipe says (and recipe-level overrides via
+# ``--output`` still flow through).
+#
+# The callable returns nothing on success. Any failure must raise so
+# the runner can map it to RENDER_EXIT (5). The default production
+# implementation, :func:`_default_render_first`, calls
+# :func:`pd_ocr_synth.render.run_recipe` and re-raises its
+# :class:`RenderError` / :class:`DestinationNotEmptyError` /
+# :class:`SnapshotMismatchError` for the runner to catch.
+RenderFirstCallable = Callable[[Path, Path, "Path | None"], None]
 
 # Exit codes (must match ``docs/specs/01-cli.md``). Mirrored here as
 # constants so the CLI dispatch and the runner share one source of
@@ -269,7 +294,9 @@ def cmd_publish(
     tag: str | None = None,
     message: str | None = None,
     license_override: str | None = None,
+    render_first: bool = False,
     transport_factory: TransportFactory | None = None,
+    render_first_callable: RenderFirstCallable | None = None,
 ) -> int:
     """Top-level dispatch for ``pd-ocr-synth publish``.
 
@@ -299,6 +326,14 @@ def cmd_publish(
         overrides ``recipe.publish.hf_dataset.license`` in the staged
         dataset card's front matter. ``None`` falls back to the
         recipe value (or omits the key entirely).
+    render_first:
+        Spec 10 § When to publish: ``--render-first`` chains a render
+        step in front of the publish pipeline, equivalent to running
+        ``pd-ocr-synth render <recipe>`` first. Errors from the
+        render step short-circuit with exit 5 (RENDER_EXIT) — the
+        publish pipeline never runs. Compatible with ``--dry-run``:
+        rendering happens, then the dry-run preview is generated
+        against the freshly-rendered output.
     transport_factory:
         Production callers leave this ``None`` to get the default
         :func:`make_default_transport` (which currently raises
@@ -306,6 +341,12 @@ def cmd_publish(
         error is a :class:`TransportError` and maps to exit 7). Tests
         inject a fake-returning factory to drive the full upload path
         hermetically.
+    render_first_callable:
+        Production callers leave this ``None`` to get
+        :func:`_default_render_first` (which delegates to
+        :func:`pd_ocr_synth.render.run_recipe`). Tests inject a
+        no-op or recording stub so they don't pay the real-rendering
+        cost; only the chaining contract is exercised.
     """
 
     if private and public:
@@ -365,12 +406,38 @@ def cmd_publish(
     local_output = (
         Path(output_override).expanduser() if output_override else recipe.output.destination
     )
+
+    # ``--render-first`` chains the render step in front of publish
+    # (spec 10 § When to publish). Run BEFORE the local-output
+    # existence check — that check is what ``--render-first`` is
+    # there to satisfy. Render failure short-circuits with the
+    # spec-01 RENDER_EXIT (5), which is *distinct from* the
+    # missing-render-without-flag exit-5 path so users keep getting
+    # actionable messages either way.
+    if render_first:
+        render_callable = render_first_callable or _default_render_first
+        try:
+            render_callable(path, local_output, None)
+        except Exception as exc:  # noqa: BLE001 — render exceptions are diverse
+            print(f"error: render failed before publish: {exc}", file=sys.stderr)
+            return PUBLISH_RENDER_EXIT
+
     if not local_output.is_dir():
-        print(
-            f"error: local render output not found at {local_output}. "
-            "Run `pd-ocr-synth render <recipe>` first or pass --output PATH.",
-            file=sys.stderr,
-        )
+        # Distinct hint depending on whether the user asked us to
+        # render. Without ``--render-first`` we point at the spec's
+        # canonical remediation; with the flag, the directory ought
+        # to exist by now, so something went wrong upstream.
+        if render_first:
+            hint = (
+                f"error: local render output still missing at {local_output} "
+                "after --render-first. Did the render step write to a different path?"
+            )
+        else:
+            hint = (
+                f"error: local render output not found at {local_output}. "
+                "Run `pd-ocr-synth render <recipe>` first or pass --output PATH."
+            )
+        print(hint, file=sys.stderr)
         return PUBLISH_RENDER_EXIT
 
     if dry_run:
@@ -576,6 +643,53 @@ def format_publish_result(result: PublishResult) -> str:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _default_render_first(recipe_path: Path, output_dir: Path, cache_dir: Path | None) -> None:
+    """Default ``--render-first`` callable.
+
+    Loads the recipe at ``recipe_path``, then calls
+    :func:`pd_ocr_synth.render.run_recipe` with the resolved
+    ``output_dir`` (matches what the publish pipeline will read).
+
+    Recipe-level overrides (count / seed / workers) are intentionally
+    **not** plumbed here: spec 10 § When to publish describes
+    ``--render-first`` as "render before publishing", i.e. run the
+    recipe as-written. Users who want to render a smoke-sized subset
+    should invoke ``render -c N`` separately and then plain
+    ``publish`` — that way the chained form remains "ship a real
+    recipe-shaped dataset" rather than an under-specified shorthand.
+
+    Failures bubble up as their native exception types
+    (:class:`RenderError`, :class:`DestinationNotEmptyError`,
+    :class:`SnapshotMismatchError`); the CLI runner's broad
+    ``except Exception`` catch in :func:`cmd_publish` maps them all to
+    RENDER_EXIT.
+
+    Implementation note on idempotency: the publish pipeline expects
+    the destination to *already exist* (that's the whole reason
+    ``--render-first`` is needed). On a re-run with this flag we
+    therefore pass ``force=True`` so the render step can clear the
+    destination and write fresh — otherwise the existing render's
+    "non-empty destination" guard would refuse and exit 6, which would
+    be surprising for someone who just asked us to chain render +
+    publish.
+    """
+
+    # Local import: avoids paying the recipe-loader / render-graph
+    # cost on every publish invocation, only when --render-first is
+    # actually requested.
+    from pd_ocr_synth.recipe import load_recipe
+    from pd_ocr_synth.render import run_recipe
+
+    recipe = load_recipe(recipe_path)
+    run_recipe(
+        recipe,
+        output_dir=output_dir,
+        cache_dir=cache_dir,
+        force=True,
+        progress=False,
+    )
 
 
 def _walk_dir_stats(root: Path) -> tuple[int, int]:

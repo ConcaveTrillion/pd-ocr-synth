@@ -588,6 +588,7 @@ def _cmd_publish(
     tag: str | None,
     message: str | None,
     license_override: str | None,
+    render_first: bool,
 ) -> int:
     """Dispatch ``publish`` (M08).
 
@@ -599,6 +600,10 @@ def _cmd_publish(
     a clear remediation message. Exit-code mapping matches
     ``docs/specs/01-cli.md`` (canonical) — spec 10 was reconciled in
     the dry-run dispatch commit.
+
+    ``--render-first`` (spec 10 § When to publish) chains the render
+    step ahead of publish; render failures map to RENDER_EXIT (5),
+    keeping that distinct from publish-family failures (exit 7).
     """
 
     from pd_ocr_synth.publish.cli_runner import cmd_publish
@@ -615,6 +620,7 @@ def _cmd_publish(
         tag=tag,
         message=message,
         license_override=license_override,
+        render_first=render_first,
     )
 
 
@@ -744,6 +750,7 @@ _IMPLEMENTED_DISPATCH = {
         tag=args.tag,
         message=args.message,
         license_override=args.license,
+        render_first=args.render_first,
     ),
     "clean": lambda args: _cmd_clean(args.recipe, cache_dir=args.cache_dir),
 }
