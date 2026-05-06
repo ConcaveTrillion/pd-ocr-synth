@@ -1764,6 +1764,257 @@ def test_permitted_layout_keys_table_modes_match_layout_mode_literal() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Per-code emission fixtures for the harder-to-trigger codes
+#
+# The straightforward codes (``font_missing``, ``local_corpus_missing``,
+# the ``*_not_implemented`` family, etc.) already have fixtures earlier
+# in this file. The block below backfills the six codes flagged in
+# iter-85 as having zero direct emission coverage:
+#
+#   * ``font_unreadable``                  — reachable, real bytes
+#   * ``font_empty``                       — reachable iff a font exists
+#                                            with ``num_glyphs == 0`` or
+#                                            an empty cmap (rare in
+#                                            practice; covered via a
+#                                            monkeypatched ``open_font``
+#                                            so the emission path is
+#                                            still exercised)
+#   * ``paper_texture_directory_not_dir``  — reachable, point at a file
+#   * ``publish_description_file_missing`` — reachable, missing path
+#   * ``publish_repo_placeholder``         — reachable, ``CHANGE-ME/...``
+#   * ``schema_version_unsupported``       — defensive; pydantic blocks
+#                                            it on load. Tested via a
+#                                            direct ``_check_schema_version``
+#                                            call after ``model_copy``
+#                                            bypasses the field validator,
+#                                            so the emission still gets
+#                                            exercised in case a future
+#                                            refactor relaxes the load-
+#                                            time check.
+# ---------------------------------------------------------------------------
+
+
+def test_font_unreadable_is_error(tmp_path: Path) -> None:
+    """A path that exists but isn't a parseable font must error.
+
+    ``_check_fonts`` calls ``open_font`` after the path-exists check;
+    when ``freetype`` raises ``FT_Exception`` (unknown file format),
+    ``FontOpenError`` propagates and the validator emits
+    ``font_unreadable`` at error severity. We construct the situation
+    by writing arbitrary non-font bytes to a ``.otf`` extension.
+    """
+
+    bad_font = tmp_path / "bogus.otf"
+    bad_font.write_bytes(b"not a real font payload")
+    yaml_text = _minimal_yaml(
+        font=str(bad_font),
+        dest=str(tmp_path / "out"),
+        corpus=str(_make_file(tmp_path / "seed.txt")),
+    )
+    recipe = load_recipe(_write(tmp_path, yaml_text))
+    report = validate_recipe(recipe)
+    codes = [i.code for i in report.errors]
+    assert "font_unreadable" in codes, [i.format() for i in report.issues]
+    msg = next(i.message for i in report.errors if i.code == "font_unreadable")
+    assert "could not open font" in msg
+
+
+def test_font_empty_is_error(
+    tmp_path: Path, writable_font_bytes: bytes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A font that opens but reports zero glyphs / empty cmap must error.
+
+    Constructing a real OTF with ``num_glyphs == 0`` is impractical
+    (every well-formed sfnt has at least ``.notdef``), but the
+    emission path is still meaningful — a corrupted-but-parseable
+    cmap, a CFF subset whittled below the runtime threshold, or a
+    bitmap-only font with no Unicode mapping all surface here. We
+    monkeypatch ``open_font`` to return a zero-glyph ``FontInfo`` so
+    the validator's branch executes end-to-end. The font path itself
+    is real bytes so the upstream path-exists check passes through to
+    the inspection step.
+    """
+
+    from pd_ocr_synth import fonts as _fonts
+
+    real_font = tmp_path / "real.otf"
+    real_font.write_bytes(writable_font_bytes)
+
+    def _fake_open_font(path):
+        return _fonts.FontInfo(
+            path=Path(path),
+            family="Empty",
+            style="Regular",
+            num_glyphs=0,
+            codepoints=frozenset(),
+        )
+
+    # ``_check_fonts`` does a local ``from pd_ocr_synth.fonts import
+    # ... open_font`` inside the loop, so patching the module attr
+    # is what the import sees.
+    monkeypatch.setattr(_fonts, "open_font", _fake_open_font)
+
+    yaml_text = _minimal_yaml(
+        font=str(real_font),
+        dest=str(tmp_path / "out"),
+        corpus=str(_make_file(tmp_path / "seed.txt")),
+    )
+    recipe = load_recipe(_write(tmp_path, yaml_text))
+    report = validate_recipe(recipe)
+    codes = [i.code for i in report.errors]
+    assert "font_empty" in codes, [i.format() for i in report.issues]
+    msg = next(i.message for i in report.errors if i.code == "font_empty")
+    assert "zero glyphs or empty cmap" in msg
+
+
+def test_paper_texture_directory_not_dir_is_error(tmp_path: Path) -> None:
+    """``paper_texture.directory`` pointing at a file (not a dir) must error.
+
+    Companion to ``test_paper_texture_directory_missing_is_error``.
+    The path exists but is a regular file, so the validator falls
+    through the ``not exists`` branch into the ``not is_dir`` branch.
+    """
+
+    not_a_dir = tmp_path / "textures.txt"
+    not_a_dir.write_text("hello\n", encoding="utf-8")
+    yaml_text = _minimal_yaml(
+        font=str(_make_file(tmp_path / "fake.otf")),
+        dest=str(tmp_path / "out"),
+        corpus=str(_make_file(tmp_path / "seed.txt")),
+    )
+    yaml_text += (
+        f"degradation:\n  - kind: paper_texture\n    probability: 0.5\n    directory: {not_a_dir}\n"
+    )
+    recipe = load_recipe(_write(tmp_path, yaml_text))
+    report = validate_recipe(recipe)
+    codes = [i.code for i in report.errors]
+    assert "paper_texture_directory_not_dir" in codes, [i.format() for i in report.issues]
+    msg = next(i.message for i in report.errors if i.code == "paper_texture_directory_not_dir")
+    assert "not a directory" in msg
+
+
+def test_publish_description_file_missing_is_warning(
+    tmp_path: Path, writable_font_bytes: bytes
+) -> None:
+    """``publish.hf_dataset.description_file`` pointing nowhere is a warning.
+
+    The publish flow tolerates a missing description file (it skips
+    the upload step) but tells the user via ``warning`` so they can
+    fix the path before the dataset card lands without one.
+    """
+
+    font = tmp_path / "fake.otf"
+    font.write_bytes(writable_font_bytes)
+    yaml_text = _minimal_yaml(
+        font=str(font),
+        dest=str(tmp_path / "out"),
+        corpus=str(_make_file(tmp_path / "seed.txt")),
+    )
+    ghost = tmp_path / "no-such-card.md"
+    yaml_text += (
+        "publish:\n"
+        "  hf_dataset:\n"
+        "    repo: example/pd-ocr-synth-test\n"
+        f"    description_file: {ghost}\n"
+    )
+    recipe = load_recipe(_write(tmp_path, yaml_text))
+    report = validate_recipe(recipe)
+    # Description-missing is a warning, not an error.
+    assert report.errors == (), [i.format() for i in report.errors]
+    codes = [i.code for i in report.warnings]
+    assert "publish_description_file_missing" in codes, [i.format() for i in report.issues]
+
+
+def test_publish_repo_placeholder_is_warning(tmp_path: Path, writable_font_bytes: bytes) -> None:
+    """``publish.hf_dataset.repo`` left as ``CHANGE-ME/...`` must warn.
+
+    The bundled ``recipes/gaelic.yaml`` ships with
+    ``repo: CHANGE-ME/pd-ocr-synth-gaelic`` so users can't push to a
+    real namespace by accident. Validate surfaces the placeholder as a
+    warning so they fix it before publish (which would 401 anyway).
+    """
+
+    font = tmp_path / "fake.otf"
+    font.write_bytes(writable_font_bytes)
+    yaml_text = _minimal_yaml(
+        font=str(font),
+        dest=str(tmp_path / "out"),
+        corpus=str(_make_file(tmp_path / "seed.txt")),
+    )
+    yaml_text += "publish:\n  hf_dataset:\n    repo: CHANGE-ME/pd-ocr-synth-test\n"
+    recipe = load_recipe(_write(tmp_path, yaml_text))
+    report = validate_recipe(recipe)
+    assert report.errors == (), [i.format() for i in report.errors]
+    codes = [i.code for i in report.warnings]
+    assert "publish_repo_placeholder" in codes, [i.format() for i in report.issues]
+    msg = next(i.message for i in report.warnings if i.code == "publish_repo_placeholder")
+    assert "placeholder" in msg
+
+
+def test_publish_repo_no_slash_is_warning(tmp_path: Path, writable_font_bytes: bytes) -> None:
+    """A ``publish.hf_dataset.repo`` without an ``owner/`` segment also warns.
+
+    The placeholder check has *two* triggers: the literal
+    ``CHANGE-ME/`` prefix and the absence of any ``/`` separator
+    (i.e. a bare repo name with no namespace). Both surface the same
+    code, but they're different code paths through the ``or``;
+    parametrising guards against a refactor that drops one branch.
+    """
+
+    font = tmp_path / "fake.otf"
+    font.write_bytes(writable_font_bytes)
+    yaml_text = _minimal_yaml(
+        font=str(font),
+        dest=str(tmp_path / "out"),
+        corpus=str(_make_file(tmp_path / "seed.txt")),
+    )
+    yaml_text += "publish:\n  hf_dataset:\n    repo: bare-repo-name\n"
+    recipe = load_recipe(_write(tmp_path, yaml_text))
+    report = validate_recipe(recipe)
+    codes = [i.code for i in report.warnings]
+    assert "publish_repo_placeholder" in codes, [i.format() for i in report.issues]
+
+
+def test_schema_version_unsupported_emission_is_defensive(
+    tmp_path: Path, writable_font_bytes: bytes
+) -> None:
+    """Direct ``_check_schema_version`` test — pydantic blocks load otherwise.
+
+    ``Recipe._validate_schema_version`` (a ``field_validator``) raises
+    on load if ``schema_version`` is not in
+    ``SUPPORTED_SCHEMA_VERSIONS``, so a real recipe never reaches the
+    validator with a bad version. The ``_check_schema_version``
+    branch is kept as a defence-in-depth: if a future refactor moves
+    schema validation elsewhere, or if a recipe is constructed via
+    ``Recipe.model_copy(update=...)`` (which bypasses field
+    validators), the emission path still surfaces the mismatch.
+
+    We exercise that path here so the catalog entry isn't dead code.
+    """
+
+    from pd_ocr_synth.validation import _check_schema_version
+
+    font = tmp_path / "fake.otf"
+    font.write_bytes(writable_font_bytes)
+    seed = _make_file(tmp_path / "seed.txt", "hello\n")
+    yaml_text = _minimal_yaml(
+        font=str(font),
+        dest=str(tmp_path / "out"),
+        corpus=str(seed),
+    )
+    recipe = load_recipe(_write(tmp_path, yaml_text))
+    # ``model_copy(update=...)`` skips field validators, so we can
+    # mint a recipe instance with an unsupported version without
+    # round-tripping through YAML.
+    bad = recipe.model_copy(update={"schema_version": 999})
+    issues = _check_schema_version(bad)
+    codes = [i.code for i in issues]
+    assert codes == ["schema_version_unsupported"], issues
+    assert issues[0].severity == "error"
+    assert "999" in issues[0].message
+
+
+# ---------------------------------------------------------------------------
 # VALIDATION_CODES catalog drift guard (runtime side)
 #
 # Mirrors the ``LINT_CODES`` runtime guard in ``test_lint.py``:
@@ -1773,16 +2024,10 @@ def test_permitted_layout_keys_table_modes_match_layout_mode_literal() -> None:
 # by ``validate_recipe`` must appear in ``VALIDATION_CODES``, so a new
 # ``ValidationIssue(code=...)`` site can't ship undocumented.
 #
-# Strategy: static scan over ``src/pd_ocr_synth/validation.py``. We do
-# not require every catalog entry to be reachable by an in-module
-# fixture — the lint-side equivalent works because ``test_lint.py``
-# already exercises all 7 codes in <300 LOC; validation has 24 codes
-# and ~1800 LOC of fixtures, and several codes (``schema_version_unsupported``
-# is defensive — pydantic rejects it on load; ``font_empty`` /
-# ``font_unreadable`` need carefully-crafted broken-font bytes) need
-# bespoke fixtures that are out of scope for the catalog drop. The
-# runtime ⊆ catalog half is the contract that matters; the
-# coverage-of-catalog half is a follow-up.
+# Strategy: static scan over ``src/pd_ocr_synth/validation.py``. The
+# fixtures above directly assert each previously-uncovered code emits
+# at the right severity, so the runtime ⊆ catalog *and* the
+# every-code-has-a-fixture halves of the contract are both covered.
 # ---------------------------------------------------------------------------
 
 
