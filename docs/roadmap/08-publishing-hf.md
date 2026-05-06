@@ -173,11 +173,36 @@ following gaps remain — pick any of them as a future small chunk.
 
 ### End-to-end live HF test
 
-- Spec 10 closes with "End-to-end test against a private 'scratch'
-  repo on HF (gated by an `HF_TOKEN` env var; skipped on CI without
-  secrets)." Not yet implemented. Should live under
-  `tests/integration/` with a `pytest.mark.skipif(not os.getenv(
-  'PD_OCR_SYNTH_HF_E2E'), ...)` guard so it never runs in normal CI.
+- [x] Implemented at `tests/integration/test_publish_live_hf.py`.
+      Gated behind `PD_OCR_SYNTH_HF_E2E=1` **and** `HF_TOKEN`
+      (write-scope) — both must be set for the live test to run; with
+      either missing, `pytest.mark.skipif` skips the test cleanly so
+      `make ci` collects it but never reaches the network. The test
+      builds a 2-sample local recognition output programmatically (no
+      `run_recipe` — keeps the wire footprint tiny), stages it through
+      `build_recognition_staging`, and drives the **production**
+      transport via `make_default_transport(token)`. Asserts:
+      first publish lands `CREATED`-or-`UPLOADED` with a non-empty
+      commit SHA, the staged README's front matter carries every
+      `pd-ocr-*` key (driven through the public
+      `check_required_front_matter` helper so a regression in the
+      builder fails the same way pre-flight would), and a second
+      publish without local changes returns `PublishState.NO_CHANGE`
+      with an empty `commit_sha` (the spec's "exit 0 with 'no changes'
+      and do not commit" branch). Cleanup deletes the test repo via
+      `HfApi.delete_repo(missing_ok=True)` in a `finally`-shaped
+      fixture; cleanup errors are swallowed so a transient HF outage
+      at teardown doesn't mask a real test failure. The default repo
+      is `ConcaveTrillion/pd-ocr-synth-livetest-recognition`,
+      overrideable via `PD_OCR_SYNTH_HF_E2E_REPO=OWNER/NAME`. Three
+      always-on collection-sanity tests in the same file lock the
+      gating helper (`_live_enabled`) and the default-repo invariant
+      so a future refactor that accidentally inverts the env-var check
+      can't silently disable live coverage. The opt-in convention
+      (`tests/integration/`, `@pytest.mark.integration`,
+      `PD_OCR_SYNTH_<SUITE>_…` env-var prefix) is documented in the
+      module's docstring as the pattern future live tests should
+      follow.
 
 ### Repo-id / branch validation
 
