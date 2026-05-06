@@ -86,6 +86,7 @@ _LAYOUT_KEYS_BY_MODE: dict[str, frozenset[str]] = {
             "paragraph_spacing",
             "paragraph_indent_px",
             "paragraph_alignment",
+            "page_size_px",
         }
     ),
 }
@@ -280,6 +281,7 @@ def _check_layout(recipe: Recipe) -> list[ValidationIssue]:
         "paragraph_spacing": recipe.layout.paragraph_spacing,
         "paragraph_indent_px": recipe.layout.paragraph_indent_px,
         "paragraph_alignment": recipe.layout.paragraph_alignment,
+        "page_size_px": recipe.layout.page_size_px,
     }
     out: list[ValidationIssue] = []
     for key, value in set_keys.items():

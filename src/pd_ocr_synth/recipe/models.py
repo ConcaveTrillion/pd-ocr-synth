@@ -249,6 +249,30 @@ class Layout(_Frozen):
     # they are rejected at validation time. See
     # docs/roadmap/09-detection-mode.md § Paragraph alignment.
     paragraph_alignment: Literal["left", "center"] | None = None
+    # Explicit fixed page canvas size in pixels (width, height). When
+    # set, ``render_page`` produces output of *exactly* this size by
+    # rendering content at its natural extent and then padding the
+    # remaining canvas with the sampled background colour. Content is
+    # placed top-left; all bbox annotations remain inside the natural-
+    # content rectangle. If natural content exceeds ``page_size_px`` in
+    # either dimension, a :class:`RenderError` is raised — silent
+    # truncation would corrupt the per-word/per-line annotations the
+    # detection trainer consumes. ``None`` (default) preserves the
+    # historical auto-sized canvas. Only meaningful for ``mode='pages'``;
+    # ``paragraphs`` mode is by definition a tight single-paragraph crop
+    # with no notion of a "page". See docs/specs/06-rendering.md
+    # §pages and docs/roadmap/09-detection-mode.md § Explicit page_size_px.
+    page_size_px: tuple[int, int] | None = None
+
+    @field_validator("page_size_px")
+    @classmethod
+    def _check_page_size_px_positive(cls, v: tuple[int, int] | None) -> tuple[int, int] | None:
+        if v is None:
+            return v
+        w, h = v
+        if w <= 0 or h <= 0:
+            raise ValueError(f"page_size_px must be positive (width, height); got ({w}, {h})")
+        return v
 
 
 # ---------------------------------------------------------------------------

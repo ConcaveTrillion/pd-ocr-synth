@@ -138,6 +138,18 @@ layout:
 
 Output: page image + per-paragraph + per-line + per-word bounding boxes.
 
+`page_size_px` is optional. When unset, the page canvas is auto-sized
+to the natural extent of the composed paragraphs plus padding. When
+set to `[width, height]`, the renderer emits an image of *exactly*
+that size: content is composed at its natural extent and placed at
+the top-left, and the remainder of the canvas is padded with the
+sampled `background_color`. If the natural content is larger than the
+requested size in either dimension, the renderer raises
+`RenderError` — silent truncation would corrupt the per-word/per-line
+annotations the detection trainer consumes. Bbox annotations are
+emitted in the natural-content rectangle, never extending into the
+padded margin.
+
 ## Ground truth captured per sample
 
 Regardless of layout mode, each rendered sample emits:

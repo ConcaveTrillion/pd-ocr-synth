@@ -439,6 +439,98 @@ def test_paragraph_alignment_unknown_value_rejected_at_load(
 
 
 # ---------------------------------------------------------------------------
+# page_size_px (M09 explicit fixed-canvas)
+# ---------------------------------------------------------------------------
+
+
+def test_page_size_px_accepted_on_pages_mode(tmp_path: Path, writable_font_bytes: bytes) -> None:
+    """``page_size_px`` is permitted on ``pages`` mode without warning."""
+    font = tmp_path / "fake.otf"
+    font.write_bytes(writable_font_bytes)
+    seed = _make_file(tmp_path / "seed.txt", "hello\n")
+    yaml_text = _minimal_yaml(font=str(font), dest=str(tmp_path / "out"), corpus=str(seed))
+    yaml_text = yaml_text.replace(
+        "layout:\n  mode: word_crops\n  padding_px: 8\n",
+        (
+            "layout:\n"
+            "  mode: pages\n"
+            "  padding_px: 8\n"
+            "  max_width_px: 800\n"
+            "  page_size_px: [1200, 1800]\n"
+        ),
+    )
+    yaml_text = yaml_text.replace("mode: recognition", "mode: detection")
+    recipe = load_recipe(_write(tmp_path, yaml_text))
+    report = validate_recipe(recipe)
+    page_size_warnings = [i for i in report.warnings if i.location == "layout.page_size_px"]
+    assert page_size_warnings == [], [i.format() for i in page_size_warnings]
+    assert report.is_ok, [i.format() for i in report.issues]
+
+
+@pytest.mark.parametrize("layout_mode", ["word_crops", "lines", "paragraphs"])
+def test_page_size_px_warns_on_non_pages_modes(
+    tmp_path: Path,
+    writable_font_bytes: bytes,
+    layout_mode: str,
+) -> None:
+    """``page_size_px`` is only meaningful for ``pages`` mode.
+
+    A ``paragraphs`` sample is a tight single-paragraph crop with no
+    notion of a "page"; ``word_crops`` / ``lines`` are likewise tight
+    crops. Setting it on those modes emits a ``layout_key_unused``
+    warning so the user knows the value will be ignored.
+    """
+    font = tmp_path / "fake.otf"
+    font.write_bytes(writable_font_bytes)
+    seed = _make_file(tmp_path / "seed.txt", "hello\n")
+    yaml_text = _minimal_yaml(font=str(font), dest=str(tmp_path / "out"), corpus=str(seed))
+    if layout_mode == "word_crops":
+        new_layout = "layout:\n  mode: word_crops\n  padding_px: 8\n  page_size_px: [1200, 1800]\n"
+    else:
+        new_layout = (
+            f"layout:\n"
+            f"  mode: {layout_mode}\n"
+            f"  padding_px: 8\n"
+            f"  max_width_px: 800\n"
+            f"  page_size_px: [1200, 1800]\n"
+        )
+    yaml_text = yaml_text.replace(
+        "layout:\n  mode: word_crops\n  padding_px: 8\n",
+        new_layout,
+    )
+    if layout_mode in {"paragraphs", "pages"}:
+        yaml_text = yaml_text.replace("mode: recognition", "mode: detection")
+    recipe = load_recipe(_write(tmp_path, yaml_text))
+    report = validate_recipe(recipe)
+    warning_codes_at_size = [i.code for i in report.warnings if i.location == "layout.page_size_px"]
+    assert "layout_key_unused" in warning_codes_at_size, [i.format() for i in report.issues]
+
+
+@pytest.mark.parametrize("bad", [(0, 100), (100, 0), (-5, 100), (100, -5)])
+def test_page_size_px_rejects_non_positive_at_load(
+    tmp_path: Path, writable_font_bytes: bytes, bad: tuple[int, int]
+) -> None:
+    """Pydantic's ``page_size_px`` validator rejects zero / negative dimensions."""
+    font = tmp_path / "fake.otf"
+    font.write_bytes(writable_font_bytes)
+    seed = _make_file(tmp_path / "seed.txt", "hello\n")
+    yaml_text = _minimal_yaml(font=str(font), dest=str(tmp_path / "out"), corpus=str(seed))
+    yaml_text = yaml_text.replace(
+        "layout:\n  mode: word_crops\n  padding_px: 8\n",
+        (
+            "layout:\n"
+            "  mode: pages\n"
+            "  padding_px: 8\n"
+            "  max_width_px: 800\n"
+            f"  page_size_px: [{bad[0]}, {bad[1]}]\n"
+        ),
+    )
+    yaml_text = yaml_text.replace("mode: recognition", "mode: detection")
+    with pytest.raises(Exception, match="page_size_px"):
+        load_recipe(_write(tmp_path, yaml_text))
+
+
+# ---------------------------------------------------------------------------
 # output.mode / layout.mode pairing (spec 08, §Modes)
 # ---------------------------------------------------------------------------
 

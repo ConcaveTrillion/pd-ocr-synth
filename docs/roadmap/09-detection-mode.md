@@ -189,17 +189,29 @@ future small chunk.
 
 ### Explicit `page_size_px`
 
-- [ ] Spec 06 § `pages` advertises
-      `page_size_px: [1200, 1800]` as a fixed canvas. Today
-      `render_page` auto-sizes the canvas from the laid-out content
-      width/height (max paragraph width + summed paragraph heights +
-      margins). Decide between (a) hard-clip to `page_size_px`, (b)
-      pad-to-`page_size_px` with the sampled background colour, or
-      (c) scale-to-fit. Option (b) is the cheapest and matches the
-      "training data uniformity" intent — pages mode only needs a
-      consistent canvas for the detection model to learn aspect
-      ratios. Layout key shape: `page_size_px: tuple[int, int] |
-      None = None`.
+- [x] Spec 06 § `pages` advertises
+      `page_size_px: [1200, 1800]` as a fixed canvas. Layout key
+      `page_size_px: tuple[int, int] | None = None` lands as a (width,
+      height) tuple, validated positive at load time. Validator
+      permits it only on `pages` mode and warns `layout_key_unused`
+      elsewhere
+      (`tests/test_validation.py::test_page_size_px_warns_on_non_pages_modes`,
+      `::test_page_size_px_accepted_on_pages_mode`,
+      `::test_page_size_px_rejects_non_positive_at_load`). When set,
+      `render_page` composes content at its natural extent and pastes
+      it top-left into a canvas of exactly the requested dimensions,
+      filling the remainder with the sampled `background_color`. Bbox
+      annotations remain unshifted in the natural-content rectangle
+      (zero offset == top-left placement) so per-word/per-line
+      detection annotations match the inked region pixel-for-pixel
+      (`tests/test_render_page.py::test_render_page_page_size_px_*`).
+      Natural content larger than the requested canvas in either
+      dimension raises `RenderError` — silent truncation would corrupt
+      annotations the trainer consumes. `None` and "exactly fits" both
+      preserve byte-identical output for the auto-sized path
+      (`::test_render_page_page_size_px_none_is_bit_identical_to_unset`,
+      `::test_render_page_page_size_px_exact_fit_does_not_pad`).
+      Spec 06 § pages now documents the pad-or-error behaviour.
 
 ### Headings and drop caps
 

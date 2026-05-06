@@ -448,6 +448,28 @@
           ],
           "default": null,
           "title": "Paragraph Alignment"
+        },
+        "page_size_px": {
+          "anyOf": [
+            {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Page Size Px"
         }
       },
       "required": [

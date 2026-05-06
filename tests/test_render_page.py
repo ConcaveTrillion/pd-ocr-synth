@@ -878,3 +878,218 @@ def test_render_page_alignment_center_word_boxes_stay_inside_canvas(
         x0, y0, x1, y1 = wb.bbox
         assert 0 <= x0 < x1 <= w, f"word {wb.text!r} bbox out of canvas: {wb.bbox}, canvas={w}x{h}"
         assert 0 <= y0 < y1 <= h, f"word {wb.text!r} bbox out of canvas: {wb.bbox}, canvas={w}x{h}"
+
+
+# ---------------------------------------------------------------------------
+# Explicit page_size_px (fixed-canvas pad)
+# ---------------------------------------------------------------------------
+
+
+def _build_page_size_recipe(tmp_path: Path, page_size_px: tuple[int, int] | None) -> object:
+    """Build a pages-mode recipe with the given fixed canvas size.
+
+    ``page_size_px=None`` omits the field entirely (preserving the
+    historical auto-sized canvas); a ``(w, h)`` tuple writes
+    ``page_size_px: [w, h]`` into the layout block.
+    """
+
+    font = _require_font()
+    suffix = "none" if page_size_px is None else f"{page_size_px[0]}x{page_size_px[1]}"
+    rp = tmp_path / f"recipe-pagesize-{suffix}.yaml"
+    words = tmp_path / f"words-pagesize-{suffix}.txt"
+    words.write_text("ḃeaḋ\n", encoding="utf-8")
+    if page_size_px is None:
+        size_line = ""
+    else:
+        size_line = f"  page_size_px: [{page_size_px[0]}, {page_size_px[1]}]\n"
+    rp.write_text(
+        "schema_version: 1\n"
+        f"name: page-pagesize-{suffix}\n"
+        "seed: 42\n"
+        "output:\n"
+        "  format: pd-ocr-trainer/v1\n"
+        "  mode: detection\n"
+        "  destination: ./out\n"
+        "  count: 1\n"
+        "corpus:\n"
+        f"  - type: local\n    path: {words}\n"
+        "fonts:\n"
+        f"  - path: {font}\n    weight: 1.0\n"
+        "rendering:\n"
+        "  font_size_pt: 18\n"
+        "  dpi: 300\n"
+        "  ink_color: { r: 10, g: 10, b: 10 }\n"
+        "  background_color: { r: 240, g: 235, b: 220 }\n"
+        "layout:\n"
+        "  mode: pages\n"
+        "  padding_px: 6\n"
+        "  line_spacing: 1.0\n"
+        "  paragraph_spacing: 1.0\n"
+        f"{size_line}",
+        encoding="utf-8",
+    )
+    return load_recipe(rp)
+
+
+def test_render_page_page_size_px_produces_exact_canvas(tmp_path: Path) -> None:
+    """When ``page_size_px=(W, H)`` is set, output image has exactly those dims."""
+
+    target = (1200, 1800)
+    paragraphs = [["alpha beta", "gamma delta"], ["epsilon zeta", "eta theta"]]
+    recipe = _build_page_size_recipe(tmp_path, target)
+    ctx = RenderContext.for_seed(recipe.seed)
+    ctx.reseed_for_sample(0)
+    sample = render_page(paragraphs, recipe=recipe, ctx=ctx)
+
+    assert sample.size == target, f"expected {target}, got {sample.size}"
+
+
+def test_render_page_page_size_px_pads_with_background(tmp_path: Path) -> None:
+    """The padded region is filled with the sampled background colour."""
+
+    target = (1200, 1800)
+    paragraphs = [["alpha beta", "gamma"]]
+    recipe = _build_page_size_recipe(tmp_path, target)
+    ctx = RenderContext.for_seed(recipe.seed)
+    ctx.reseed_for_sample(0)
+    sample = render_page(paragraphs, recipe=recipe, ctx=ctx)
+
+    bg = sample.background_color
+    # Probe deep in the bottom-right corner — natural content sits at
+    # top-left so this region must be pure background.
+    px = sample.image.getpixel((target[0] - 5, target[1] - 5))
+    assert px == bg, f"bottom-right not background: pixel={px}, bg={bg}"
+    # And along the right edge near the top.
+    px2 = sample.image.getpixel((target[0] - 5, 5))
+    assert px2 == bg, f"top-right not background: pixel={px2}, bg={bg}"
+
+
+def test_render_page_page_size_px_keeps_annotations_inside_natural_region(
+    tmp_path: Path,
+) -> None:
+    """All word/line/paragraph bboxes sit inside the natural-content rectangle.
+
+    Top-left placement means annotations never extend into the padded
+    margin; checking that the natural-content extent (== auto-sized
+    render) still bounds every annotation locks the no-shift contract.
+    """
+
+    target = (1200, 1800)
+    paragraphs = [["alpha beta", "gamma delta"], ["epsilon zeta", "eta theta"]]
+
+    recipe_natural = _build_page_size_recipe(tmp_path, None)
+    recipe_padded = _build_page_size_recipe(tmp_path, target)
+
+    ctx_n = RenderContext.for_seed(recipe_natural.seed)
+    ctx_n.reseed_for_sample(0)
+    sample_n = render_page(paragraphs, recipe=recipe_natural, ctx=ctx_n)
+
+    ctx_p = RenderContext.for_seed(recipe_padded.seed)
+    ctx_p.reseed_for_sample(0)
+    sample_p = render_page(paragraphs, recipe=recipe_padded, ctx=ctx_p)
+
+    natural_w, natural_h = sample_n.size
+
+    # Padded sample is the requested target size, not the natural size.
+    assert sample_p.size == target
+
+    # Every padded-sample annotation lies inside (0, 0, natural_w, natural_h).
+    for wb in sample_p.word_boxes:
+        x0, y0, x1, y1 = wb.bbox
+        assert 0 <= x0 < x1 <= natural_w, (
+            f"word {wb.text!r} extends past natural width: bbox={wb.bbox}, "
+            f"natural={natural_w}x{natural_h}"
+        )
+        assert 0 <= y0 < y1 <= natural_h, (
+            f"word {wb.text!r} extends past natural height: bbox={wb.bbox}, "
+            f"natural={natural_w}x{natural_h}"
+        )
+    for lb in sample_p.line_boxes:
+        x0, y0, x1, y1 = lb.bbox
+        assert x1 <= natural_w and y1 <= natural_h
+    for pb in sample_p.paragraph_boxes:
+        x0, y0, x1, y1 = pb.bbox
+        assert x1 <= natural_w and y1 <= natural_h
+
+    # Annotation bboxes are bit-identical to the natural sample — top-
+    # left placement implies zero shift, so padding must not move
+    # anything.
+    assert tuple(sample_p.word_boxes) == tuple(sample_n.word_boxes)
+    assert tuple(sample_p.line_boxes) == tuple(sample_n.line_boxes)
+    assert tuple(sample_p.paragraph_boxes) == tuple(sample_n.paragraph_boxes)
+
+
+def test_render_page_page_size_px_rejects_oversized_content(tmp_path: Path) -> None:
+    """Content larger than ``page_size_px`` in either dim raises ``RenderError``."""
+
+    # Tiny target — even one paragraph will overflow.
+    target = (50, 50)
+    paragraphs = [["alpha beta gamma", "delta epsilon"]]
+    recipe = _build_page_size_recipe(tmp_path, target)
+    ctx = RenderContext.for_seed(recipe.seed)
+    ctx.reseed_for_sample(0)
+
+    with pytest.raises(RenderError, match="exceeds requested page_size_px"):
+        render_page(paragraphs, recipe=recipe, ctx=ctx)
+
+
+def test_render_page_page_size_px_none_is_bit_identical_to_unset(
+    tmp_path: Path,
+) -> None:
+    """Recipes without ``page_size_px`` produce byte-identical PNGs to before.
+
+    Regression lock: existing recipes (which do not set ``page_size_px``)
+    must continue to produce the same PNG bytes they did before this
+    feature landed. We compare the un-set form to itself rather than to
+    a hardcoded blob — the invariant is "no behaviour change for the
+    default path", and round-tripping confirms determinism.
+    """
+
+    paragraphs = [["alpha beta", "gamma"], ["delta epsilon", "zeta"]]
+
+    recipe_a = _build_page_size_recipe(tmp_path, None)
+    recipe_b = _build_page_size_recipe(tmp_path, None)
+
+    def _png(recipe) -> bytes:
+        ctx = RenderContext.for_seed(recipe.seed)
+        ctx.reseed_for_sample(0)
+        sample = render_page(paragraphs, recipe=recipe, ctx=ctx)
+        buf = io.BytesIO()
+        sample.image.save(buf, format="PNG")
+        return buf.getvalue()
+
+    assert _png(recipe_a) == _png(recipe_b)
+
+
+def test_render_page_page_size_px_exact_fit_does_not_pad(tmp_path: Path) -> None:
+    """When natural size exactly matches ``page_size_px``, no padding is applied.
+
+    The renderer should leave the canvas alone (no ``Image.new`` /
+    paste) when content already fills the requested size — this avoids
+    a wasted full-canvas allocation for the common "auto-sized for me,
+    annotated as exact" case.
+    """
+
+    paragraphs = [["alpha beta", "gamma"]]
+
+    # First, render natural size to discover the exact dims.
+    recipe_natural = _build_page_size_recipe(tmp_path, None)
+    ctx_n = RenderContext.for_seed(recipe_natural.seed)
+    ctx_n.reseed_for_sample(0)
+    sample_n = render_page(paragraphs, recipe=recipe_natural, ctx=ctx_n)
+    natural_size = sample_n.size
+
+    # Now request that exact size as the fixed page size.
+    recipe_exact = _build_page_size_recipe(tmp_path, natural_size)
+    ctx_e = RenderContext.for_seed(recipe_exact.seed)
+    ctx_e.reseed_for_sample(0)
+    sample_e = render_page(paragraphs, recipe=recipe_exact, ctx=ctx_e)
+
+    assert sample_e.size == natural_size
+
+    # Pixel-equal: same content, no padding region.
+    buf_n = io.BytesIO()
+    sample_n.image.save(buf_n, format="PNG")
+    buf_e = io.BytesIO()
+    sample_e.image.save(buf_e, format="PNG")
+    assert buf_n.getvalue() == buf_e.getvalue()

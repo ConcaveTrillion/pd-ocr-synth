@@ -19,9 +19,14 @@ The caller is expected to hand it a pre-fitted
 the lines of each paragraph (one rendered line per element). The
 wrap-fitter / paragraph-splitter that turns a free-form word stream
 into this nested shape is upstream concern (a separate M09 chunk);
-same for ``alignment``, ``paragraph_indent_em``, headings, drop caps,
-and explicit ``page_size_px`` framing — all of which lay on top of
-this primitive.
+same for ``alignment``, ``paragraph_indent_em``, headings, and drop
+caps — all of which lay on top of this primitive.
+
+Optional ``recipe.layout.page_size_px`` produces a fixed-size canvas
+by padding the natural composition with the sampled background colour
+(top-left placement). Content larger than the requested page size in
+either dimension raises :class:`RenderError`; we never silently
+truncate annotations.
 
 What this primitive *does* enforce:
 
@@ -209,9 +214,10 @@ def render_page(
 
     Raises:
         RenderError: if ``paragraphs`` is empty, any inner paragraph
-            is empty, or any line violates :func:`render_paragraph`'s
-            line contract (delegated). Also raised when no usable
-            font is available.
+            is empty, any line violates :func:`render_paragraph`'s
+            line contract (delegated), no usable font is available, or
+            ``recipe.layout.page_size_px`` is set and the natural-size
+            content does not fit inside it.
         MissingGlyphError: if the chosen font lacks any non-
             whitespace codepoint anywhere on the page.
     """
@@ -348,6 +354,29 @@ def render_page(
     # Page text: paragraphs separated by a blank line. Each
     # paragraph's own ``text`` already joins its lines with ``\n``.
     page_text = "\n\n".join(s.text for s in paragraph_samples)
+
+    # Optional fixed-size canvas: pad the natural-size canvas to
+    # ``recipe.layout.page_size_px``. Content stays at top-left; the
+    # remainder is filled with the sampled background colour. Bbox
+    # annotations are not shifted (offset = (0, 0)). If natural content
+    # is larger than the requested canvas in either dimension, raise —
+    # silent truncation would corrupt detection annotations.
+    page_size_px = recipe.layout.page_size_px
+    if page_size_px is not None:
+        target_w, target_h = page_size_px
+        if img_w > target_w or img_h > target_h:
+            raise RenderError(
+                f"render_page: natural content size ({img_w}x{img_h}) exceeds "
+                f"requested page_size_px ({target_w}x{target_h}). "
+                "Increase page_size_px, reduce content, or shrink padding."
+            )
+        if (img_w, img_h) != (target_w, target_h):
+            padded = Image.new("RGB", (target_w, target_h), color=para_style.background_color)
+            padded.paste(canvas, (0, 0))
+            canvas = padded
+            img_w, img_h = target_w, target_h
+        # img_w / img_h are otherwise unchanged when content already
+        # exactly fills the requested size.
 
     return RenderedSample(
         text=page_text,
