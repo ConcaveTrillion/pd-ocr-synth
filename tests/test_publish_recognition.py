@@ -15,8 +15,10 @@ import pytest
 from PIL import Image
 
 from pd_ocr_synth.publish import (
+    CONTENT_SHA_KEY,
     DATA_DIRNAME,
     METADATA_FILENAME,
+    README_FILENAME,
     build_recognition_staging,
 )
 from pd_ocr_synth.publish.recognition import StagingError
@@ -562,3 +564,155 @@ def test_staging_omits_provenance_when_manifest_lacks_it(tmp_path: Path) -> None
     build_recognition_staging(local, staging)
     rows = _read_metadata(staging)
     assert rows[0] == {"file_name": "data/0000000.png", "text": "alpha"}
+
+
+# ---------------------------------------------------------------------------
+# Content-SHA wire-up (idempotency closure on the dataset card)
+# ---------------------------------------------------------------------------
+#
+# The staging builder itself doesn't talk to HF, but it owns the
+# generation of the ``pd-ocr-content-sha`` front-matter value the
+# upload step compares against the latest HF commit. These tests lock
+# down: (a) the SHA is in the README, (b) it's surfaced on the result,
+# (c) it's deterministic across re-runs over identical inputs (so a
+# second publish is a no-op), (d) it's sensitive to real content
+# changes, and (e) it's absent when no README is written.
+
+
+def _read_front_matter_value(readme: Path, key: str) -> str | None:
+    """Return the value of ``key`` from the README's YAML front matter, if any."""
+
+    text = readme.read_text(encoding="utf-8")
+    if not text.startswith("---\n"):
+        return None
+    end = text.find("\n---\n", 4)
+    if end < 0:
+        return None
+    block = text[4:end]
+    for line in block.splitlines():
+        if ":" not in line:
+            continue
+        k, _, v = line.partition(":")
+        if k.strip() == key:
+            return v.strip()
+    return None
+
+
+def test_staging_embeds_content_sha_in_readme(tmp_path: Path) -> None:
+    """``pd-ocr-content-sha`` lands in the README front matter."""
+
+    local = tmp_path / "local"
+    _write_local_output(
+        local,
+        samples=[{"index": 0, "text": "alpha", "font_name": "f.otf"}],
+    )
+    staging = tmp_path / "staging"
+
+    result = build_recognition_staging(local, staging)
+
+    assert result.readme_written is True
+    assert result.content_sha is not None
+    # 64 lower-case hex chars per CONTENT_SHA_ALGORITHM = sha256.
+    assert len(result.content_sha) == 64
+    assert all(c in "0123456789abcdef" for c in result.content_sha)
+
+    readme_value = _read_front_matter_value(staging / README_FILENAME, CONTENT_SHA_KEY)
+    assert readme_value == result.content_sha
+
+
+def test_staging_content_sha_is_deterministic_across_rebuilds(tmp_path: Path) -> None:
+    """Two builds over identical local input produce the same SHA."""
+
+    local = tmp_path / "local"
+    _write_local_output(
+        local,
+        samples=[
+            {"index": 0, "text": "alpha", "font_name": "f.otf"},
+            {"index": 1, "text": "beta", "font_name": "g.otf"},
+        ],
+    )
+
+    first = build_recognition_staging(local, tmp_path / "staging-a")
+    second = build_recognition_staging(local, tmp_path / "staging-b")
+
+    assert first.content_sha is not None
+    assert first.content_sha == second.content_sha
+
+
+def test_staging_content_sha_is_idempotent_on_overwrite(tmp_path: Path) -> None:
+    """Overwriting the same staging dir re-yields the same digest.
+
+    Locks the publish-time loop: re-staging into the same target
+    must not perturb the SHA when the source hasn't changed, or the
+    upload step would never recognize a no-op re-run.
+    """
+
+    local = tmp_path / "local"
+    _write_local_output(
+        local,
+        samples=[{"index": 0, "text": "alpha", "font_name": "f.otf"}],
+    )
+    staging = tmp_path / "staging"
+
+    first = build_recognition_staging(local, staging)
+    second = build_recognition_staging(local, staging, overwrite=True)
+
+    assert first.content_sha is not None
+    assert first.content_sha == second.content_sha
+    # And the README still carries the matching key (no stale duplicate
+    # from a partial overwrite).
+    readme_value = _read_front_matter_value(staging / README_FILENAME, CONTENT_SHA_KEY)
+    assert readme_value == second.content_sha
+
+
+def test_staging_content_sha_changes_when_image_bytes_change(tmp_path: Path) -> None:
+    """A real content change (different image bytes) flips the SHA."""
+
+    local_a = tmp_path / "local-a"
+    local_b = tmp_path / "local-b"
+    _write_local_output(
+        local_a,
+        samples=[{"index": 0, "text": "alpha", "font_name": "f.otf"}],
+    )
+    _write_local_output(
+        local_b,
+        samples=[{"index": 0, "text": "alpha", "font_name": "f.otf"}],
+    )
+    # Replace the image in B with one of a different size so the bytes
+    # genuinely differ. Same filename, same label, same manifest — only
+    # the pixel payload changes.
+    (local_b / "images" / "0000000.png").unlink()
+    Image.new("RGB", (16, 16), color=(50, 50, 50)).save(
+        local_b / "images" / "0000000.png", format="PNG"
+    )
+
+    a = build_recognition_staging(local_a, tmp_path / "staging-a")
+    b = build_recognition_staging(local_b, tmp_path / "staging-b")
+
+    assert a.content_sha is not None
+    assert b.content_sha is not None
+    assert a.content_sha != b.content_sha
+
+
+def test_staging_without_snapshot_has_no_content_sha(tmp_path: Path) -> None:
+    """No README means no SHA — the field stays ``None``.
+
+    Mirrors the existing snapshot-less path. The publish CLI is
+    expected to refuse this branch up front (since a dataset card is
+    a hard requirement for HF upload), but the staging step itself
+    stays tolerant of legacy local outputs.
+    """
+
+    local = tmp_path / "local"
+    _write_local_output(
+        local,
+        samples=[{"index": 0, "text": "alpha", "font_name": "f.otf"}],
+        write_snapshot=False,
+    )
+    staging = tmp_path / "staging"
+
+    result = build_recognition_staging(local, staging)
+
+    assert result.readme_written is False
+    assert result.content_sha is None
+    assert not (staging / README_FILENAME).exists()

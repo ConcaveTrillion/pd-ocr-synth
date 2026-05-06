@@ -25,12 +25,20 @@ Resulting staging layout::
     <staging>/
     ├── data/<NNNNNNN>.png
     ├── metadata.jsonl       # one row per rendered sample
-    └── recipe.snapshot.yaml
+    ├── recipe.snapshot.yaml
+    └── README.md            # dataset card; front matter carries the
+                             # ``pd-ocr-content-sha`` idempotency key
 
 Skipped manifest entries (no image on disk) are left out of
 ``metadata.jsonl``: the dataset only wants rows that actually
 correspond to an image. Row count therefore matches
 ``len(labels.json)``, not ``len(manifest.jsonl)``.
+
+Once the staging dir is fully built, this module computes a SHA-256
+digest over its contents (per ``content_sha.py``) and writes it back
+into the README's front matter so the upload step can compare against
+the latest HF commit's ``card_data`` for an idempotent no-op exit when
+nothing has changed.
 """
 
 from __future__ import annotations
@@ -48,6 +56,10 @@ from pd_ocr_synth.output.recognition import (
     MANIFEST_FILENAME,
 )
 from pd_ocr_synth.output.snapshot import SNAPSHOT_FILENAME
+from pd_ocr_synth.publish.content_sha import (
+    apply_content_sha_to_readme,
+    compute_content_sha,
+)
 from pd_ocr_synth.publish.dataset_card import (
     load_card_inputs,
     write_dataset_card,
@@ -89,6 +101,13 @@ class StagingResult:
     # on disk. Surfaced (not silently dropped) so a corrupt local
     # render is auditable.
     missing_images: list[str] = field(default_factory=list)
+    # Content-SHA over the built staging dir, embedded into the README's
+    # front matter as ``pd-ocr-content-sha``. Populated only when a
+    # README was written (the SHA needs a README to live in, and the
+    # README is the only file generated as a function of the SHA). The
+    # future ``--dry-run`` summary reads this directly so it doesn't
+    # have to re-walk the staging dir to print the digest.
+    content_sha: str | None = None
 
 
 def build_recognition_staging(
@@ -191,6 +210,19 @@ def build_recognition_staging(
         card_inputs = load_card_inputs(local)
         write_dataset_card(staging, card_inputs)
         result.readme_written = True
+
+        # Idempotency closure: hash the staging dir as it sits *without*
+        # the content-SHA line, then write that digest into the README's
+        # front matter. ``apply_content_sha_to_readme`` is itself
+        # idempotent (strip-then-insert), so a second staging build over
+        # identical local input lands the same digest and produces a
+        # byte-identical README. The dataset-card writer deliberately
+        # omits ``pd-ocr-content-sha`` (see its module docstring) so
+        # this single insert is the only place the key is set; no other
+        # site has to know how the digest is computed.
+        content_sha = compute_content_sha(staging)
+        apply_content_sha_to_readme(staging, content_sha)
+        result.content_sha = content_sha
 
     return result
 
