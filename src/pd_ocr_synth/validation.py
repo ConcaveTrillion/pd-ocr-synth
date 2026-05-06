@@ -573,6 +573,64 @@ def _registered_degradation_kinds() -> frozenset[str]:
     return frozenset(REGISTRY)
 
 
+# Per-stage option keys the M06 runtime actually reads, cross-referenced
+# against ``docs/specs/07-degradation.md`` per-stage tables and the
+# ``options.get(...)`` calls in
+# ``pd_ocr_synth.degradation.builtins``. ``DegradationStage`` is
+# ``extra="allow"`` by design — kind-specific options live in
+# ``model_extra`` — so pydantic can't reject mis-spellings or
+# wrong-stage keys at load time. Without a validate-time check, a
+# typo like ``kernel_size`` (missing ``_px``) or a wrong-stage key
+# like ``quality: 80`` on a ``blur`` stage would be silently dropped
+# by ``options.get(<correct-key>, <default>)`` and the stage would
+# render with the default, producing degraded data the recipe author
+# never asked for. Same "worse than a crash" gap the iter-65 / iter-73
+# / iter-74 / iter-75 / iter-76 / iter-77 ``*_not_implemented``
+# precedents address.
+#
+# ``name`` is a common key per spec 07 (Common keys table) and is
+# accepted on every stage, so it's not listed here — it's whitelisted
+# in ``_COMMON_DEGRADATION_OPTION_KEYS`` below. ``kind`` and
+# ``probability`` live on the ``DegradationStage`` model proper, so
+# they never appear in ``model_extra`` and don't need to be listed.
+#
+# Stages absent from this map are either not yet registered (in which
+# case ``degradation_kind_not_implemented`` already fires upstream of
+# this check) or take no options at all.
+_DEGRADATION_OPTION_KEYS_BY_KIND: dict[str, frozenset[str]] = {
+    # geometric
+    "skew": frozenset({"angle_deg", "fill"}),
+    # optical
+    "blur": frozenset({"filter", "sigma", "motion_angle_deg", "motion_length_px"}),
+    "noise": frozenset({"noise_kind", "stddev", "amount"}),
+    "brightness": frozenset({"factor"}),
+    "contrast": frozenset({"factor"}),
+    "gamma": frozenset({"gamma"}),
+    # print / paper
+    "ink_bleed": frozenset({"iterations", "kernel_size_px"}),
+    # ``ink_thin`` reads ``kernel_size_px`` even though spec 07's
+    # example only shows ``iterations`` — see spec 07 §"ink_thin" and
+    # the matching ``options.get("kernel_size_px", 1)`` in
+    # ``builtins._ink_thin``. The spec example is illustrative, not
+    # exhaustive; the code is the contract.
+    "ink_thin": frozenset({"iterations", "kernel_size_px"}),
+    "paper_texture": frozenset({"directory", "blend", "opacity", "scale", "rotate_deg"}),
+    "foxing": frozenset({"count", "radius_px", "color", "opacity"}),
+    # compression
+    "jpeg": frozenset({"quality", "chroma_subsampling"}),
+    "webp": frozenset({"quality"}),
+    # color space
+    "grayscale": frozenset({"method"}),
+}
+
+# Spec 07 "Common keys" table lists ``kind``, ``probability``, and
+# ``name``. ``kind`` and ``probability`` are typed fields on the
+# ``DegradationStage`` model so they never land in ``model_extra``.
+# ``name`` is documented as "Optional label recorded in the manifest"
+# — every stage accepts it.
+_COMMON_DEGRADATION_OPTION_KEYS: frozenset[str] = frozenset({"name"})
+
+
 def _check_degradation(recipe: Recipe) -> list[ValidationIssue]:
     out: list[ValidationIssue] = []
     registered_kinds = _registered_degradation_kinds()
@@ -617,6 +675,35 @@ def _check_degradation(recipe: Recipe) -> list[ValidationIssue]:
                 )
             )
             continue
+        # Unknown / mis-spelled per-stage option keys: ``DegradationStage``
+        # is ``extra="allow"`` so YAML loads cleanly even with typos, and
+        # the stage handler reads options via ``options.get(<key>,
+        # <default>)`` — which silently falls back to the default rather
+        # than erroring. Surface mismatches at validate time, separate
+        # from the ``degradation_kind_*`` path so the user gets a precise
+        # location pointing at the offending key.
+        allowed_keys = _DEGRADATION_OPTION_KEYS_BY_KIND.get(stage.kind)
+        if allowed_keys is not None:
+            extra = stage.model_extra or {}
+            permitted = allowed_keys | _COMMON_DEGRADATION_OPTION_KEYS
+            for key in sorted(extra):
+                if key in permitted:
+                    continue
+                out.append(
+                    ValidationIssue(
+                        severity="error",
+                        code="degradation_stage_unknown_option",
+                        message=(
+                            f"degradation stage '{stage.kind}' does not accept option "
+                            f"'{key}'. Accepted options: "
+                            f"{', '.join(sorted(allowed_keys)) or '(none)'} "
+                            f"(plus common keys: "
+                            f"{', '.join(sorted(_COMMON_DEGRADATION_OPTION_KEYS))}). "
+                            "See docs/specs/07-degradation.md."
+                        ),
+                        location=f"degradation[{i}].{key}",
+                    )
+                )
         if stage.kind == "paper_texture":
             directory = (stage.model_extra or {}).get("directory")
             if directory is None:

@@ -695,6 +695,175 @@ def test_paper_texture_directory_missing_is_error(tmp_path: Path) -> None:
     assert "paper_texture_directory_missing" in codes
 
 
+@pytest.mark.parametrize(
+    ("kind", "extra_yaml", "bad_key"),
+    [
+        # Typo: ``signa`` instead of ``sigma``. With ``extra="allow"`` the
+        # YAML loads and ``options.get("sigma", 0.0)`` falls back to the
+        # default — render proceeds with no blur. Validate must catch it.
+        ("blur", "signa: 1.0\n", "signa"),
+        # Wrong-stage key: ``quality`` belongs on ``jpeg`` / ``webp``,
+        # not on ``blur``. Same silent-ignore failure mode.
+        ("blur", "quality: 80\n", "quality"),
+        # Mis-spelled flag: ``kernel_size`` is missing the ``_px``
+        # suffix. ``options.get("kernel_size_px", 1)`` would default
+        # the actual value while the user thought they'd set it.
+        ("ink_bleed", "kernel_size: 3\n", "kernel_size"),
+        # Recipe author thinks ``opacity`` works on ``jpeg`` (it does not
+        # — JPEG quality maps loosely to artifact severity but ``opacity``
+        # is undefined). ``_jpeg`` ignores it silently.
+        ("jpeg", "opacity: 0.5\n", "opacity"),
+        # Wrong key on ``foxing``: spec uses ``radius_px`` not ``radius``.
+        ("foxing", "count: 3\n    radius: 4\n", "radius"),
+        # Wrong key on ``grayscale``: spec uses ``method`` not ``mode``.
+        ("grayscale", "mode: luminosity\n", "mode"),
+    ],
+)
+def test_unknown_per_stage_option_is_error(
+    tmp_path: Path,
+    writable_font_bytes: bytes,
+    kind: str,
+    extra_yaml: str,
+    bad_key: str,
+) -> None:
+    """Surface mis-spelled or wrong-stage option keys at validate time.
+
+    ``DegradationStage`` is ``extra="allow"`` so YAML containing
+    typos / wrong-stage keys loads cleanly, and the stage handlers
+    read options via ``options.get(<canonical-key>, <default>)`` —
+    silently falling back to the default rather than raising. That's
+    the iter-65 / iter-73 / iter-74 / iter-75 / iter-76 / iter-77
+    "worse than a crash" gap: the recipe author thinks they tuned the
+    stage but the rendered samples ignore the override entirely.
+    Validate-time catches the mismatch before render starts.
+    """
+
+    font = tmp_path / "fake.otf"
+    font.write_bytes(writable_font_bytes)
+    yaml_text = _minimal_yaml(
+        font=str(font),
+        dest=str(tmp_path / "out"),
+        corpus=str(_make_file(tmp_path / "seed.txt", "hello\n")),
+    )
+    yaml_text += f"degradation:\n  - kind: {kind}\n    probability: 0.5\n    {extra_yaml}"
+    recipe = load_recipe(_write(tmp_path, yaml_text))
+    report = validate_recipe(recipe)
+    codes = [i.code for i in report.errors]
+    assert "degradation_stage_unknown_option" in codes, [i.format() for i in report.issues]
+    # Location pinpoints the offending key, not the whole stage.
+    issue = next(
+        i
+        for i in report.errors
+        if i.code == "degradation_stage_unknown_option"
+        and i.location == f"degradation[0].{bad_key}"
+    )
+    assert kind in issue.message
+    assert bad_key in issue.message
+    # Spec pointer lets the user look up the canonical key list.
+    assert "07-degradation.md" in issue.message
+
+
+def test_known_per_stage_options_pass_clean(
+    tmp_path: Path,
+    writable_font_bytes: bytes,
+) -> None:
+    """Spec-listed keys (and the common ``name`` key) must not error.
+
+    Exercises every stage in
+    ``_DEGRADATION_OPTION_KEYS_BY_KIND`` with one valid option each,
+    plus a ``name:`` to confirm the common-keys whitelist applies.
+    Acts as a guard against drift: if a future edit narrows the
+    allowed-options table without updating the underlying handler, this
+    test breaks loudly.
+    """
+
+    font = tmp_path / "fake.otf"
+    font.write_bytes(writable_font_bytes)
+    textures_dir = tmp_path / "textures"
+    textures_dir.mkdir()
+    yaml_text = _minimal_yaml(
+        font=str(font),
+        dest=str(tmp_path / "out"),
+        corpus=str(_make_file(tmp_path / "seed.txt", "hello\n")),
+    )
+    yaml_text += (
+        "degradation:\n"
+        "  - kind: skew\n    probability: 1.0\n    name: my-skew\n"
+        "    angle_deg: 1.0\n    fill: white\n"
+        "  - kind: blur\n    probability: 1.0\n"
+        "    filter: gaussian\n    sigma: 0.5\n"
+        "    motion_angle_deg: 0\n    motion_length_px: 0\n"
+        "  - kind: noise\n    probability: 1.0\n"
+        "    noise_kind: gaussian\n    stddev: 1.0\n    amount: 0.01\n"
+        "  - kind: brightness\n    probability: 1.0\n    factor: 1.0\n"
+        "  - kind: contrast\n    probability: 1.0\n    factor: 1.0\n"
+        "  - kind: gamma\n    probability: 1.0\n    gamma: 1.0\n"
+        "  - kind: ink_bleed\n    probability: 1.0\n"
+        "    iterations: 1\n    kernel_size_px: 1\n"
+        "  - kind: ink_thin\n    probability: 1.0\n"
+        "    iterations: 1\n    kernel_size_px: 1\n"
+        f"  - kind: paper_texture\n    probability: 1.0\n    directory: {textures_dir}\n"
+        "    blend: multiply\n    opacity: 0.3\n"
+        "    scale: 1.0\n    rotate_deg: 0\n"
+        "  - kind: foxing\n    probability: 1.0\n"
+        "    count: 1\n    radius_px: 3\n    color: [120, 60, 30]\n    opacity: 0.3\n"
+        "  - kind: jpeg\n    probability: 1.0\n"
+        "    quality: 85\n    chroma_subsampling: '4:4:4'\n"
+        "  - kind: webp\n    probability: 1.0\n    quality: 85\n"
+        "  - kind: grayscale\n    probability: 1.0\n    method: luminosity\n"
+    )
+    recipe = load_recipe(_write(tmp_path, yaml_text))
+    report = validate_recipe(recipe)
+    codes = [i.code for i in report.errors]
+    assert "degradation_stage_unknown_option" not in codes, [i.format() for i in report.errors]
+
+
+def test_unknown_option_table_covers_every_implemented_kind() -> None:
+    """Meta-test: ``_DEGRADATION_OPTION_KEYS_BY_KIND`` must cover every
+    runtime-registered kind whose options the user can tune.
+
+    If a new stage lands in ``pd_ocr_synth.degradation.builtins`` but
+    nobody adds it to the validate-time table, that stage's option keys
+    silently fall back to the wide-open ``extra="allow"`` behavior —
+    every typo gets ignored. Pin the invariant here so future stage
+    additions break this test instead of going un-validated.
+
+    ``preset`` is a structural marker (loader expands it before
+    validation runs); excluded from the requirement.
+    """
+
+    from pd_ocr_synth.degradation.pipeline import REGISTRY, _ensure_builtins_registered
+    from pd_ocr_synth.validation import _DEGRADATION_OPTION_KEYS_BY_KIND
+
+    _ensure_builtins_registered()
+    registered = frozenset(REGISTRY) - {"preset"}
+    missing = registered - frozenset(_DEGRADATION_OPTION_KEYS_BY_KIND)
+    assert missing == frozenset(), (
+        f"degradation kinds registered with the runtime but missing from "
+        f"_DEGRADATION_OPTION_KEYS_BY_KIND (validate-time would silently allow "
+        f"any option key for these): {sorted(missing)}"
+    )
+
+
+def test_unknown_option_table_does_not_reference_nonexistent_kinds() -> None:
+    """Meta-test: every entry in ``_DEGRADATION_OPTION_KEYS_BY_KIND``
+    must correspond to a kind in ``KNOWN_DEGRADATION_KINDS``.
+
+    Catches typos on the validation side: an entry like ``ink_thinn``
+    on the table would silently never match any stage. Pinning here
+    means the typo breaks this test rather than being undiscoverable.
+    """
+
+    from pd_ocr_synth.validation import _DEGRADATION_OPTION_KEYS_BY_KIND
+
+    table_kinds = frozenset(_DEGRADATION_OPTION_KEYS_BY_KIND)
+    unknown = table_kinds - KNOWN_DEGRADATION_KINDS
+    assert unknown == frozenset(), (
+        f"_DEGRADATION_OPTION_KEYS_BY_KIND entries that are not in "
+        f"KNOWN_DEGRADATION_KINDS (likely typos): {sorted(unknown)}"
+    )
+
+
 def test_layout_mode_warns_on_unused_keys(tmp_path: Path) -> None:
     # word_crops + line_spacing → key is set but mode does not use it.
     yaml_text = _minimal_yaml(
