@@ -6,27 +6,28 @@ intent is that the *only* file that imports ``huggingface_hub`` is
 the concrete adapter — everywhere else (the CLI, the orchestrator,
 tests) drives against the :class:`HfTransport` Protocol.
 
-The concrete ``HfHubTransport`` adapter is **not yet implemented**
-(``huggingface_hub`` is deliberately not in ``pyproject.toml`` until
-the milestone introducing it lands — see the repo CLAUDE.md). What
-*is* implemented here:
+What lives here:
 
 1. :class:`SdkUnavailableError` — a typed, transport-shaped error
-   that the CLI runner can map to the documented exit-7 publish
-   failure when the SDK isn't installed yet.
+   that the CLI runner maps to the documented exit-7 publish
+   failure when ``huggingface_hub`` isn't installed (the package is
+   shipped as an *optional* extra, ``pd-ocr-synth[publish]``, so a
+   user who only renders locally never has to pull the SDK).
 2. :func:`make_default_transport` — the production factory. It
-   tries to construct the SDK-backed transport and raises
-   :class:`SdkUnavailableError` if the import fails. The CLI runner
+   imports :mod:`pd_ocr_synth.publish.hf_hub_transport` lazily, which
+   in turn imports ``huggingface_hub``; an ``ImportError`` on that
+   path is repackaged as :class:`SdkUnavailableError`. The CLI runner
    wraps this call and prints a clear remediation message ("install
-   huggingface_hub" / "run via pipx with [hf] extra"). Tests inject
-   a different factory (returning a :class:`FakeTransport`) to
-   exercise the upload path hermetically.
+   pd-ocr-synth[publish]"). Tests inject a different factory
+   (returning a :class:`FakeTransport`) to exercise the upload path
+   hermetically.
 
-Why a dedicated factory rather than a top-level ``import``: a top-
-level import would make the publish package itself unimportable on
-machines without the SDK, which would in turn break the dry-run
-path (which has no SDK requirement). The factory pattern keeps the
-import lazy and the failure mode typed.
+Why a dedicated factory rather than a top-level ``import``: a
+top-level import would make the publish package itself unimportable
+on machines without the SDK, which would in turn break the dry-run
+path (which has no SDK requirement) and ``pd-ocr-synth render``
+(which never publishes). The factory pattern keeps the import lazy
+and the failure mode typed.
 """
 
 from __future__ import annotations
@@ -47,46 +48,48 @@ class SdkUnavailableError(TransportError):
 def make_default_transport(token: str) -> HfTransport:
     """Construct the production SDK-backed :class:`HfTransport`.
 
-    Currently raises :class:`SdkUnavailableError` unconditionally —
-    the SDK adapter (the only file that imports ``huggingface_hub``)
-    is the next chunk after this CLI wiring. Wiring the factory now
-    lets the real-upload code path land and be fully testable via
-    fakes; swapping in the live adapter is then a one-file change
-    that doesn't need to revisit the CLI.
+    Imports :mod:`pd_ocr_synth.publish.hf_hub_transport` lazily so
+    machines without ``huggingface_hub`` installed can still import
+    :mod:`pd_ocr_synth.publish` (and therefore run ``pd-ocr-synth
+    render`` and ``pd-ocr-synth publish --dry-run``). An import
+    failure is repackaged as :class:`SdkUnavailableError` so the CLI
+    runner's existing :class:`TransportError` branch maps it to
+    exit 7 with a remediation hint.
 
     Parameters
     ----------
     token:
         The resolved HF token (from
-        :func:`pd_ocr_synth.publish.auth.resolve_hf_token`). The
-        adapter will pass this to ``HfApi(token=...)``. We accept it
-        eagerly here so the factory signature is final from day one
-        — every transport implementation needs a token, and threading
-        it through the factory keeps the CLI runner from re-resolving
-        auth at construction time.
+        :func:`pd_ocr_synth.publish.auth.resolve_hf_token`). Threaded
+        into ``HfApi(token=...)`` by the adapter so per-call ``token=``
+        plumbing isn't needed.
 
     Returns
     -------
     HfTransport
-        The production transport.
+        The production SDK-backed transport.
 
     Raises
     ------
     SdkUnavailableError
-        Today, always: the SDK adapter has not yet landed. Once it
-        does, this branch only fires when ``huggingface_hub`` cannot
-        be imported (uninstalled, broken environment, etc).
+        ``huggingface_hub`` cannot be imported (the ``[publish]``
+        optional dependency was not installed, or the install is
+        broken).
     """
 
-    # Acknowledge the parameter so static analysis doesn't flag it as
-    # unused while the adapter is pending. This will become
-    # ``HfHubTransport(token=token)`` in the next chunk.
-    _ = token
-    raise SdkUnavailableError(
-        "the Hugging Face SDK adapter is not yet available; "
-        "install `huggingface_hub` and re-run, or use --dry-run to "
-        "preview the upload plan without an SDK"
-    )
+    try:
+        from pd_ocr_synth.publish.hf_hub_transport import HfHubTransport
+    except ImportError as exc:
+        # Repackage so the CLI runner only catches TransportError;
+        # users see a clear message naming the optional-extra group.
+        raise SdkUnavailableError(
+            "the Hugging Face SDK is not installed; "
+            "install with `pip install pd-ocr-synth[publish]` (or "
+            "`uv sync --extra publish`), or use --dry-run to "
+            "preview the upload plan without an SDK"
+        ) from exc
+
+    return HfHubTransport(token=token)
 
 
 __all__ = [

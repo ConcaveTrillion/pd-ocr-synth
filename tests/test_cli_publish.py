@@ -345,19 +345,37 @@ def test_publish_real_upload_without_token_exits_seven(
     assert "HF_TOKEN" in err
 
 
-def test_publish_real_upload_with_token_but_no_sdk_exits_seven(
+def test_publish_real_upload_with_sdk_unavailable_exits_seven(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """A real upload with a resolved token but no SDK adapter installed
-    still fails at exit 7 — :class:`SdkUnavailableError` is a
-    :class:`TransportError` and lands in the publish-auth branch.
-    Documents the bridge state until the SDK adapter lands.
+    """A real upload on a host without ``huggingface_hub`` installed
+    must still fail cleanly at exit 7.
+
+    With the SDK adapter landed, ``make_default_transport`` succeeds
+    when ``huggingface_hub`` is importable. To exercise the
+    ``[publish]`` extra-not-installed path without uninstalling the
+    SDK from the test env (which would break sibling tests sharing the
+    worker), we patch ``pd_ocr_synth.publish.cli_runner.make_default_transport``
+    to raise :class:`SdkUnavailableError` directly. The CLI runner
+    must catch it via the existing :class:`TransportError` branch and
+    exit 7 with the install-hint message.
     """
+
+    from pd_ocr_synth.publish import SdkUnavailableError
 
     monkeypatch.setenv("HF_TOKEN", "hf_test_token_value_aaaaaaaaaaaaaaaaaaaa")
     monkeypatch.setenv("HF_HOME", str(tmp_path / "hf-home"))
+
+    def _raise(_token: str) -> None:
+        raise SdkUnavailableError(
+            "the Hugging Face SDK is not installed; "
+            "install with `pip install pd-ocr-synth[publish]`, or use "
+            "--dry-run to preview the upload plan without an SDK"
+        )
+
+    monkeypatch.setattr("pd_ocr_synth.publish.cli_runner.make_default_transport", _raise)
 
     out = tmp_path / "trainer-out"
     rp = _setup_recipe(tmp_path, with_publish=False, dest=out)
@@ -367,9 +385,9 @@ def test_publish_real_upload_with_token_but_no_sdk_exits_seven(
     rc = main(["publish", str(rp), "--repo", "alice/x"])
     err = capsys.readouterr().err
     assert rc == 7
-    # The remediation hint should mention either huggingface_hub or
+    # The remediation hint should mention either the publish extra or
     # --dry-run so the user knows how to proceed.
-    assert "huggingface_hub" in err.lower() or "--dry-run" in err
+    assert "pd-ocr-synth[publish]" in err or "--dry-run" in err
 
 
 def test_publish_private_and_public_mutually_exclusive(

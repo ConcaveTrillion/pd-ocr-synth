@@ -69,6 +69,13 @@ from pd_ocr_synth.publish.sdk_transport import (
     SdkUnavailableError,
     make_default_transport,
 )
+
+# ``HfHubTransport`` is the only file that imports ``huggingface_hub``
+# (an optional extra). We re-export the symbol here as a *lazy*
+# attribute so importing :mod:`pd_ocr_synth.publish` itself never
+# triggers the SDK import — users who only render locally don't pay
+# the cost. ``__getattr__`` (PEP 562) provides the deferred import
+# without leaking the SDK dependency at module-load time.
 from pd_ocr_synth.publish.summary import (
     ManifestSummary,
     SummaryError,
@@ -82,6 +89,36 @@ from pd_ocr_synth.publish.transport import (
     TransportError,
 )
 
+
+def __getattr__(name: str):
+    """PEP 562 lazy-import for the SDK-backed transport.
+
+    Importing :mod:`pd_ocr_synth.publish.hf_hub_transport` pulls in
+    ``huggingface_hub``; we route its only public symbol through this
+    hook so the SDK is loaded the first time *someone asks for it*
+    rather than at package import. Render-only / dry-run code paths
+    never touch ``HfHubTransport`` and therefore never require the
+    optional ``[publish]`` extra.
+
+    Raises
+    ------
+    AttributeError
+        For any name other than ``HfHubTransport`` (the standard
+        contract for ``__getattr__``).
+    ImportError
+        Bubbles up unchanged when the SDK isn't installed; callers
+        that go through :func:`make_default_transport` get a typed
+        :class:`SdkUnavailableError` instead, which is the
+        recommended entry point.
+    """
+
+    if name == "HfHubTransport":
+        from pd_ocr_synth.publish.hf_hub_transport import HfHubTransport
+
+        return HfHubTransport
+    raise AttributeError(f"module 'pd_ocr_synth.publish' has no attribute {name!r}")
+
+
 __all__ = [
     "CONTENT_SHA_ALGORITHM",
     "CONTENT_SHA_KEY",
@@ -91,6 +128,7 @@ __all__ = [
     "DatasetCardInputs",
     "FakeTransport",
     "HF_TOKEN_ENV_VAR",
+    "HfHubTransport",
     "HfTransport",
     "IdempotencyDecision",
     "IdempotencyState",

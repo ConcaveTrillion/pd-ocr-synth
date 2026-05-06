@@ -42,6 +42,16 @@ dependencies = [
 ui = [
     "nicegui>=2.0",
 ]
+# Hugging Face publishing path. Kept optional so users who only run
+# ``pd-ocr-synth render`` (the local-only path) don't pull the SDK and
+# its transitive deps. Install with ``pip install pd-ocr-synth[publish]``
+# or ``uv sync --extra publish``. The CLI runner imports
+# ``huggingface_hub`` lazily through
+# ``pd_ocr_synth.publish.sdk_transport.make_default_transport``; ``--dry-run``
+# never imports the SDK.
+publish = [
+    "huggingface_hub>=0.26",
+]
 
 [dependency-groups]
 test = [
@@ -59,6 +69,12 @@ dev = [
 ]
 all-dev = [
     {include-group = "dev"},
+    # Tests for the publish SDK adapter import (and mock) ``huggingface_hub``;
+    # include the publish extras in the all-dev group so ``make ci`` /
+    # ``uv sync --group all-dev`` brings the SDK in. End users who only
+    # need ``pd-ocr-synth render`` still don't pay the cost — they install
+    # without ``[publish]``.
+    "huggingface_hub>=0.26",
 ]
 
 [project.scripts]
