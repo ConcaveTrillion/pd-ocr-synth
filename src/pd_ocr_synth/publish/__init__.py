@@ -16,6 +16,13 @@ separated from the format-conversion decisions.
 
 from __future__ import annotations
 
+from pd_ocr_synth.publish.content_sha import (
+    CONTENT_SHA_ALGORITHM,
+    CONTENT_SHA_KEY,
+    ContentShaError,
+    apply_content_sha_to_readme,
+    compute_content_sha,
+)
 from pd_ocr_synth.publish.dataset_card import (
     README_FILENAME,
     DatasetCardInputs,
@@ -31,12 +38,17 @@ from pd_ocr_synth.publish.recognition import (
 )
 
 __all__ = [
+    "CONTENT_SHA_ALGORITHM",
+    "CONTENT_SHA_KEY",
+    "ContentShaError",
     "DATA_DIRNAME",
     "DatasetCardInputs",
     "METADATA_FILENAME",
     "README_FILENAME",
     "StagingResult",
+    "apply_content_sha_to_readme",
     "build_recognition_staging",
+    "compute_content_sha",
     "load_card_inputs",
     "render_dataset_card",
     "write_dataset_card",
