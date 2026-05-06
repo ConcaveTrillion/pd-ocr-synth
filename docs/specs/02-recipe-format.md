@@ -141,8 +141,13 @@ fonts:
 ```
 
 Weights are normalized. A missing weight defaults to `1.0`. Validation
-checks that each font file exists and exposes the codepoints needed by the
-post-transform corpus (a sample report is produced by `validate`).
+checks that each font file exists, opens cleanly, and exposes a
+non-empty cmap (`font_missing` / `font_unreadable` / `font_empty`;
+optional fonts downgrade to a `optional_font_missing` warning). See
+`docs/specs/06-rendering.md` "Font selection" for the per-code
+contract. Per-codepoint corpus-vs-font coverage reporting at validate
+time is **deferred**: today, missing glyphs surface at render time as
+`missing_glyph` skip entries in the manifest.
 
 ## `rendering`
 
@@ -224,11 +229,26 @@ command line. CLI flags always override recipe values.
 
 1. Required top-level keys are present.
 2. `schema_version` matches a supported version.
-3. All paths resolve and exist.
-4. Each font opens and reports the glyphs it covers.
-5. Corpus providers can be reached or have a cached copy when `--offline`.
-6. Layout mode keys are consistent.
-7. Degradation `kind` values are known.
+3. Filesystem-rooted paths resolve and exist (font files, local corpus
+   files, paper-texture directories, optional `publish.hf_dataset.description_file`).
+4. Each font opens cleanly and reports a non-empty cmap.
+5. Corpus / text-transform / shaping-engine / degradation `kind`
+   discriminators that the recipe schema accepts but the runtime
+   registry does not yet implement are surfaced as
+   `*_not_implemented` errors so render-time crashes (or silent
+   default-fallback) don't surprise the user.
+6. Layout mode keys are consistent (and the `output.mode` ↔
+   `layout.mode` pairing matches `docs/specs/08-output-format.md`).
+7. Degradation `kind` values are in the spec catalog and per-stage
+   option keys match the spec tables.
 8. Output destination is writable.
+
+Network reachability is **not** checked at validate time. Validate
+accepts `--offline` for symmetry with `lint`, but the flag is a
+pass-through today: per-corpus-entry cache-presence checks are
+deferred. The `--offline` contract is enforced at fetch time —
+`pd-ocr-synth fetch` (and the corpus stage of `render`) raise
+`OfflineCacheMissError` on a cache miss when offline. See
+`docs/roadmap/03-corpus.md` "Cache layer" for the runtime semantics.
 
 Any failure exits with code 3 and a structured error report.

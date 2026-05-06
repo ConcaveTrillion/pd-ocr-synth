@@ -1604,3 +1604,137 @@ def test_spec_02_degradation_entries_use_known_kind_field() -> None:
             f"spec 02 degradation entry {i} missing required field(s) "
             f"on DegradationStage: {missing}; entry={entry!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Spec 02 ``## Validation rules (summary)`` ↔ ``validate_recipe`` (iter 88)
+#
+# Spec 02's "Validation rules" section is the user-facing contract for
+# what ``pd-ocr-synth validate`` enforces. Iter 87 caught spec 06
+# making a render-time check sound like a validate-time check; this
+# meta-test catches the same drift sub-class in spec 02. Two specific
+# stale claims tripped the audit:
+#
+#   - Pre-fix line 145 said ``validate`` produces a "sample report" of
+#     "codepoints needed by the post-transform corpus". Per-codepoint
+#     coverage at validate time is deferred (acknowledged in
+#     ``docs/specs/fonts-gaelic.md``); no sample report is emitted.
+#   - Pre-fix rule 5 said ``validate`` checks corpus reachability
+#     "or" cache presence under ``--offline``. Neither check runs at
+#     validate time — the ``offline`` parameter on ``validate_recipe``
+#     is a documented placeholder (``_ = offline  # placeholder for
+#     M03 wiring``). The real ``--offline`` enforcement happens at
+#     fetch time in ``corpus.runner`` via ``OfflineCacheMissError``.
+#
+# We lock the corrected wording in place by asserting:
+#   1. The render-time deferral is acknowledged in spec 02 (so a
+#      future edit can't quietly re-introduce the "sample report"
+#      claim without simultaneously implementing it).
+#   2. Validate-time reachability claims are absent (so an editor
+#      can't restore the "Corpus providers can be reached…" bullet
+#      without first wiring the check).
+#   3. ``--offline`` is documented as a fetch-time / runtime contract,
+#      not a validate-time one.
+#
+# When the implementation eventually grows a real per-codepoint
+# coverage report or per-entry cache-presence check at validate time,
+# the developer should land both the code AND the spec edit in the
+# same change; this guard will then need an update to match the new
+# honest wording.
+# ---------------------------------------------------------------------------
+
+
+def test_spec_02_validation_rules_match_validate_recipe() -> None:
+    """Spec 02 §"Validation rules" must reflect what ``validate_recipe`` does.
+
+    Three stale phrasings are forbidden until the corresponding code
+    lands; each forbidden phrase pairs with a positive phrase the
+    corrected text introduces, so a future revert flips the test red
+    in both directions.
+    """
+
+    text = _spec_text("02-recipe-format.md")
+    failures: list[str] = []
+
+    # 1) Per-codepoint coverage: must NOT promise a sample report,
+    # MUST acknowledge the deferral.
+    forbidden_codepoint_phrases = (
+        "a sample report is produced by `validate`",
+        "sample report is produced by validate",
+        "exposes the codepoints needed by the\npost-transform corpus (a sample report",
+    )
+    for phrase in forbidden_codepoint_phrases:
+        if phrase in text:
+            failures.append(
+                "docs/specs/02-recipe-format.md still claims `validate` produces a "
+                "per-codepoint coverage 'sample report' — that check is deferred to "
+                "render time (`missing_glyph` skip entries). See "
+                "`docs/specs/fonts-gaelic.md` §Validation. Forbidden phrase: "
+                f"{phrase!r}"
+            )
+    if "Per-codepoint corpus-vs-font coverage reporting at validate" not in text:
+        failures.append(
+            "docs/specs/02-recipe-format.md must acknowledge that per-codepoint "
+            "corpus-vs-font coverage reporting at validate time is deferred (the "
+            "phrase 'Per-codepoint corpus-vs-font coverage reporting at validate' "
+            "is missing). Mirror the wording in `docs/specs/fonts-gaelic.md` "
+            "§Validation so a future re-introduction of the 'sample report' claim "
+            "trips the iter-88 drift guard."
+        )
+
+    # 2) Validate-time corpus reachability: the pre-iter-88 bullet was
+    # "Corpus providers can be reached or have a cached copy when
+    # `--offline`." Validate does neither. Block the bullet's exact
+    # words and a couple of close paraphrases.
+    forbidden_reach_phrases = (
+        "Corpus providers can be reached or have a cached copy",
+        "corpus providers can be reached",
+        "have a cached copy when `--offline`",
+    )
+    for phrase in forbidden_reach_phrases:
+        if phrase in text:
+            failures.append(
+                "docs/specs/02-recipe-format.md still claims `validate` checks "
+                "corpus reachability or cache presence — neither check runs at "
+                f"validate time today. Forbidden phrase: {phrase!r}. The real "
+                "`--offline` semantics are enforced in `corpus.runner` via "
+                "`OfflineCacheMissError`; document them at fetch/runtime, not "
+                "validate."
+            )
+
+    # 3) ``--offline`` must be described as a fetch-time / runtime
+    # contract, not a validate-time gate. The corrected text mentions
+    # ``OfflineCacheMissError`` so a casual revert to the old bullet
+    # would lose this anchor.
+    if "OfflineCacheMissError" not in text:
+        failures.append(
+            "docs/specs/02-recipe-format.md must describe the real `--offline` "
+            "contract (fetch-time `OfflineCacheMissError` raised by "
+            "`corpus.runner`). The anchor name is missing — see "
+            "`docs/roadmap/03-corpus.md` §Cache layer for the runtime semantics."
+        )
+
+    assert not failures, "\n".join(failures)
+
+
+def test_validate_recipe_offline_param_is_a_no_op() -> None:
+    """``validate_recipe(..., offline=...)`` is a documented placeholder today.
+
+    Pairs with the spec-02 drift guard above: if a future change wires
+    ``offline`` into an actual validate-time check, this test fails
+    and the developer is forced to update the spec wording in lockstep
+    (spec 02 §"Validation rules" currently says "Network reachability
+    is **not** checked at validate time").
+    """
+
+    import inspect
+
+    from pd_ocr_synth.validation import validate_recipe
+
+    src = inspect.getsource(validate_recipe)
+    assert "_ = offline" in src or "# placeholder for M03 wiring" in src, (
+        "validate_recipe no longer treats `offline` as a documented placeholder. "
+        "If you've wired a real validate-time network/cache check, update "
+        "`docs/specs/02-recipe-format.md` §Validation rules accordingly and "
+        "remove the iter-88 drift guard in `tests/test_spec_docs.py`."
+    )
