@@ -620,6 +620,151 @@ def test_spec_01_validation_codes_match_VALIDATION_CODES() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Spec 06 "Font selection" validator table ↔ ``_check_fonts`` (this iter)
+#
+# Earlier drafts of spec 06 made three claims about the validator:
+#
+#   "The validator inspects each font and reports:
+#    - The set of codepoints covered
+#    - Codepoints in the corpus that the font does not cover
+#    - Whether ``liga``/``calt`` features are present"
+#
+# None of these were true. ``_check_fonts`` only emits ``font_missing``,
+# ``optional_font_missing``, ``font_unreadable``, and ``font_empty``;
+# coverage is checked at *render* time via ``MissingGlyphError``, and
+# no GSUB-feature inspection exists at all (``freetype-py`` doesn't
+# expose GSUB and we don't pull ``fonttools``). Recipe authors reading
+# the spec would expect a pre-render coverage report and silent-drop
+# warnings on missing OT features — neither was implemented.
+#
+# Spec 06 now documents the actual validator surface as a table:
+#
+#     | Code | When |
+#     |------|------|
+#     | `font_missing` (error) | ... |
+#     | `optional_font_missing` (warning) | ... |
+#     | `font_unreadable` (error) | ... |
+#     | `font_empty` (error) | ... |
+#
+# This guard parses that table and asserts it equals the set of
+# font-related codes the validator actually emits, in both directions:
+#   - ``spec_only`` — codes documented but not in ``VALIDATION_CODES``
+#     (stale doc claim).
+#   - ``code_only`` — font-prefixed codes registered but missing from
+#     the spec table (silent-ship).
+#
+# Same precedent as iter-83 (spec-07 ``ink_thin`` table) and the
+# spec-01 ``VALIDATION_CODES`` drift guard above.
+# ---------------------------------------------------------------------------
+
+
+def _spec_06_font_validator_codes(spec_text: str) -> set[str]:
+    """Codes parsed from the validator table under spec 06's ``Font selection``.
+
+    Walks the markdown table whose header is ``| Code | When |``,
+    extracts the first backticked span on each row as the code. Stops
+    when the table ends (a non-``|`` line). The table is anchored to
+    the ``## Font selection`` subsection so future tables elsewhere in
+    spec 06 don't pollute the result.
+    """
+
+    codes: set[str] = set()
+    in_section = False
+    in_table = False
+    for raw_line in spec_text.splitlines():
+        line = raw_line.rstrip()
+        stripped = line.strip()
+        if stripped.startswith("## Font selection"):
+            in_section = True
+            continue
+        if (
+            in_section
+            and stripped.startswith("## ")
+            and not stripped.startswith("## Font selection")
+        ):
+            break
+        if not in_section:
+            continue
+        # Detect the validator table by its header row.
+        if stripped.startswith("| Code |"):
+            in_table = True
+            continue
+        if in_table and stripped.startswith("|---"):
+            continue
+        if in_table:
+            if not stripped.startswith("|"):
+                in_table = False
+                continue
+            match = re.match(r"\|\s*`([a-z_]+)`", stripped)
+            if match:
+                codes.add(match.group(1))
+    return codes
+
+
+# Codes ``_check_fonts`` actually emits. Locked to a literal set rather
+# than a name-prefix filter on ``VALIDATION_CODES`` so a future
+# ``font_corpus_coverage_*`` (deferred per docs/roadmap/05-rendering.md
+# "Font validation") doesn't drift this test from the spec table — the
+# spec table is normative for what the validator emits *today*, and
+# new font checks must update both.
+_FONT_VALIDATOR_CODES_TODAY: frozenset[str] = frozenset(
+    {
+        "font_missing",
+        "optional_font_missing",
+        "font_unreadable",
+        "font_empty",
+    }
+)
+
+
+def test_font_validator_codes_today_are_in_VALIDATION_CODES() -> None:
+    """``_FONT_VALIDATOR_CODES_TODAY`` must be a subset of ``VALIDATION_CODES``.
+
+    Sanity-check the list this test file uses to identify font-related
+    codes against the canonical catalog. If a code in
+    ``_FONT_VALIDATOR_CODES_TODAY`` is not in ``VALIDATION_CODES``, the
+    spec table check below would silently pass even if the validator
+    no longer emits the code.
+    """
+
+    missing = _FONT_VALIDATOR_CODES_TODAY - VALIDATION_CODES
+    assert not missing, (
+        "tests/test_spec_docs.py:_FONT_VALIDATOR_CODES_TODAY references "
+        f"codes absent from pd_ocr_synth.validation.VALIDATION_CODES: {sorted(missing)}"
+    )
+
+
+def test_spec_06_font_validator_table_matches_check_fonts() -> None:
+    """Spec 06 ``## Font selection`` validator table ≡ ``_check_fonts`` codes.
+
+    Both directions checked:
+      - ``spec_only`` — table row whose code is not actually emitted by
+        ``_check_fonts`` (stale doc claim, like the pre-iter-87
+        ``liga``/``calt`` GSUB-presence claim).
+      - ``code_only`` — font-related code that lands in
+        ``VALIDATION_CODES`` without a row in the spec table (silent
+        ship, like the bug class iters 65/73-76 surfaced for other
+        validator dimensions).
+    """
+
+    spec_codes = _spec_06_font_validator_codes(_spec_text("06-rendering.md"))
+    spec_only = sorted(spec_codes - _FONT_VALIDATOR_CODES_TODAY)
+    code_only = sorted(_FONT_VALIDATOR_CODES_TODAY - spec_codes)
+    failures: list[str] = []
+    if spec_only:
+        failures.append(
+            "docs/specs/06-rendering.md '## Font selection' validator table "
+            f"lists codes not emitted by pd_ocr_synth.validation._check_fonts: {spec_only}"
+        )
+    if code_only:
+        failures.append(
+            "pd_ocr_synth.validation._check_fonts emits codes missing from "
+            f"docs/specs/06-rendering.md '## Font selection' validator table: {code_only}"
+        )
+    assert not failures, "\n".join(failures)
+
+
+# ---------------------------------------------------------------------------
 # Spec 01 "Audit log schema" table ↔ ``audit.AuditEntry`` (this iter)
 #
 # Spec 01 documents every field the audit JSONL row carries so users

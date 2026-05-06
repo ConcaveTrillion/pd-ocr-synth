@@ -41,12 +41,28 @@ Spec: [`06-rendering.md`](../specs/06-rendering.md).
 
 ### Font validation
 
-- [x] On recipe load, open each font and report its codepoint coverage
-      (`pd_ocr_synth.fonts.open_font`, M-fonts work).
-- [x] Surface coverage gaps to `pd-ocr-synth validate` (M-fonts work).
+- [x] On recipe load, open each font and surface `font_missing` /
+      `font_unreadable` / `font_empty` (plus `optional_font_missing`
+      warning) at `pd-ocr-synth validate`. `pd_ocr_synth.fonts.open_font`
+      computes codepoint coverage; `_check_fonts` consumes only the
+      open/empty signals.
 - [x] At render time, samples requiring a missing glyph raise
       `MissingGlyphError`; the preview loop records `missing_glyph` as
-      the manifest skip reason.
+      the manifest skip reason with the missing codepoints listed.
+- [ ] Validate-time corpus-vs-font coverage report: walk the
+      transformed corpus, intersect with each font's `FontInfo.codepoints`,
+      emit a `font_corpus_coverage_*` warning when a font in the weighted
+      pool can't render some codepoint set. Deferred — render-time
+      `MissingGlyphError` already prevents silent corruption; this is a
+      pure-UX upgrade so authors discover gaps before paying corpus
+      fetch + render cost. Spec 06 §"Font selection" tracks this.
+- [ ] Validate-time `liga`/`calt` GSUB feature presence inspection:
+      open the font's GSUB table and report whether each requested
+      `features` toggle has a corresponding feature record. Deferred —
+      requires a font-table parser (`fonttools` or hand-rolled);
+      `freetype-py` doesn't expose GSUB. Until it lands, requesting
+      `features.liga: true` on a font without a `liga` lookup is a
+      no-op rather than a crash, which is acceptable.
 
 ### Determinism
 
