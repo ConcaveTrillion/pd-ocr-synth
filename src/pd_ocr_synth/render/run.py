@@ -346,6 +346,7 @@ def _split_paragraph_into_lines(
     recipe: Recipe,
     ctx: RenderContext,
     style: ParagraphStyle,
+    first_line_indent_px: int = 0,
 ) -> list[str]:
     """Split a paragraph corpus token into the ``list[str]`` that
     ``render_paragraph`` expects.
@@ -357,6 +358,14 @@ def _split_paragraph_into_lines(
     samples a :class:`ParagraphStyle` and threads it through here:
     sampling twice would consume RNG state and the wrap budget would
     drift away from the painted line.
+
+    ``first_line_indent_px`` is forwarded to :func:`fit_lines` so the
+    first line's wrap budget shrinks by the indent the renderer will
+    apply — without this the painted first line + indent would
+    overflow ``max_width_px``. Pages-mode dispatch passes the recipe's
+    ``layout.paragraph_indent_px`` here on a per-paragraph basis;
+    paragraphs-mode dispatch defaults to ``0`` (no indent there per
+    the recipe validator's ``layout_key_unused`` warning).
 
     Hard line breaks in ``token`` (already-newline-separated lines)
     are preserved by ``fit_lines``: each chunk wraps independently and
@@ -383,6 +392,7 @@ def _split_paragraph_into_lines(
             handles=handles,
             pixel_size=style.pixel_size,
             features=style.font_features,
+            first_line_indent_px=first_line_indent_px,
         )
         if lines:
             return lines
@@ -442,12 +452,27 @@ def _split_page_into_paragraph_lines(
     paragraph, threading the page's pre-sampled paragraph style so
     fit_lines measures against the same font + pixel size the page
     renderer paints with.
+
+    ``layout.paragraph_indent_px`` is forwarded to the wrap-fitter so
+    each paragraph's first-line budget shrinks by the indent the page
+    renderer will apply — without this an indented first line would
+    overflow ``max_width_px`` by exactly ``paragraph_indent_px``
+    pixels (and a justified first line would absorb the indent into
+    its slack budget, painting beyond the user's wrap target).
     """
 
     paragraphs = _split_page_into_paragraphs(token)
     para_style = page_style.paragraph_style
+    indent_px = recipe.layout.paragraph_indent_px or 0
     return [
-        _split_paragraph_into_lines(p, recipe=recipe, ctx=ctx, style=para_style) for p in paragraphs
+        _split_paragraph_into_lines(
+            p,
+            recipe=recipe,
+            ctx=ctx,
+            style=para_style,
+            first_line_indent_px=indent_px,
+        )
+        for p in paragraphs
     ]
 
 

@@ -689,6 +689,116 @@ def test_render_page_indent_word_boxes_stay_inside_canvas(tmp_path: Path) -> Non
         assert 0 <= y0 < y1 <= h, f"word {wb.text!r} bbox out of canvas: {wb.bbox}, canvas={w}x{h}"
 
 
+def test_split_page_into_paragraph_lines_passes_indent_to_wrap_fitter(
+    tmp_path: Path,
+) -> None:
+    """The page-mode wrap dispatch shrinks line-0's budget by the indent.
+
+    Regression: before this fix, ``_split_page_into_paragraph_lines``
+    wrapped each paragraph at ``max_width_px`` ignoring
+    ``layout.paragraph_indent_px``. The renderer then shifted the
+    first line right by the indent, producing a paragraph_width of up
+    to ``max_width_px + indent`` — i.e. an inked line that overflows
+    the user's requested wrap budget by exactly the indent. With the
+    fix, the first-line wrap budget is ``max_width_px - indent`` so
+    line 0 gets fewer words and the painted ``indent + line_0_width``
+    stays within the budget.
+
+    We compare two recipes that differ **only** in
+    ``paragraph_indent_px``: the indented variant must wrap line 0 to
+    at most as many words as the non-indented variant (the
+    ``first_line_indent_px`` budget shrink is the only thing that
+    could change line 0's word count).
+    """
+
+    from pd_ocr_synth.render.context import RenderContext as _RC
+    from pd_ocr_synth.render.page import sample_page_style
+    from pd_ocr_synth.render.run import _split_page_into_paragraph_lines
+
+    font = _require_font()
+
+    def _build_recipe(path: Path, indent: int | None) -> object:
+        words = path.parent / f"words-indent-{indent}.txt"
+        words.write_text("alpha beta gamma\n", encoding="utf-8")
+        indent_line = "" if indent is None else f"  paragraph_indent_px: {indent}\n"
+        path.write_text(
+            "schema_version: 1\n"
+            f"name: page-wrap-indent-{indent}\n"
+            "seed: 11\n"
+            "output:\n"
+            "  format: pd-ocr-trainer/v1\n"
+            "  mode: detection\n"
+            "  destination: ./out\n"
+            "  count: 1\n"
+            "corpus:\n"
+            f"  - type: local\n    path: {words}\n"
+            "fonts:\n"
+            f"  - path: {font}\n    weight: 1.0\n"
+            "rendering:\n"
+            "  font_size_pt: 12\n"
+            "  dpi: 96\n"
+            "  ink_color: { r: 10, g: 10, b: 10 }\n"
+            "  background_color: { r: 240, g: 235, b: 220 }\n"
+            "layout:\n"
+            "  mode: pages\n"
+            "  padding_px: 6\n"
+            "  line_spacing: 1.0\n"
+            "  paragraph_spacing: 1.0\n"
+            "  max_width_px: 250\n"
+            f"{indent_line}",
+            encoding="utf-8",
+        )
+        return load_recipe(path)
+
+    # Token: enough short words that line 0 will pack several before
+    # wrapping, and an indent of 80 px will demonstrably push at
+    # least one word from line 0 onto the next line.
+    token = (
+        "alpha beta gamma delta epsilon zeta eta theta iota kappa "
+        "lambda mu nu xi omicron pi rho sigma tau upsilon"
+    )
+
+    recipe_no = _build_recipe(tmp_path / "recipe-no.yaml", None)
+    recipe_in = _build_recipe(tmp_path / "recipe-in.yaml", 80)
+
+    ctx_no = _RC.for_seed(recipe_no.seed)
+    ctx_no.reseed_for_sample(0)
+    page_style_no = sample_page_style(recipe_no, ctx_no)
+
+    ctx_in = _RC.for_seed(recipe_in.seed)
+    ctx_in.reseed_for_sample(0)
+    page_style_in = sample_page_style(recipe_in, ctx_in)
+
+    paragraph_lines_no = _split_page_into_paragraph_lines(
+        token, recipe=recipe_no, ctx=ctx_no, page_style=page_style_no
+    )
+    paragraph_lines_in = _split_page_into_paragraph_lines(
+        token, recipe=recipe_in, ctx=ctx_in, page_style=page_style_in
+    )
+
+    # Both variants share the same paragraph count (one) and same
+    # word order on the joined paragraph.
+    assert len(paragraph_lines_no) == len(paragraph_lines_in) == 1
+    line0_no = paragraph_lines_no[0][0]
+    line0_in = paragraph_lines_in[0][0]
+    # The indented variant's first line must be a strict prefix of
+    # the un-indented first line — same word order, possibly fewer
+    # words because the budget shrunk.
+    no_words = line0_no.split()
+    in_words = line0_in.split()
+    assert in_words == no_words[: len(in_words)], (
+        f"indented first line is not a prefix of un-indented: no={no_words!r}, in={in_words!r}"
+    )
+    # And the indented first line must be strictly shorter — if the
+    # indent of 100 px doesn't displace any word, the test setup is
+    # too lax for the regression check to catch the bug.
+    assert len(in_words) < len(no_words), (
+        f"indent did not shrink the first line: no={no_words!r}, in={in_words!r}; "
+        "the test fixture should pick a budget + word set where 100 px "
+        "of indent displaces at least one word"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Error paths
 # ---------------------------------------------------------------------------

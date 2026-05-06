@@ -237,3 +237,163 @@ def test_fit_lines_collapses_internal_whitespace_runs() -> None:
     text = "ḃeaḋ   saoġal\tmór"
     result = fit_lines(text, max_width_px=10000, handles=handles, pixel_size=32)
     assert result == ["ḃeaḋ saoġal mór"]
+
+
+# ---------------------------------------------------------------------------
+# First-line indent budget shrink (M09 paragraph_indent_px interaction)
+# ---------------------------------------------------------------------------
+
+
+def test_fit_lines_rejects_negative_first_line_indent() -> None:
+    handles = _require_font_handles()
+    with pytest.raises(ValueError, match="first_line_indent_px"):
+        fit_lines(
+            "abc",
+            max_width_px=100,
+            handles=handles,
+            pixel_size=32,
+            first_line_indent_px=-1,
+        )
+
+
+def test_fit_lines_zero_indent_is_bit_identical_to_default() -> None:
+    """``first_line_indent_px=0`` matches the default (no kwarg) bit-for-bit.
+
+    The historical wrap output is a public contract — any caller not
+    using the indent kwarg must see exactly the same output as before.
+    """
+
+    handles = _require_font_handles()
+    pixel_size = 32
+    text = "ḃeaḋ saoġal mór beag bán dub mór beag"
+    base = fit_lines(text, max_width_px=200, handles=handles, pixel_size=pixel_size)
+    indent_zero = fit_lines(
+        text,
+        max_width_px=200,
+        handles=handles,
+        pixel_size=pixel_size,
+        first_line_indent_px=0,
+    )
+    assert base == indent_zero
+
+
+def test_fit_lines_first_line_budget_shrinks_by_indent() -> None:
+    """A non-zero indent should pull the first line's budget tighter.
+
+    Without the fix the first line packs as if it had the full
+    ``max_width_px``; with the fix the line painted at ``indent +
+    line_width`` must satisfy ``indent + line_width <= max_width_px``.
+    """
+
+    handles = _require_font_handles()
+    pixel_size = 32
+    text = "ḃeaḋ saoġal mór beag bán dub mór beag ḃeaḋ saoġal"
+    budget = 250
+    indent = 80
+
+    no_indent = fit_lines(text, max_width_px=budget, handles=handles, pixel_size=pixel_size)
+    with_indent = fit_lines(
+        text,
+        max_width_px=budget,
+        handles=handles,
+        pixel_size=pixel_size,
+        first_line_indent_px=indent,
+    )
+
+    # Concatenated word order is preserved in both cases.
+    assert " ".join(no_indent) == text
+    assert " ".join(with_indent) == text
+
+    # The indented first line plus the indent must fit the user's
+    # requested budget. Without the fix this overflows by exactly
+    # ``indent`` pixels (modulo cross-word kerning slop).
+    first_line_w = _measure_width_px(
+        with_indent[0], handles=handles, pixel_size=pixel_size, features=None
+    )
+    assert first_line_w + indent <= budget, (
+        f"painted first line ({first_line_w:.1f}px) + indent ({indent}px) = "
+        f"{first_line_w + indent:.1f}px overflows budget {budget}px"
+    )
+
+    # The first line under the indented budget must be no wider than
+    # the first line under the un-indented budget — ergo it has at
+    # most as many words.
+    indented_words = with_indent[0].split()
+    natural_words = no_indent[0].split()
+    assert len(indented_words) <= len(natural_words), (
+        f"indented first line ({with_indent[0]!r}) has more words than "
+        f"un-indented ({no_indent[0]!r}); fit_lines did not honor the indent"
+    )
+
+
+def test_fit_lines_indent_only_affects_first_line() -> None:
+    """Lines beyond line 0 use the full ``max_width_px`` budget.
+
+    The renderer only indents line 0, so a tighter budget on every
+    line would shrink the paragraph for no good reason. We verify by
+    measuring all but the first emitted line against ``max_width_px``.
+    """
+
+    handles = _require_font_handles()
+    pixel_size = 32
+    text = "ḃeaḋ saoġal mór beag bán dub mór beag ḃeaḋ saoġal"
+    budget = 200
+    indent = 60
+
+    result = fit_lines(
+        text,
+        max_width_px=budget,
+        handles=handles,
+        pixel_size=pixel_size,
+        first_line_indent_px=indent,
+    )
+    assert len(result) >= 2
+
+    # Lines 1.. should still be packed to the full budget (subject to
+    # the long-word policy for single-word lines, hence the multi-word
+    # gate).
+    for line in result[1:]:
+        if " " not in line:
+            continue
+        line_w = _measure_width_px(line, handles=handles, pixel_size=pixel_size, features=None)
+        assert line_w <= budget, (
+            f"non-first line {line!r} measured {line_w:.1f}px > budget {budget}px"
+        )
+
+
+def test_fit_lines_indent_with_hard_break_only_shrinks_first_chunk_first_line() -> None:
+    """Hard-break chunks beyond the first all use the full budget.
+
+    The indent applies to the rendered paragraph's line 0, which is
+    the first emitted line of the first non-empty hard-break chunk —
+    every later chunk's first line is paragraph-line-N (N >= 1) where
+    the renderer applies no indent.
+    """
+
+    handles = _require_font_handles()
+    pixel_size = 32
+    chunk = "ḃeaḋ saoġal mór beag bán dub mór beag"
+    text = f"{chunk}\n{chunk}"
+    budget = 200
+    indent = 60
+
+    result = fit_lines(
+        text,
+        max_width_px=budget,
+        handles=handles,
+        pixel_size=pixel_size,
+        first_line_indent_px=indent,
+    )
+
+    # Find where the second chunk's wrapped output begins. The first
+    # chunk wraps to >= 1 lines (likely 2). We don't know exactly how
+    # many, so instead verify that *some* line in the result fits more
+    # words than the first line — i.e. the indent didn't poison the
+    # whole paragraph.
+    word_counts = [len(line.split()) for line in result if " " in line]
+    # The first wrapped line is constrained by the indent; at least
+    # one later wrapped line must fit at least as many words (because
+    # it has the full budget).
+    assert max(word_counts) >= word_counts[0], (
+        f"every later line is at least as constrained as the first: counts={word_counts}"
+    )

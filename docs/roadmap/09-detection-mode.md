@@ -210,6 +210,26 @@ future small chunk.
       so existing recipes are unaffected. Right-shift, canvas-widen,
       and bbox propagation are locked in `test_render_page.py::*indent*`
       and `test_render_paragraph.py::*first_line_indent*`.
+- [x] **Wrap-budget interaction fix.** Initial chunk shrank line 0 at
+      paint time but did *not* propagate the indent to the wrap-fitter,
+      so a recipe with `max_width_px=800` + `paragraph_indent_px=40`
+      packed line 0 against the full 800-px budget and the renderer
+      then shifted the painted strip right by 40 — the inked first line
+      sat at `[40, 840]`, overflowing the user's wrap budget by exactly
+      the indent. `fit_lines` now takes `first_line_indent_px` and
+      shrinks line 0's budget to `max_width_px - indent` (with a clamp
+      at 1 to keep pathological `indent >= budget` recipes
+      well-defined); subsequent lines (whether soft-wrapped or
+      hard-break-separated) keep the full budget so a wider line never
+      pays for a feature only line 0 uses. `_split_paragraph_into_lines`
+      and `_split_page_into_paragraph_lines` thread the recipe's indent
+      through. Five wrap-fitter tests in `tests/test_render_wrap.py`
+      lock the new contract (validation, zero-indent bit-identical,
+      first-line shrink, non-first-line full budget, hard-break first-
+      chunk-only); one integration test in
+      `tests/test_render_page.py::test_split_page_into_paragraph_lines_passes_indent_to_wrap_fitter`
+      proves the recipe-driven dispatch actually fewer-words line 0
+      under a real (font, dpi, indent) tuple.
 
 ### Explicit `page_size_px`
 

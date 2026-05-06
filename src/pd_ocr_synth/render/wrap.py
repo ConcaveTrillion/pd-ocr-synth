@@ -55,6 +55,7 @@ def fit_lines(
     handles: _FontHandles,
     pixel_size: int,
     features: dict | None = None,
+    first_line_indent_px: int = 0,
 ) -> list[str]:
     """Greedy wrap ``text`` into lines that each fit ``max_width_px``.
 
@@ -76,6 +77,18 @@ def fit_lines(
             value the eventual ``render_line`` will use.
         features: Optional OpenType feature overrides, identical shape
             to what ``_shape`` accepts.
+        first_line_indent_px: Pixels by which the **first** emitted
+            line will be indented at paint time (see
+            :func:`render_paragraph`'s ``first_line_indent_px``). The
+            wrap-fitter shrinks the first line's budget to
+            ``max_width_px - first_line_indent_px`` so the painted
+            line — image strip + indent — still fits the user's
+            requested wrap budget. Defaults to ``0`` (no shrink), which
+            preserves the historical wrap output bit-for-bit. Must be
+            non-negative; values that would zero or negate the first
+            line's budget fall back to ``max_width_px`` so a single
+            word still fits on line 0 (the renderer's long-word policy
+            is to emit an over-budget word alone rather than refuse).
 
     Returns:
         A list of lines, each a non-empty string with no embedded
@@ -84,34 +97,55 @@ def fit_lines(
         spaces. Empty / whitespace-only input returns ``[]``.
 
     Raises:
-        ValueError: if ``max_width_px <= 0`` or ``pixel_size <= 0``.
+        ValueError: if ``max_width_px <= 0``, ``pixel_size <= 0``, or
+            ``first_line_indent_px < 0``.
     """
 
     if max_width_px <= 0:
         raise ValueError(f"max_width_px must be positive, got {max_width_px!r}")
     if pixel_size <= 0:
         raise ValueError(f"pixel_size must be positive, got {pixel_size!r}")
+    if first_line_indent_px < 0:
+        raise ValueError(f"first_line_indent_px must be >= 0, got {first_line_indent_px!r}")
 
     if not text or not text.strip():
         return []
 
+    # Effective first-line budget: trim the indent off ``max_width_px``.
+    # Clamp at 1 so a pathological ``indent >= max_width_px`` still
+    # produces a usable line-0 budget (one word will go on it under
+    # the long-word policy regardless, but a 0/negative budget would
+    # be a malformed input to the trial-width compare below).
+    if first_line_indent_px > 0:
+        first_line_budget = max(1, max_width_px - first_line_indent_px)
+    else:
+        first_line_budget = max_width_px
+
     out: list[str] = []
     # Hard-break on existing newlines. ``splitlines`` strips the
     # delimiters and leaves us free to re-join with single spaces.
+    # Only the very first emitted line of the **whole paragraph**
+    # carries the indent — subsequent lines (whether from continued
+    # wrap or from a hard break) all use the full budget. We track
+    # ``first_line_used`` across hard-break chunks to honor that.
+    first_line_used = False
     for chunk in text.splitlines():
         chunk_stripped = chunk.strip()
         if not chunk_stripped:
             continue
         words = chunk_stripped.split()
-        out.extend(
-            _greedy_pack(
-                words,
-                max_width_px=max_width_px,
-                handles=handles,
-                pixel_size=pixel_size,
-                features=features,
-            )
+        chunk_first_budget = max_width_px if first_line_used else first_line_budget
+        chunk_lines = _greedy_pack(
+            words,
+            max_width_px=max_width_px,
+            handles=handles,
+            pixel_size=pixel_size,
+            features=features,
+            first_line_budget_px=chunk_first_budget,
         )
+        if chunk_lines:
+            first_line_used = True
+        out.extend(chunk_lines)
     return out
 
 
@@ -122,11 +156,23 @@ def _greedy_pack(
     handles: _FontHandles,
     pixel_size: int,
     features: dict | None,
+    first_line_budget_px: int | None = None,
 ) -> list[str]:
-    """Pack ``words`` left-to-right into lines that each fit the budget."""
+    """Pack ``words`` left-to-right into lines that each fit the budget.
+
+    ``first_line_budget_px`` (when provided and < ``max_width_px``)
+    applies a tighter budget to the first emitted line only — used to
+    reserve space for ``layout.paragraph_indent_px`` so the painted
+    line + indent still fits the recipe's wrap budget. ``None`` (the
+    default) means "use ``max_width_px`` for every line", preserving
+    bit-for-bit the historical wrap output for callers that don't
+    indent.
+    """
 
     if not words:
         return []
+
+    line_budget_px = first_line_budget_px if first_line_budget_px is not None else max_width_px
 
     lines: list[str] = []
     current: list[str] = []
@@ -139,7 +185,7 @@ def _greedy_pack(
             pixel_size=pixel_size,
             features=features,
         )
-        if trial_width <= max_width_px or not current:
+        if trial_width <= line_budget_px or not current:
             # Either it fits, or ``current`` is empty (so even an
             # over-budget single word goes onto its own line — we don't
             # do character-level breaking).
@@ -147,6 +193,10 @@ def _greedy_pack(
         else:
             lines.append(" ".join(current))
             current = [word]
+            # Once we've emitted line 0, the remaining lines use the
+            # full ``max_width_px`` budget — the indent only ever
+            # applies to line 0.
+            line_budget_px = max_width_px
 
     if current:
         lines.append(" ".join(current))
