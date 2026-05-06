@@ -217,6 +217,68 @@ def test_append_audit_entry_creates_nested_parent_dirs(tmp_path: Path) -> None:
     assert audit_path.is_file()
 
 
+def test_append_audit_entry_closes_file_when_serialization_raises(
+    tmp_path: Path,
+) -> None:
+    """Regression guard: a mid-write failure must not leak the FD.
+
+    ``append_audit_entry`` opens the audit file in append mode and
+    writes one JSONL line. If serialization (``entry.to_jsonl()``)
+    raises *inside* the open block, the implementation must still
+    close the underlying file handle — i.e. it must use a context
+    manager (``with audit_path.open(...) as fh``) rather than a
+    bare ``open()`` followed by ``write()``.
+
+    The check: trigger a write-time failure by making
+    ``to_jsonl`` raise, capture warnings as errors so an unclosed
+    file at GC time would surface as a ``ResourceWarning``, force
+    a GC pass, and assert no ``ResourceWarning`` fires. This is
+    Python's standard mechanism for catching FD leaks and matches
+    how ``pytest -W error::ResourceWarning`` would catch them in a
+    stricter CI mode.
+
+    Why this matters: the M10 audit emit-failure path in
+    ``render/run.py`` catches ``OSError`` and downgrades it to a
+    stderr warning. If the underlying open file isn't closed, the
+    "render succeeded but audit failed" path silently leaks a FD
+    per render attempt — invisible under happy-path testing,
+    discoverable under fault-injection.
+    """
+
+    import gc
+    import warnings as _warnings
+
+    audit_path = tmp_path / AUDIT_FILENAME
+
+    class _Boom(Exception):
+        pass
+
+    class _BadEntry:
+        """AuditEntry-shaped stand-in whose serializer raises."""
+
+        def to_jsonl(self) -> str:  # noqa: D401 — test stub
+            raise _Boom("serialization failure")
+
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("error", ResourceWarning)
+        with pytest.raises(_Boom):
+            append_audit_entry(audit_path, _BadEntry())  # type: ignore[arg-type]
+        # Force the GC: an unclosed file would trip ResourceWarning
+        # only on finalization, which CPython runs eagerly for
+        # refcount-zero objects but not always immediately under
+        # PyPy / debug builds. ``gc.collect()`` is the portable
+        # belt-and-braces.
+        gc.collect()
+
+    # Belt-and-braces: the file may or may not exist (depending on
+    # whether OS-level append created the inode before write
+    # raised), but if it does exist it must be closeable from a
+    # fresh open — i.e. nothing else is holding a write lock to it.
+    if audit_path.exists():
+        with audit_path.open("a", encoding="utf-8") as fh:
+            fh.write("")  # smoke: append-mode reopen succeeds
+
+
 # ---------------------------------------------------------------------------
 # Forward-compat: schema_version skip-with-warning policy
 # ---------------------------------------------------------------------------

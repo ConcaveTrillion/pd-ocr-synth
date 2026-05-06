@@ -37,6 +37,33 @@ change, etc.).
 
 Skip behavior matches the rest of the render test suite: if the
 bundled Bunchló GC font is missing, every case here is skipped.
+
+PIL version pin
+---------------
+
+The pinned digests below were produced under Pillow 12.2.0 (the
+version installed at the time of writing — ``pyproject.toml``
+declares ``pillow>=10.0`` as the floor). PNG encoding is part of
+Pillow's emitted bytes; a major Pillow upgrade can change the
+encoded output (chunk ordering, default compression level, IDAT
+filtering heuristics) even when the *rendered pixels* are
+identical. If CI starts failing these tests after a Pillow bump:
+
+1. Confirm the installed Pillow version changed (``uv tree | grep
+   -i pillow``) — a Pillow-only diff with identical pixel content
+   is the expected drift; treat it like an intentional regen.
+2. Decode both PNGs to RGB pixel arrays and compare; if the pixel
+   bytes match, the digest drift is encoder-side and the regen
+   is mechanical (use ``PD_OCR_SYNTH_REGEN_VISUAL_DIGESTS=1`` and
+   commit the new digests with a note like "regen: pillow X.Y →
+   X.Z, pixel content unchanged").
+3. If the pixel bytes differ, treat it as a real rendering-pipeline
+   change and investigate (font rasterizer? layout math? color
+   conversion?).
+
+The point of this note is to keep a Pillow upgrade from blocking
+the CI gate on a misdiagnosis: digest drift here is *expected* on
+Pillow major bumps and the regen path is well-trodden.
 """
 
 from __future__ import annotations
