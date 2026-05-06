@@ -45,9 +45,15 @@ Spec: [`06-rendering.md`](../specs/06-rendering.md) +
       paragraph_spacing multiplier sampled once per page. Outputs
       flatten into per-paragraph + per-line + per-word + per-cluster
       boxes in reading order. The `run_recipe` pages-mode dispatch
-      wiring through `DetectionWriter`, plus alignment / indent /
-      headings / drop caps / explicit `page_size_px`, are still
-      TODO.)
+      now wires through `DetectionWriter`: tokenizer splits on a
+      triple-blank-line page boundary, the dispatch re-splits each
+      page token on the regular paragraph boundary, fits each inner
+      paragraph through `fit_lines` against the pre-sampled
+      `PageStyle`, and `render_page` composes the multi-paragraph
+      canvas. Determinism + serial/parallel parity hold (the
+      worker payload already round-trips `paragraph_boxes`).
+      Alignment / indent / headings / drop caps / explicit
+      `page_size_px` are still TODO.)
 
 ### Bbox-aware degradation
 

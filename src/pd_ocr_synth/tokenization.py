@@ -6,10 +6,17 @@ loop will emit. The string contents depend on ``layout.mode``:
 - ``word_crops``: one word per sample (whitespace + punctuation split,
   internal apostrophes / hyphens preserved).
 - ``lines``: one line per sample (split on newlines).
-- ``paragraphs``: one paragraph per sample (split on blank lines).
-- ``pages``: one paragraph per sample for now — page composition
-  (multiple paragraphs flowed onto a page region) is renderer's
-  job; v1 just hands the renderer paragraph-sized chunks.
+- ``paragraphs``: one paragraph per sample (split on blank lines —
+  a run of 2+ consecutive newlines separates paragraphs).
+- ``pages``: one **page-sized chunk** per sample, where paragraphs
+  inside a page stay glued together. Pages are separated by a
+  **triple**-blank-line boundary (a run of 3+ consecutive newlines);
+  paragraphs inside a page are separated by the regular blank-line
+  boundary used by ``paragraphs`` mode. This lets a corpus author
+  express both boundary kinds in a single text stream — the
+  renderer's pages-mode dispatch re-splits each token on the
+  paragraph boundary to produce the multi-paragraph shape
+  ``render_page`` expects.
 
 Token sampling/weighting (uniform vs unique-weighted vs frequency)
 is the renderer's responsibility — this layer just enumerates.
@@ -46,7 +53,7 @@ def tokenize(text: str, *, mode: LayoutMode) -> list[str]:
     if mode == "paragraphs":
         return _paragraphs(text)
     if mode == "pages":
-        return _paragraphs(text)
+        return _pages(text)
     raise ValueError(f"unknown layout.mode: {mode!r}")
 
 
@@ -71,10 +78,30 @@ def _lines(text: str) -> list[str]:
 
 
 _PARAGRAPH_SPLIT_RE = re.compile(r"\n\s*\n+", flags=re.UNICODE)
+# A page boundary is a run of 3+ newlines (with optional intra-run
+# whitespace). The triple-newline convention lets a single corpus
+# express both paragraph and page boundaries in plain text — the
+# renderer's pages-mode dispatch re-splits each page token on the
+# paragraph boundary to recover the inner shape.
+_PAGE_SPLIT_RE = re.compile(r"\n\s*\n\s*\n+", flags=re.UNICODE)
 
 
 def _paragraphs(text: str) -> list[str]:
     chunks = _PARAGRAPH_SPLIT_RE.split(text)
+    return [chunk.strip() for chunk in chunks if chunk.strip()]
+
+
+def _pages(text: str) -> list[str]:
+    """Split ``text`` into pages on the triple-blank-line boundary.
+
+    A corpus with no triple-blank-line breaks yields a single
+    page-sized token (the whole corpus). That's still useful — the
+    pages-mode dispatch will sample the same page index repeatedly,
+    which exercises the multi-paragraph composition path even on a
+    one-page corpus. Recipe authors who want page variety should
+    insert triple-blank-line breaks between page-sized passages.
+    """
+    chunks = _PAGE_SPLIT_RE.split(text)
     return [chunk.strip() for chunk in chunks if chunk.strip()]
 
 

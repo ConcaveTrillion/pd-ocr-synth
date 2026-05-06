@@ -18,12 +18,10 @@ Layouts wired in:
   per-word bboxes carried through the manifest.
 - ``detection`` + ``paragraphs`` (M09) — multi-line paragraph per
   sample, with per-line + per-word bboxes carried into ``labels.json``.
-
-Layouts not yet wired:
-
-- ``detection`` + ``pages`` — multi-paragraph page synthesis is
-  the next M09 chunk; ``run_recipe`` raises :class:`RenderError`
-  up front for it.
+- ``detection`` + ``pages`` (M09) — multi-paragraph page per sample,
+  with per-paragraph + per-line + per-word bboxes; per-line GT lands
+  in ``labels.json`` (the writer flattens lines across paragraphs in
+  reading order).
 
 Paragraph input shape: tokenization yields one paragraph per sample
 (blank-line-separated). ``render_paragraph`` requires a pre-fitted
@@ -44,6 +42,18 @@ Paragraph input shape: tokenization yields one paragraph per sample
   ``DetectionWriter`` only requires per-line + per-word ground truth,
   not multiple lines.
 
+Page input shape: tokenization for ``pages`` mode yields one
+**page-sized** chunk per sample, where paragraphs inside a page are
+separated by a blank line (a run of 2+ newlines) and pages are
+separated by a **triple**-blank-line boundary (a run of 3+ newlines).
+The pages splitter inside ``_render_sample`` re-splits the page
+token on the paragraph boundary and then runs the same per-paragraph
+wrap path as ``paragraphs`` mode (each paragraph wraps independently
+against ``layout.max_width_px``). The page-level ``PageStyle`` is
+pre-sampled once so wrap-fitting measures against the same font +
+pixel size the renderer paints with — same seam as paragraphs mode,
+lifted to the page level.
+
 Determinism is the same as :mod:`pd_ocr_synth.render.preview`: the
 per-token pick is keyed on ``seed ^ 0xC0FFEE``; per-sample render +
 degradation RNGs are reseeded by sample index. Worker count is not
@@ -54,6 +64,7 @@ from __future__ import annotations
 
 import multiprocessing
 import random
+import re
 import sys
 import time
 from collections.abc import Sequence
@@ -67,6 +78,11 @@ from pd_ocr_synth.degradation import DegradationError, apply_degradation
 from pd_ocr_synth.output import DetectionWriter, RecognitionWriter
 from pd_ocr_synth.render.context import RenderContext
 from pd_ocr_synth.render.line import render_line
+from pd_ocr_synth.render.page import (
+    PageStyle,
+    render_page,
+    sample_page_style,
+)
 from pd_ocr_synth.render.paragraph import (
     ParagraphStyle,
     render_paragraph,
@@ -83,10 +99,9 @@ from pd_ocr_synth.tokenization import tokenize
 # Layout modes wired through ``run_recipe``'s render dispatch. Each
 # entry must also be paired with a compatible ``output.mode`` (per
 # ``pd_ocr_synth.validation``) — ``word_crops`` / ``lines`` go with
-# the recognition writer; ``paragraphs`` goes with the detection
-# writer. ``pages`` lands in the next M09 chunk and raises a
-# :class:`RenderError` up front today.
-_SUPPORTED_LAYOUTS: frozenset[str] = frozenset({"word_crops", "lines", "paragraphs"})
+# the recognition writer; ``paragraphs`` / ``pages`` go with the
+# detection writer.
+_SUPPORTED_LAYOUTS: frozenset[str] = frozenset({"word_crops", "lines", "paragraphs", "pages"})
 
 if TYPE_CHECKING:
     from pd_ocr_synth.recipe import Recipe
@@ -158,8 +173,7 @@ def plan_recipe(
     if recipe.layout.mode not in _SUPPORTED_LAYOUTS:
         raise RenderError(
             f"render does not yet support layout.mode={recipe.layout.mode!r}; "
-            f"current dispatch accepts {sorted(_SUPPORTED_LAYOUTS)}. "
-            "``pages`` layout lands in a later M09 chunk."
+            f"current dispatch accepts {sorted(_SUPPORTED_LAYOUTS)}."
         )
 
     effective_count = count if count is not None else recipe.output.count
@@ -380,6 +394,63 @@ def _split_paragraph_into_lines(
     return [line.strip() for line in token.splitlines() if line.strip()] or [token.strip()]
 
 
+# Paragraph boundary inside a ``pages``-mode page token: any run of
+# 2+ consecutive newlines (with optional intra-run whitespace).
+# Mirrors the tokenizer's ``_PARAGRAPH_SPLIT_RE`` so a corpus author's
+# blank-line-separated paragraphs round-trip from corpus → tokenizer
+# → renderer with the same boundary rule. The tokenizer's pages mode
+# uses a **stronger** boundary (3+ newlines) for *page* breaks, so a
+# single tokenizer-produced page token can carry multiple
+# blank-line-separated paragraphs without being split apart.
+_PAGE_PARAGRAPH_SPLIT_RE = re.compile(r"\n\s*\n+", flags=re.UNICODE)
+
+
+def _split_page_into_paragraphs(token: str) -> list[str]:
+    r"""Split a pages-mode token into its constituent paragraph bodies.
+
+    A page token is shaped like::
+
+        paragraph 1 line 1
+        paragraph 1 line 2
+
+        paragraph 2 line 1
+
+    where any run of 2+ newlines separates paragraphs (regex
+    ``\n\s*\n+``). Whitespace-only chunks are dropped; a token with
+    no embedded blank lines becomes a single-paragraph page (still
+    legal — ``render_page`` accepts any number of paragraphs >= 1).
+    """
+
+    chunks = _PAGE_PARAGRAPH_SPLIT_RE.split(token)
+    out = [chunk.strip() for chunk in chunks if chunk.strip()]
+    return out or [token.strip()]
+
+
+def _split_page_into_paragraph_lines(
+    token: str,
+    *,
+    recipe: Recipe,
+    ctx: RenderContext,
+    page_style: PageStyle,
+) -> list[list[str]]:
+    """Turn a pages-mode token into the ``list[list[str]]`` shape
+    :func:`render_page` expects.
+
+    Each outer entry is one paragraph; each inner entry is one
+    rendered line of that paragraph. We re-use the same wrap path as
+    paragraphs mode (:func:`_split_paragraph_into_lines`) per inner
+    paragraph, threading the page's pre-sampled paragraph style so
+    fit_lines measures against the same font + pixel size the page
+    renderer paints with.
+    """
+
+    paragraphs = _split_page_into_paragraphs(token)
+    para_style = page_style.paragraph_style
+    return [
+        _split_paragraph_into_lines(p, recipe=recipe, ctx=ctx, style=para_style) for p in paragraphs
+    ]
+
+
 def _render_sample(
     *,
     recipe: Recipe,
@@ -416,6 +487,26 @@ def _render_sample(
                     {"text": text, "message": "paragraph token has no non-empty lines"},
                 )
             sample = render_paragraph(lines, recipe=recipe, ctx=ctx, presampled=style)
+        elif recipe.layout.mode == "pages":
+            # Same pre-sample dance as paragraphs, lifted to the page
+            # level: one ``PageStyle`` per page, threaded through both
+            # the wrap-fitter (so fit_lines measures against the
+            # exact same font + pixel size the renderer paints with)
+            # and ``render_page`` (so its internal RNG draws are
+            # short-circuited and the result is bit-identical to the
+            # un-pre-sampled path).
+            page_style = sample_page_style(recipe, ctx)
+            paragraph_lines = _split_page_into_paragraph_lines(
+                text, recipe=recipe, ctx=ctx, page_style=page_style
+            )
+            if not paragraph_lines or not all(paragraph_lines):
+                return (
+                    None,
+                    [],
+                    "render_error",
+                    {"text": text, "message": "page token has no non-empty paragraphs"},
+                )
+            sample = render_page(paragraph_lines, recipe=recipe, ctx=ctx, presampled=page_style)
         else:
             sample = render_word_crop(text, recipe=recipe, ctx=ctx)
     except MissingGlyphError as exc:

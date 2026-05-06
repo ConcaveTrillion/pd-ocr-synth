@@ -79,9 +79,43 @@ def test_paragraphs_drops_empty_after_strip() -> None:
     assert tokenize(text, mode="paragraphs") == ["middle"]
 
 
-def test_pages_mode_currently_aliases_paragraphs() -> None:
-    text = "a\n\nb"
-    assert tokenize(text, mode="pages") == tokenize(text, mode="paragraphs")
+def test_pages_mode_keeps_paragraphs_glued_until_triple_newline() -> None:
+    """Pages mode splits on a triple-blank-line boundary, not the
+    paragraph boundary used by ``paragraphs`` mode.
+
+    A page chunk preserves its inner ``\\n\\n``-separated paragraphs
+    so the renderer can compose multi-paragraph pages. The triple
+    newline is the only signal that demotes us to a new page-sized
+    sample.
+    """
+    text = "para 1 line a\npara 1 line b\n\npara 2\n\n\npage 2 para 1\n\npage 2 para 2\n"
+    assert tokenize(text, mode="pages") == [
+        "para 1 line a\npara 1 line b\n\npara 2",
+        "page 2 para 1\n\npage 2 para 2",
+    ]
+
+
+def test_pages_mode_falls_back_to_whole_corpus_without_triple_newline() -> None:
+    """A corpus with only paragraph-level breaks yields a single
+    page-sized token covering the whole corpus.
+
+    This is intentional: a recipe author who hasn't marked page
+    boundaries still gets a usable pages-mode render, just with one
+    page replicated across the requested ``count``.
+    """
+    text = "para 1\n\npara 2\n\npara 3"
+    assert tokenize(text, mode="pages") == ["para 1\n\npara 2\n\npara 3"]
+
+
+def test_pages_mode_drops_empty_pages_after_strip() -> None:
+    """Whitespace-only pages between triple-newline breaks are dropped.
+
+    Mirrors the ``paragraphs`` empty-strip rule so a corpus with
+    stray multi-blank-line runs at the head/tail doesn't produce
+    empty page tokens that would crash the renderer.
+    """
+    text = "  \n\n\nmiddle\n\n\n   \n\n\n"
+    assert tokenize(text, mode="pages") == ["middle"]
 
 
 # ---------------------------------------------------------------------------
