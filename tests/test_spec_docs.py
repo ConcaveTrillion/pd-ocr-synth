@@ -1008,24 +1008,17 @@ _DEST_READ_EXEMPT: frozenset[str] = frozenset(
 # regression sneaks in. Removing an entry from this set is the gating
 # step when each drift is fixed in a follow-up commit.
 #
-# Notes on each:
-#   fetch:count/output/seed/workers/dry_run — inherited from
-#       ``_add_common_render_args`` but spec 01's render-family
-#       table claims they apply to fetch too. ``--dry-run`` is the
-#       most defensible follow-up (validate + plan only); the rest
-#       are spec-side ambiguity (``count`` for fetch is undefined).
+# Resolved in earlier iterations:
 #   (preview:dry_run — fixed in iter 81; the dispatch now plumbs
 #    ``args.dry_run`` to ``_cmd_preview`` which delegates to
 #    ``plan_recipe`` for the same dry-run summary as ``render``.)
-_KNOWN_UNREAD_DESTS: frozenset[tuple[str, str]] = frozenset(
-    {
-        ("fetch", "count"),
-        ("fetch", "output"),
-        ("fetch", "seed"),
-        ("fetch", "workers"),
-        ("fetch", "dry_run"),
-    }
-)
+#   (fetch:count/output/seed/workers/dry_run — fixed in iter 82 by
+#    removing the inherited render-family flags from the ``fetch``
+#    subparser entirely. ``fetch`` now only takes the cache-related
+#    flags (``--cache-dir``, ``--no-cache``) plus the positional
+#    ``recipe``. The render flags had no fetch semantics and were
+#    silently dropped; removing them shrinks the surface honestly.)
+_KNOWN_UNREAD_DESTS: frozenset[tuple[str, str]] = frozenset()
 
 
 def test_every_argparse_dest_is_read_by_dispatch() -> None:

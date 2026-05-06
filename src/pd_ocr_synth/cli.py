@@ -54,13 +54,27 @@ def _add_recipe_arg(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_cache_args(parser: argparse.ArgumentParser) -> None:
+    """Cache-related flags shared by ``fetch``, ``preview``, ``render``.
+
+    Split out from ``_add_common_render_args`` so the corpus-only
+    ``fetch`` subparser can pull just the flags that have meaning for
+    it (``--cache-dir`` / ``--no-cache``) without inheriting the
+    render-family flags that fetch silently drops on the floor (see
+    iter-82 cleanup; previously ``--count``, ``--output``, ``--seed``,
+    ``--workers``, ``--dry-run`` accepted-but-ignored for ``fetch``).
+    """
+
+    parser.add_argument("--cache-dir", help="corpus cache root")
+    parser.add_argument("--no-cache", action="store_true", help="bypass corpus cache")
+
+
 def _add_common_render_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("-c", "--count", type=int, help="override sample count from the recipe")
     parser.add_argument("-o", "--output", help="override output destination")
     parser.add_argument("-s", "--seed", type=int, help="override random seed")
     parser.add_argument("-w", "--workers", type=int, help="parallel render workers")
-    parser.add_argument("--cache-dir", help="corpus cache root")
-    parser.add_argument("--no-cache", action="store_true", help="bypass corpus cache")
+    _add_cache_args(parser)
     parser.add_argument("--dry-run", action="store_true", help="validate + plan only")
 
 
@@ -144,7 +158,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_fetch = subparsers.add_parser("fetch", help="pre-fetch and cache web corpora for a recipe")
     _add_recipe_arg(p_fetch)
-    _add_common_render_args(p_fetch)
+    # ``fetch`` is corpus-only: it walks ``recipe.corpus`` and warms
+    # the cache. The render-family flags (``--count``, ``--output``,
+    # ``--seed``, ``--workers``, ``--dry-run``) have no meaning here,
+    # so we only attach the cache-related flags. Iter-82 removed the
+    # accidentally-inherited render flags after iter-80's audit
+    # confirmed they were never read by the dispatch.
+    _add_cache_args(p_fetch)
 
     p_preview = subparsers.add_parser("preview", help="render N samples to a preview directory")
     _add_recipe_arg(p_preview)

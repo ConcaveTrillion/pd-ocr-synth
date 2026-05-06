@@ -34,7 +34,7 @@ pd-ocr-synth = "pd_ocr_synth.cli:main"
 
 ## Render-family options
 
-Apply to `fetch`, `preview`, and `render` (and to `publish` via
+Apply to `preview` and `render` (and to `publish` via
 `--render-first`):
 
 | Flag | Meaning |
@@ -46,6 +46,12 @@ Apply to `fetch`, `preview`, and `render` (and to `publish` via
 | `--cache-dir PATH` | Corpus cache root (default: `~/.cache/pd-ocr-synth/`) |
 | `--no-cache` | Bypass corpus cache (force re-fetch) |
 | `--dry-run` | Validate + plan only; no fetch, no render |
+
+`fetch` is corpus-only — it walks `recipe.corpus` and warms the cache
+— so it accepts only the two cache-related flags (`--cache-dir`,
+`--no-cache`). The other render-family flags above (`--count`,
+`--output`, `--seed`, `--workers`, `--dry-run`) have no meaning at
+fetch time and are not accepted on the `fetch` subparser.
 
 ## Per-subcommand flags
 
