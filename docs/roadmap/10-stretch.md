@@ -50,9 +50,13 @@ if they start mattering:
   single object with `recipe`, `path`, `ok`, `validation`,
   `lint`, and `summary` keys; issue dicts carry
   `severity`/`code`/`message`/`location` for editor / CI consumption.
-  Future chunks: corpus-language detection (modern-spelling
-  heuristic), per-stage option sanity checks, cross-stage interaction
-  warnings (e.g. `binarize` after `noise`).
+  _Font-footgun chunk landed:_ `lint_zero_weight_font` warns when a
+  font is declared with ``weight=0.0`` (silently never sampled);
+  `lint_all_optional_fonts` warns when every declared font is marked
+  ``optional=True`` (a fetch failure leaves the recipe with zero
+  fonts at render time). Future chunks: corpus-language detection
+  (modern-spelling heuristic), per-stage option sanity checks,
+  cross-stage interaction warnings (e.g. `binarize` after `noise`).
 - **Visual regression tests.** A "golden" sample set for the Gaelic
   recipe; CI re-renders and compares to detect accidental changes
   in the rendering or degradation pipeline.

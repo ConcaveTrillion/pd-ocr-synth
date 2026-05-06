@@ -43,6 +43,8 @@ def lint_recipe(recipe: Recipe) -> ValidationReport:
     issues.extend(_lint_text_transforms(recipe))
     issues.extend(_lint_sample_count(recipe))
     issues.extend(_lint_seed(recipe))
+    issues.extend(_lint_zero_weight_fonts(recipe))
+    issues.extend(_lint_all_optional_fonts(recipe))
     return ValidationReport(issues=tuple(issues))
 
 
@@ -154,6 +156,69 @@ def _lint_sample_count(recipe: Recipe) -> list[ValidationIssue]:
                     "keep the recipe value at production scale."
                 ),
                 location="output.count",
+            )
+        ]
+    return []
+
+
+def _lint_zero_weight_fonts(recipe: Recipe) -> list[ValidationIssue]:
+    """Warn when any font has ``weight=0.0``.
+
+    The schema allows ``weight >= 0`` (no strict-positive constraint), so
+    a font with ``weight: 0`` loads fine but is never sampled — its
+    probability mass is zero. That's almost always a typo (forgotten
+    decimal, intent was ``0.5``) or a leftover from a temporarily
+    disabled font that the author forgot to remove. Either way the
+    declared font contributes nothing to the rendered dataset, which is
+    surprising in a way worth surfacing.
+    """
+
+    zero_indices = [i for i, font in enumerate(recipe.fonts) if font.weight == 0.0]
+    if not zero_indices:
+        return []
+    indices_str = ", ".join(str(i) for i in zero_indices)
+    return [
+        ValidationIssue(
+            severity="warning",
+            code="lint_zero_weight_font",
+            message=(
+                f"font(s) at index [{indices_str}] have weight=0.0 and "
+                "will never be sampled. Either remove the entry or "
+                "give it a positive weight."
+            ),
+            location="fonts",
+        )
+    ]
+
+
+def _lint_all_optional_fonts(recipe: Recipe) -> list[ValidationIssue]:
+    """Warn when *every* declared font is marked ``optional=True``.
+
+    The schema enforces "at least one font declared", but the loader
+    silently skips ``optional=True`` fonts whose files are missing on
+    disk. If every font in a recipe is optional and none of the files
+    are fetched, the rendering stage starts with an empty font set and
+    crashes. A recipe author who marks all fonts optional almost
+    certainly meant "optional fallbacks for the primary font" — flag
+    so they can mark at least one as mandatory.
+    """
+
+    if not recipe.fonts:
+        # Schema-level constraint already covers this — nothing to lint.
+        return []
+    if all(font.optional for font in recipe.fonts):
+        return [
+            ValidationIssue(
+                severity="warning",
+                code="lint_all_optional_fonts",
+                message=(
+                    f"all {len(recipe.fonts)} font(s) are marked "
+                    "optional=True; if none of the font files are "
+                    "present on disk the loader will end up with an "
+                    "empty font set and rendering will fail. Mark at "
+                    "least one font as mandatory (the default)."
+                ),
+                location="fonts",
             )
         ]
     return []
