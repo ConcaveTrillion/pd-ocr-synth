@@ -19,12 +19,33 @@ class GlyphRun:
 
 
 @dataclass(frozen=True, slots=True)
+class WordBox:
+    """One word's text + tight pixel bbox within the sample image.
+
+    Populated by multi-word layout modes (``lines``, ``paragraphs``,
+    ``pages``). Empty for ``word_crops`` since the whole sample *is*
+    the word.
+
+    ``bbox`` is ``(x0, y0, x1, y1)`` in image-pixel coordinates,
+    matching ``RenderedSample.bbox`` and ``GlyphRun.bbox``.
+    """
+
+    text: str
+    bbox: tuple[int, int, int, int]
+
+
+@dataclass(frozen=True, slots=True)
 class RenderedSample:
     """Per-sample render output.
 
     ``image`` is a PIL Image (RGB). ``bbox`` is the tight inked box
     in pixel coordinates. ``glyph_runs`` carry per-cluster bounding
     boxes for downstream detection-mode use (M09).
+
+    ``word_boxes`` carries per-word ground-truth (text + tight pixel
+    bbox) for multi-word layout modes (``lines``, ``paragraphs``,
+    ``pages``). It's empty for the ``word_crops`` layout where each
+    sample is a single word.
     """
 
     text: str
@@ -36,6 +57,7 @@ class RenderedSample:
     ink_color: tuple[int, int, int]
     background_color: tuple[int, int, int]
     glyph_runs: tuple[GlyphRun, ...] = field(default_factory=tuple)
+    word_boxes: tuple[WordBox, ...] = field(default_factory=tuple)
 
     @property
     def size(self) -> tuple[int, int]:
