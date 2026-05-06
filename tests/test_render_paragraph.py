@@ -451,3 +451,76 @@ def test_render_paragraph_single_line_input_works(tmp_path: Path) -> None:
     assert len(sample.line_boxes) == 1
     assert sample.line_boxes[0].text == "ḃeaḋ saoġal"
     assert len(sample.word_boxes) == 2
+
+
+# ---------------------------------------------------------------------------
+# First-line indent (internal kwarg used by render_page)
+# ---------------------------------------------------------------------------
+
+
+def test_render_paragraph_first_line_indent_zero_is_default(tmp_path: Path) -> None:
+    """``first_line_indent_px=0`` matches the default (no kwarg) bit-identically."""
+
+    recipe = _make_recipe(tmp_path)
+
+    def _png(indent_kwarg: dict) -> bytes:
+        ctx = RenderContext.for_seed(recipe.seed)
+        ctx.reseed_for_sample(0)
+        sample = render_paragraph(
+            ["alpha beta", "gamma delta"],
+            recipe=recipe,
+            ctx=ctx,
+            **indent_kwarg,
+        )
+        buf = io.BytesIO()
+        sample.image.save(buf, format="PNG")
+        return buf.getvalue()
+
+    assert _png({}) == _png({"first_line_indent_px": 0})
+
+
+def test_render_paragraph_first_line_indent_shifts_only_line_zero(tmp_path: Path) -> None:
+    """Non-zero indent shifts the first line; subsequent lines unchanged."""
+
+    indent = 30
+    recipe = _make_recipe(tmp_path)
+
+    ctx_no = RenderContext.for_seed(recipe.seed)
+    ctx_no.reseed_for_sample(0)
+    sample_no = render_paragraph(
+        ["alpha beta", "gamma delta"],
+        recipe=recipe,
+        ctx=ctx_no,
+    )
+
+    ctx_in = RenderContext.for_seed(recipe.seed)
+    ctx_in.reseed_for_sample(0)
+    sample_in = render_paragraph(
+        ["alpha beta", "gamma delta"],
+        recipe=recipe,
+        ctx=ctx_in,
+        first_line_indent_px=indent,
+    )
+
+    # Line 0's bbox shifts right by exactly `indent`.
+    assert sample_in.line_boxes[0].bbox[0] - sample_no.line_boxes[0].bbox[0] == indent
+    # Line 1 unchanged.
+    assert sample_in.line_boxes[1].bbox[0] == sample_no.line_boxes[1].bbox[0]
+    # Word "alpha" (line 0) shifts; word "gamma" (line 1) doesn't.
+    no_words = {wb.text: wb for wb in sample_no.word_boxes}
+    in_words = {wb.text: wb for wb in sample_in.word_boxes}
+    assert in_words["alpha"].bbox[0] - no_words["alpha"].bbox[0] == indent
+    assert in_words["gamma"].bbox[0] == no_words["gamma"].bbox[0]
+
+
+def test_render_paragraph_negative_first_line_indent_raises(tmp_path: Path) -> None:
+    recipe = _make_recipe(tmp_path)
+    ctx = RenderContext.for_seed(recipe.seed)
+    ctx.reseed_for_sample(0)
+    with pytest.raises(RenderError, match="first_line_indent_px"):
+        render_paragraph(
+            ["alpha"],
+            recipe=recipe,
+            ctx=ctx,
+            first_line_indent_px=-1,
+        )

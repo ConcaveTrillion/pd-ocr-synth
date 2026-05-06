@@ -420,6 +420,18 @@
           ],
           "default": null,
           "title": "Paragraph Spacing"
+        },
+        "paragraph_indent_px": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Paragraph Indent Px"
         }
       },
       "required": [

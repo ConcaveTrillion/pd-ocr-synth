@@ -71,7 +71,15 @@ _LAYOUT_KEYS_BY_MODE: dict[str, frozenset[str]] = {
     # page, so it's only meaningful for ``pages`` mode — a
     # ``paragraphs`` sample renders a single paragraph by construction.
     "paragraphs": frozenset({"padding_px", "max_width_px", "line_spacing"}),
-    "pages": frozenset({"padding_px", "max_width_px", "line_spacing", "paragraph_spacing"}),
+    "pages": frozenset(
+        {
+            "padding_px",
+            "max_width_px",
+            "line_spacing",
+            "paragraph_spacing",
+            "paragraph_indent_px",
+        }
+    ),
 }
 
 # Per docs/specs/08-output-format.md §Modes:
@@ -262,6 +270,7 @@ def _check_layout(recipe: Recipe) -> list[ValidationIssue]:
         "max_width_px": recipe.layout.max_width_px,
         "line_spacing": recipe.layout.line_spacing,
         "paragraph_spacing": recipe.layout.paragraph_spacing,
+        "paragraph_indent_px": recipe.layout.paragraph_indent_px,
     }
     out: list[ValidationIssue] = []
     for key, value in set_keys.items():

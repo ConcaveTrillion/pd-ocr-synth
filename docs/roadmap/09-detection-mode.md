@@ -157,14 +157,23 @@ future small chunk.
 
 ### First-line indent for paragraphs
 
-- [ ] Spec 06 § `paragraphs` advertises `paragraph_indent_em`. Add a
-      layout key `paragraph_indent_px: int | None = None` (resolved
-      from `_em` via the sampled font size if we keep the spec's
-      em-based name, otherwise straight px). Affects only
-      `render_page` (paragraphs mode is single-paragraph by
-      construction). Renderer prepends `indent_px` of horizontal
-      whitespace to the first line of each paragraph and offsets the
-      line's bbox accordingly.
+- [x] Spec 06 § `paragraphs` advertises `paragraph_indent_em`. Layout
+      key `paragraph_indent_px: int | None = None` lands as a fixed
+      px integer (deterministic, no font-size dependence — `_em` may
+      come back later as a derived convenience). Validator permits it
+      only on `pages` mode and warns `layout_key_unused` elsewhere
+      (`tests/test_validation.py::test_paragraph_indent_px_warns_on_non_pages_modes`).
+      `render_page` reads `recipe.layout.paragraph_indent_px or 0`
+      and threads it as `first_line_indent_px` into every per-
+      paragraph `render_paragraph` call; `render_paragraph` shifts
+      line 0 right by that many pixels (image, glyph runs, word boxes,
+      line bbox), grows the canvas width to accommodate, and leaves
+      every other line untouched. `None` and `0` produce byte-
+      identical PNGs (regression test:
+      `tests/test_render_page.py::test_render_page_indent_none_is_bit_identical_to_zero`),
+      so existing recipes are unaffected. Right-shift, canvas-widen,
+      and bbox propagation are locked in `test_render_page.py::*indent*`
+      and `test_render_paragraph.py::*first_line_indent*`.
 
 ### Explicit `page_size_px`
 

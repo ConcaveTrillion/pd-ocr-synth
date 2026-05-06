@@ -250,9 +250,22 @@ def render_page(
     # whole thing in padding exactly once, not once per paragraph.
     # ``presampled`` short-circuits render_paragraph's internal RNG
     # sampling, preserving determinism per page.
+    #
+    # ``layout.paragraph_indent_px`` (M09 first-line indent) is a
+    # plain int, not RNG-sampled, so we read it directly from the
+    # recipe and pass it through to every per-paragraph render. ``None``
+    # → ``0`` is a no-op and preserves byte-identical output for
+    # recipes that don't set the field.
     inner_para_style = _zero_padded(para_style)
+    indent_px = recipe.layout.paragraph_indent_px or 0
     paragraph_samples = [
-        render_paragraph(list(lines), recipe=recipe, ctx=ctx, presampled=inner_para_style)
+        render_paragraph(
+            list(lines),
+            recipe=recipe,
+            ctx=ctx,
+            presampled=inner_para_style,
+            first_line_indent_px=indent_px,
+        )
         for lines in paragraphs
     ]
 

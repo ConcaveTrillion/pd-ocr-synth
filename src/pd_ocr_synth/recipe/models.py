@@ -228,6 +228,16 @@ class Layout(_Frozen):
     # ``paragraphs``-mode sample is a single paragraph by construction.
     # See docs/specs/06-rendering.md §pages and the M09 roadmap.
     paragraph_spacing: FloatRangeOrChoice | None = None
+    # First-line indent (in pixels) applied to the first line of every
+    # paragraph on a page. Only meaningful for ``mode='pages'`` —
+    # ``paragraphs`` mode is a single paragraph and an indent there
+    # would just shift the whole sample's first line, which is what
+    # padding is for. Spec 06 § paragraphs advertises an em-based
+    # ``paragraph_indent_em``; we expose px directly to keep the layout
+    # field deterministic (no font-size dependence). Default ``None``
+    # preserves the existing un-indented output bit-for-bit. See
+    # docs/roadmap/09-detection-mode.md § First-line indent.
+    paragraph_indent_px: int | None = None
 
 
 # ---------------------------------------------------------------------------

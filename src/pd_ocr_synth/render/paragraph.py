@@ -168,6 +168,7 @@ def render_paragraph(
     recipe: Recipe,
     ctx: RenderContext,
     presampled: ParagraphStyle | None = None,
+    first_line_indent_px: int = 0,
 ) -> RenderedSample:
     """Render ``lines`` as one ``paragraphs``-mode sample.
 
@@ -181,15 +182,32 @@ def render_paragraph(
     used here. Direct callers (tests, the preview UI) can omit the
     kwarg and get the historical behavior.
 
+    ``first_line_indent_px`` shifts the **first** line of the
+    paragraph horizontally to the right by that many pixels. Used by
+    :func:`render_page` to apply the recipe's
+    ``layout.paragraph_indent_px`` per-paragraph (paragraphs-mode
+    callers should leave this at the default ``0`` — the recipe
+    validator already warns ``layout_key_unused`` if the field is set
+    on a non-pages mode). The first line's image strip, per-cluster
+    boxes, per-word boxes, and per-line bbox all shift by
+    ``first_line_indent_px``; the canvas width grows to fit. Other
+    lines are unaffected. ``0`` is a no-op (bit-identical to the
+    historical render).
+
     Raises:
         RenderError: if ``lines`` is empty, or any line is empty /
             whitespace-only / contains an embedded newline, or
             shaping returns zero glyphs for any line, or no usable
-            font is available.
+            font is available, or ``first_line_indent_px`` is
+            negative.
         MissingGlyphError: if the chosen font lacks any non-whitespace
             codepoint anywhere in the paragraph.
     """
 
+    if first_line_indent_px < 0:
+        raise RenderError(
+            f"render_paragraph: first_line_indent_px must be >= 0, got {first_line_indent_px}"
+        )
     _validate_lines(lines)
 
     if presampled is None:
@@ -243,7 +261,13 @@ def render_paragraph(
     # underflows the canvas); subsequent lines advance by
     # ``line_advance_px``. Each fragment carries its own
     # baseline-relative inked extent (see ``_LineFragment``).
-    paragraph_width = max(frag.width for frag in fragments)
+    # When ``first_line_indent_px`` is non-zero, line 0 is shifted
+    # right by that many pixels, so the canvas width must accommodate
+    # ``frag[0].width + indent`` in addition to the natural maxes of
+    # the other lines.
+    paragraph_width = max(
+        (frag.width + (first_line_indent_px if i == 0 else 0)) for i, frag in enumerate(fragments)
+    )
     img_w = paragraph_width + 2 * padding
     # Vertical bounds: first line top = padding; last line bottom =
     # padding + (n-1)*line_advance_px + last fragment height.
@@ -263,7 +287,10 @@ def render_paragraph(
 
     for line_index, frag in enumerate(fragments):
         line_top_in_canvas = padding + line_index * line_advance_px
-        line_left_in_canvas = padding
+        # Indent only the first line — every subsequent line starts
+        # at the natural left edge.
+        indent = first_line_indent_px if line_index == 0 else 0
+        line_left_in_canvas = padding + indent
 
         canvas.paste(frag.image, (line_left_in_canvas, line_top_in_canvas))
 

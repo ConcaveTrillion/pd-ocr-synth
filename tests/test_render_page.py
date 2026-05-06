@@ -488,6 +488,208 @@ def test_render_page_single_paragraph_matches_render_paragraph(tmp_path: Path) -
 
 
 # ---------------------------------------------------------------------------
+# First-line indent
+# ---------------------------------------------------------------------------
+
+
+def _build_indent_recipe(tmp_path: Path, indent_px: int | None) -> object:
+    """Build a pages-mode recipe with a fixed seed and the given indent.
+
+    ``indent_px=None`` omits the field entirely (preserving the
+    historical un-indented output bytes); a non-negative int writes
+    ``paragraph_indent_px: <n>`` into the layout block.
+    """
+
+    font = _require_font()
+    rp = tmp_path / f"recipe-indent-{indent_px}.yaml"
+    words = tmp_path / f"words-indent-{indent_px}.txt"
+    words.write_text("ḃeaḋ\n", encoding="utf-8")
+    indent_line = "" if indent_px is None else f"  paragraph_indent_px: {indent_px}\n"
+    rp.write_text(
+        "schema_version: 1\n"
+        f"name: page-indent-{indent_px}\n"
+        "seed: 42\n"
+        "output:\n"
+        "  format: pd-ocr-trainer/v1\n"
+        "  mode: detection\n"
+        "  destination: ./out\n"
+        "  count: 1\n"
+        "corpus:\n"
+        f"  - type: local\n    path: {words}\n"
+        "fonts:\n"
+        f"  - path: {font}\n    weight: 1.0\n"
+        "rendering:\n"
+        "  font_size_pt: 18\n"
+        "  dpi: 300\n"
+        "  ink_color: { r: 10, g: 10, b: 10 }\n"
+        "  background_color: { r: 240, g: 235, b: 220 }\n"
+        "layout:\n"
+        "  mode: pages\n"
+        "  padding_px: 6\n"
+        "  line_spacing: 1.0\n"
+        "  paragraph_spacing: 1.0\n"
+        f"{indent_line}",
+        encoding="utf-8",
+    )
+    return load_recipe(rp)
+
+
+def test_render_page_first_line_indent_shifts_first_line_right(
+    tmp_path: Path,
+) -> None:
+    """A non-zero ``paragraph_indent_px`` shifts the first line of every paragraph.
+
+    For each paragraph that has at least two lines, the first line's
+    bbox left edge must sit ~indent_px further right than the second
+    line's left edge.
+    """
+
+    indent_px = 50
+    recipe = _build_indent_recipe(tmp_path, indent_px)
+    ctx = RenderContext.for_seed(recipe.seed)
+    ctx.reseed_for_sample(0)
+    sample = render_page(
+        [
+            ["alpha beta", "gamma delta"],
+            ["epsilon zeta", "eta theta"],
+        ],
+        recipe=recipe,
+        ctx=ctx,
+    )
+
+    # Walk per-paragraph: lines under each paragraph (matched by y-range)
+    # must show the first line shifted right by indent_px relative to
+    # subsequent lines.
+    for pb in sample.paragraph_boxes:
+        py0, py1 = pb.bbox[1], pb.bbox[3]
+        in_para = sorted(
+            (lb for lb in sample.line_boxes if py0 <= lb.bbox[1] and lb.bbox[3] <= py1),
+            key=lambda lb: lb.bbox[1],
+        )
+        assert len(in_para) >= 2, "test fixture should produce 2+ lines per paragraph"
+        first, second = in_para[0], in_para[1]
+        delta = first.bbox[0] - second.bbox[0]
+        # Slack of a few px to absorb glyph side-bearing differences
+        # (the inked extent of an indented line is shifted by exactly
+        # indent_px in the *paste* but the inked bbox depends on left-
+        # bearing of the leading glyph; we still expect ~indent_px).
+        assert abs(delta - indent_px) <= 4, (
+            f"first line not indented by ~{indent_px}: first.x0={first.bbox[0]}, "
+            f"second.x0={second.bbox[0]}, delta={delta}"
+        )
+
+
+def test_render_page_first_line_indent_shifts_first_word_box(tmp_path: Path) -> None:
+    """The leftmost word on the first line shifts by the indent."""
+
+    indent_px = 40
+    recipe_no = _build_indent_recipe(tmp_path, None)
+    recipe_indent = _build_indent_recipe(tmp_path, indent_px)
+
+    paragraphs = [["alpha beta", "gamma delta"]]
+
+    ctx_no = RenderContext.for_seed(recipe_no.seed)
+    ctx_no.reseed_for_sample(0)
+    sample_no = render_page(paragraphs, recipe=recipe_no, ctx=ctx_no)
+
+    ctx_in = RenderContext.for_seed(recipe_indent.seed)
+    ctx_in.reseed_for_sample(0)
+    sample_in = render_page(paragraphs, recipe=recipe_indent, ctx=ctx_in)
+
+    # The first word ("alpha") on line 0 should shift right by exactly
+    # indent_px between the two renders.
+    first_word_no = sample_no.word_boxes[0]
+    first_word_in = sample_in.word_boxes[0]
+    assert first_word_no.text == first_word_in.text == "alpha"
+    delta = first_word_in.bbox[0] - first_word_no.bbox[0]
+    assert delta == indent_px, (
+        f"first word didn't shift by exactly {indent_px}: "
+        f"no-indent x0={first_word_no.bbox[0]}, indent x0={first_word_in.bbox[0]}"
+    )
+
+    # The first word on line 1 ("gamma") should *not* have shifted.
+    # Find the first word of line 1 in both renders by y-position.
+    def _first_line1_word(sample) -> object:
+        line1 = sample.line_boxes[1]
+        ly0, ly1 = line1.bbox[1], line1.bbox[3]
+        on_line = [wb for wb in sample.word_boxes if ly0 <= wb.bbox[1] and wb.bbox[3] <= ly1]
+        on_line.sort(key=lambda wb: wb.bbox[0])
+        return on_line[0]
+
+    line1_no = _first_line1_word(sample_no)
+    line1_in = _first_line1_word(sample_in)
+    assert line1_no.text == line1_in.text == "gamma"
+    assert line1_no.bbox[0] == line1_in.bbox[0], (
+        f"second line shifted unexpectedly: no={line1_no.bbox[0]}, indent={line1_in.bbox[0]}"
+    )
+
+
+def test_render_page_first_line_indent_widens_canvas(tmp_path: Path) -> None:
+    """A first-line indent grows the canvas width to accommodate the shift."""
+
+    paragraphs = [["alphabet", "x"]]  # Line 1 short, line 0 normal.
+
+    recipe_no = _build_indent_recipe(tmp_path, None)
+    recipe_in = _build_indent_recipe(tmp_path, 60)
+
+    ctx_no = RenderContext.for_seed(recipe_no.seed)
+    ctx_no.reseed_for_sample(0)
+    sample_no = render_page(paragraphs, recipe=recipe_no, ctx=ctx_no)
+
+    ctx_in = RenderContext.for_seed(recipe_in.seed)
+    ctx_in.reseed_for_sample(0)
+    sample_in = render_page(paragraphs, recipe=recipe_in, ctx=ctx_in)
+
+    # Canvas must be wider when line 0 is the longest line and gets
+    # indented.
+    assert sample_in.size[0] > sample_no.size[0], (
+        f"indent did not widen canvas: no={sample_no.size[0]}, indent={sample_in.size[0]}"
+    )
+
+
+def test_render_page_indent_none_is_bit_identical_to_zero(tmp_path: Path) -> None:
+    """``paragraph_indent_px = None`` and ``= 0`` produce identical PNG bytes."""
+
+    paragraphs = [["alpha beta", "gamma"], ["delta epsilon", "zeta"]]
+
+    recipe_none = _build_indent_recipe(tmp_path, None)
+    recipe_zero = _build_indent_recipe(tmp_path, 0)
+
+    def _png(recipe) -> bytes:
+        ctx = RenderContext.for_seed(recipe.seed)
+        ctx.reseed_for_sample(0)
+        sample = render_page(paragraphs, recipe=recipe, ctx=ctx)
+        buf = io.BytesIO()
+        sample.image.save(buf, format="PNG")
+        return buf.getvalue()
+
+    assert _png(recipe_none) == _png(recipe_zero)
+
+
+def test_render_page_indent_word_boxes_stay_inside_canvas(tmp_path: Path) -> None:
+    """Indented first-line words still have bboxes inside the page canvas."""
+
+    indent_px = 50
+    recipe = _build_indent_recipe(tmp_path, indent_px)
+    ctx = RenderContext.for_seed(recipe.seed)
+    ctx.reseed_for_sample(0)
+    sample = render_page(
+        [
+            ["alpha beta", "gamma delta"],
+            ["epsilon zeta", "eta theta"],
+        ],
+        recipe=recipe,
+        ctx=ctx,
+    )
+
+    w, h = sample.size
+    for wb in sample.word_boxes:
+        x0, y0, x1, y1 = wb.bbox
+        assert 0 <= x0 < x1 <= w, f"word {wb.text!r} bbox out of canvas: {wb.bbox}, canvas={w}x{h}"
+        assert 0 <= y0 < y1 <= h, f"word {wb.text!r} bbox out of canvas: {wb.bbox}, canvas={w}x{h}"
+
+
+# ---------------------------------------------------------------------------
 # Error paths
 # ---------------------------------------------------------------------------
 
