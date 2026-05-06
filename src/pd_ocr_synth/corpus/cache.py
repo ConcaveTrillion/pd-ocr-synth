@@ -104,12 +104,36 @@ class CacheStore:
     # ----- read / write -----
 
     def has(self, provider: str, key: str) -> bool:
+        """Return True iff a complete, parseable entry exists.
+
+        The meta sidecar is the *sentinel*: a write is only visible to
+        readers once the meta file is in place. ``has()`` additionally
+        validates that the sidecar parses as JSON and matches
+        ``CacheMeta`` — a corrupted or partially written sidecar is
+        treated as absent so callers consistently see a cache miss
+        rather than a surprise ``JSONDecodeError`` / ``TypeError``.
+        """
+
         text_path, meta_path = self._entry_paths(provider, key)
-        return text_path.exists() and meta_path.exists()
+        if not (text_path.exists() and meta_path.exists()):
+            return False
+        try:
+            data = json.loads(meta_path.read_text(encoding="utf-8"))
+            CacheMeta(**data)
+        except (OSError, ValueError, TypeError):
+            return False
+        return True
 
     def read_text(self, provider: str, key: str) -> str:
-        text_path, _ = self._entry_paths(provider, key)
-        if not text_path.exists():
+        """Return cached text, treating an orphan text (no meta) as a miss.
+
+        The sidecar is the sentinel: an entry without a meta file is an
+        artefact of a crashed write and must not be served as if it
+        were a real cache hit.
+        """
+
+        text_path, meta_path = self._entry_paths(provider, key)
+        if not text_path.exists() or not meta_path.exists():
             raise CacheMissError(f"cache miss: {provider}/{key}")
         return text_path.read_text(encoding="utf-8")
 
@@ -117,8 +141,13 @@ class CacheStore:
         _, meta_path = self._entry_paths(provider, key)
         if not meta_path.exists():
             raise CacheMissError(f"cache meta missing: {provider}/{key}")
-        data = json.loads(meta_path.read_text(encoding="utf-8"))
-        return CacheMeta(**data)
+        try:
+            data = json.loads(meta_path.read_text(encoding="utf-8"))
+            return CacheMeta(**data)
+        except (ValueError, TypeError) as exc:
+            # Corrupted or schema-incompatible sidecar — treat as a miss
+            # so callers' CacheMiss-or-success contract holds.
+            raise CacheMissError(f"cache meta corrupt: {provider}/{key}: {exc}") from exc
 
     def write_text(
         self,
@@ -129,9 +158,23 @@ class CacheStore:
         source: str,
         extras: dict[str, str] | None = None,
     ) -> CacheMeta:
+        """Atomically write ``text`` and its meta sidecar.
+
+        Writes go to ``*.tmp`` siblings first, then are renamed into
+        place. On POSIX, ``os.replace`` within the same directory is
+        atomic, so a crash mid-write leaves either:
+
+        - nothing (both renames missed), or
+        - a text file with no meta (meta rename missed) — readers treat
+          this as a cache miss because the meta sidecar is the
+          publishing sentinel.
+
+        This guarantees ``has()`` and ``read_text()`` never observe a
+        half-published entry.
+        """
+
         text_path, meta_path = self._entry_paths(provider, key)
         text_path.parent.mkdir(parents=True, exist_ok=True)
-        text_path.write_text(text, encoding="utf-8")
         meta = CacheMeta.for_text(
             provider=provider,
             key=key,
@@ -139,7 +182,21 @@ class CacheStore:
             text=text,
             extras=extras,
         )
-        meta_path.write_text(json.dumps(asdict(meta), indent=2), encoding="utf-8")
+        text_tmp = text_path.with_suffix(text_path.suffix + ".tmp")
+        meta_tmp = meta_path.with_suffix(meta_path.suffix + ".tmp")
+        try:
+            text_tmp.write_text(text, encoding="utf-8")
+            os.replace(text_tmp, text_path)
+            meta_tmp.write_text(json.dumps(asdict(meta), indent=2), encoding="utf-8")
+            os.replace(meta_tmp, meta_path)
+        finally:
+            # Clean up tmp leftovers if rename never happened.
+            for tmp in (text_tmp, meta_tmp):
+                if tmp.exists():
+                    try:
+                        tmp.unlink()
+                    except OSError:
+                        pass
         return meta
 
     # ----- delete / list -----
