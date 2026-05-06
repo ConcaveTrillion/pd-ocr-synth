@@ -608,11 +608,9 @@ _DEGRADATION_OPTION_KEYS_BY_KIND: dict[str, frozenset[str]] = {
     "gamma": frozenset({"gamma"}),
     # print / paper
     "ink_bleed": frozenset({"iterations", "kernel_size_px"}),
-    # ``ink_thin`` reads ``kernel_size_px`` even though spec 07's
-    # example only shows ``iterations`` — see spec 07 §"ink_thin" and
-    # the matching ``options.get("kernel_size_px", 1)`` in
-    # ``builtins._ink_thin``. The spec example is illustrative, not
-    # exhaustive; the code is the contract.
+    # ``ink_thin`` mirrors ``ink_bleed``: both ``iterations`` and
+    # ``kernel_size_px`` are read by ``builtins._ink_thin`` and are
+    # documented in spec 07 §"ink_thin".
     "ink_thin": frozenset({"iterations", "kernel_size_px"}),
     "paper_texture": frozenset({"directory", "blend", "opacity", "scale", "rotate_deg"}),
     "foxing": frozenset({"count", "radius_px", "color", "opacity"}),

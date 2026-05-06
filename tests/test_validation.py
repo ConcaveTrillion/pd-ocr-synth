@@ -1151,6 +1151,202 @@ def test_registered_degradation_kinds_subset_of_spec() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Per-stage option drift: spec 07 YAML examples ↔ validation whitelist.
+# ---------------------------------------------------------------------------
+#
+# The ``KNOWN_DEGRADATION_KINDS`` parity tests above lock the *kind*
+# names. They do not catch drift at the *option* level — e.g. a spec
+# block that documents ``kernel_size_px`` but a whitelist that omits
+# it (validate would reject a spec-legal recipe), or a spec block that
+# documents ``foo_thresh`` but the runtime reads ``foo_threshold``
+# (validate accepts it but the option is silently ignored).
+#
+# This meta-test parses each ``### `kind` `` block in
+# ``docs/specs/07-degradation.md``, extracts the YAML example
+# immediately following it, and asserts the option keys present in
+# the example are a subset of
+# ``_DEGRADATION_OPTION_KEYS_BY_KIND[kind] | _COMMON_DEGRADATION_OPTION_KEYS
+# | {"kind", "probability"}``. Same drift-guard pattern as iters
+# 66/67/69/70.
+# ---------------------------------------------------------------------------
+
+
+def _spec_per_stage_option_keys() -> dict[str, frozenset[str]]:
+    """Parse spec 07 per-kind YAML examples → ``{kind: {option_keys}}``.
+
+    Walks the doc top-to-bottom inside the catalog sections, tracks the
+    most recent ``### `kind` `` heading, captures the first fenced
+    ``yaml`` block that follows it, and parses the first list element
+    as the canonical example. Headings that pair two kinds with a slash
+    (``brightness`` / ``contrast``) are handled by mapping the same
+    YAML block to every kind named in the heading.
+    """
+
+    import re
+
+    import yaml
+
+    spec_path = Path(__file__).resolve().parent.parent / "docs" / "specs" / "07-degradation.md"
+    text = spec_path.read_text(encoding="utf-8")
+
+    catalog_sections = (
+        "## Geometric",
+        "## Optical",
+        "## Print / paper",
+        "## Compression",
+        "## Color space",
+    )
+    h3_re = re.compile(r"^###\s+(.+)$")
+    backtick_re = re.compile(r"`([a-z_][a-z0-9_]*)`")
+
+    results: dict[str, frozenset[str]] = {}
+    in_catalog = False
+    pending_kinds: list[str] = []
+    in_yaml = False
+    yaml_lines: list[str] = []
+
+    def _flush(kinds: list[str], lines: list[str]) -> None:
+        if not kinds or not lines:
+            return
+        try:
+            parsed = yaml.safe_load("\n".join(lines))
+        except yaml.YAMLError as exc:  # pragma: no cover - test infra
+            raise AssertionError(
+                f"spec 07 YAML example for {kinds!r} did not parse: {exc}"
+            ) from exc
+        # Each example is a single-element list of mappings.
+        assert isinstance(parsed, list) and parsed, (
+            f"spec 07 YAML example for {kinds!r} should be a non-empty list"
+        )
+        item = parsed[0]
+        assert isinstance(item, dict), (
+            f"spec 07 YAML example for {kinds!r} first element is not a mapping"
+        )
+        keys = frozenset(item.keys())
+        for kind in kinds:
+            results[kind] = keys
+
+    for line in text.splitlines():
+        if line.startswith("## "):
+            # Section transition flushes any open block.
+            _flush(pending_kinds, yaml_lines)
+            pending_kinds = []
+            yaml_lines = []
+            in_yaml = False
+            in_catalog = line.strip() in catalog_sections
+            continue
+        if not in_catalog:
+            continue
+        h3 = h3_re.match(line)
+        if h3 is not None:
+            _flush(pending_kinds, yaml_lines)
+            pending_kinds = list(backtick_re.findall(h3.group(1)))
+            yaml_lines = []
+            in_yaml = False
+            continue
+        if line.strip() == "```yaml":
+            # Only capture the *first* yaml block per heading. If we
+            # already captured one, ignore subsequent blocks (e.g. the
+            # narrative example at the top of the file lives outside
+            # any kind heading and is filtered by ``pending_kinds``).
+            if pending_kinds and not results.get(pending_kinds[0]):
+                in_yaml = True
+                yaml_lines = []
+            continue
+        if in_yaml:
+            if line.strip() == "```":
+                _flush(pending_kinds, yaml_lines)
+                yaml_lines = []
+                in_yaml = False
+                continue
+            yaml_lines.append(line)
+
+    # Trailing flush at EOF (rare — section headers usually flush).
+    _flush(pending_kinds, yaml_lines)
+    return results
+
+
+def test_spec_07_yaml_examples_match_option_whitelist() -> None:
+    """Every option key in spec 07's per-kind YAML examples must be on
+    the validate-time whitelist (or a common key).
+
+    Drift this catches:
+      - spec adds an option, whitelist forgets it → validate would
+        reject a spec-legal recipe (false positive).
+      - spec renames an option, code still reads the old name → the
+        whitelist catches the new name but the option is silently
+        ignored at runtime. This test forces the spec example to stay
+        in lockstep with the whitelist.
+    """
+
+    from pd_ocr_synth.validation import (
+        _COMMON_DEGRADATION_OPTION_KEYS,
+        _DEGRADATION_OPTION_KEYS_BY_KIND,
+    )
+
+    # ``kind`` and ``probability`` live on the model proper; they appear
+    # in YAML examples but never in ``model_extra``.
+    structural = frozenset({"kind", "probability"})
+
+    spec = _spec_per_stage_option_keys()
+    assert spec, "spec 07 YAML example parser found zero kinds — parser regressed"
+
+    drift: list[str] = []
+    for kind, example_keys in sorted(spec.items()):
+        whitelist = _DEGRADATION_OPTION_KEYS_BY_KIND.get(kind)
+        if whitelist is None:
+            # Stage spec'd but not yet implemented (caught elsewhere by
+            # ``degradation_kind_not_implemented``); skip the option
+            # check until the stage lands.
+            continue
+        permitted = whitelist | _COMMON_DEGRADATION_OPTION_KEYS | structural
+        unknown = example_keys - permitted
+        if unknown:
+            drift.append(
+                f"  {kind}: example uses {sorted(unknown)} not on whitelist {sorted(whitelist)}"
+            )
+
+    assert not drift, (
+        "docs/specs/07-degradation.md YAML examples reference option keys not "
+        "on _DEGRADATION_OPTION_KEYS_BY_KIND. Either add the option to the "
+        "whitelist (and make sure the runtime reads it) or correct the spec "
+        "example.\n" + "\n".join(drift)
+    )
+
+
+def test_option_whitelist_keys_appear_in_spec_examples() -> None:
+    """Every option on the validate-time whitelist must be referenced
+    in spec 07's YAML example for that kind.
+
+    Catches the reverse drift: the whitelist (and presumably the code)
+    accepts an option key that the spec doesn't tell users about. The
+    spec example is the documentation users learn from; if an option
+    is real, it should be discoverable there.
+    """
+
+    from pd_ocr_synth.validation import _DEGRADATION_OPTION_KEYS_BY_KIND
+
+    spec = _spec_per_stage_option_keys()
+    drift: list[str] = []
+    for kind, whitelist in sorted(_DEGRADATION_OPTION_KEYS_BY_KIND.items()):
+        example_keys = spec.get(kind)
+        if example_keys is None:
+            drift.append(f"  {kind}: whitelist exists but no spec YAML example found")
+            continue
+        missing = whitelist - example_keys
+        if missing:
+            drift.append(
+                f"  {kind}: whitelist allows {sorted(missing)} but spec example never shows them"
+            )
+
+    assert not drift, (
+        "_DEGRADATION_OPTION_KEYS_BY_KIND lists options not shown in "
+        "docs/specs/07-degradation.md examples. Either document the option "
+        "in the spec example or drop it from the whitelist.\n" + "\n".join(drift)
+    )
+
+
+# ---------------------------------------------------------------------------
 # paragraph_alignment (M09 paragraph alignment)
 # ---------------------------------------------------------------------------
 

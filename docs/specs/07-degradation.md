@@ -103,11 +103,15 @@ Morphological dilation simulating ink that has spread.
 ```
 
 ### `ink_thin`
-Erosion — under-inked print.
+Morphological erosion simulating under-inked print.
 ```yaml
 - kind: ink_thin
   iterations: { min: 1, max: 1 }
+  kernel_size_px: { min: 1, max: 2 }
 ```
+Mirror of `ink_bleed`: `iterations` (default `1`) is how many erosion
+passes to apply; `kernel_size_px` (default `1`) controls the structuring
+element size in pixels. Setting either to zero or below skips the stage.
 
 ### `paper_texture`
 Blend a paper texture image.
