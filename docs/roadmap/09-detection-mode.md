@@ -25,7 +25,7 @@ Spec: [`06-rendering.md`](../specs/06-rendering.md) +
       renderer paints with (pre-sampled `ParagraphStyle` threaded
       through both `fit_lines` and `render_paragraph`). Alignment and
       indent still TODO.)
-- [ ] `pages` mode — multi-paragraph page synthesis with margins,
+- [~] `pages` mode — multi-paragraph page synthesis with margins,
       configurable page size, optional headings + drop caps.
       (Foundation: `ParagraphBox` dataclass + `paragraph_boxes` field
       on `RenderedSample` lands ahead of the renderer. Default `()`,
@@ -38,7 +38,15 @@ Spec: [`06-rendering.md`](../specs/06-rendering.md) +
       generated JSON schema; validation accepts it on `pages` mode
       and warns `layout_key_unused` on every other mode (it has no
       meaning between lines or for a single-paragraph sample). The
-      `pages`-mode renderer itself + multi-paragraph stacking still
+      `render_page` primitive lands as a multi-paragraph compositor
+      that delegates per-paragraph rendering to `render_paragraph`
+      via a zero-padded pre-sampled `ParagraphStyle` — single-font
+      invariant lifted from paragraph to page level, with the
+      paragraph_spacing multiplier sampled once per page. Outputs
+      flatten into per-paragraph + per-line + per-word + per-cluster
+      boxes in reading order. The `run_recipe` pages-mode dispatch
+      wiring through `DetectionWriter`, plus alignment / indent /
+      headings / drop caps / explicit `page_size_px`, are still
       TODO.)
 
 ### Bbox-aware degradation

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from pd_ocr_synth.render.context import RenderContext, branched_seed
 from pd_ocr_synth.render.line import render_line
+from pd_ocr_synth.render.page import render_page
 from pd_ocr_synth.render.paragraph import render_paragraph
 from pd_ocr_synth.render.run import RunPlan, RunResult, plan_recipe, run_recipe
 from pd_ocr_synth.render.sample import (
@@ -48,6 +49,7 @@ __all__ = [
     "fit_lines",
     "plan_recipe",
     "render_line",
+    "render_page",
     "render_paragraph",
     "render_word_crop",
     "run_recipe",
