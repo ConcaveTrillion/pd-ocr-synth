@@ -27,10 +27,15 @@ Spec: [`06-rendering.md`](../specs/06-rendering.md) +
 
 ### Detection writer
 
-- [ ] Emit local `pd-ocr-trainer/v1` detection layout:
-      `images/page_*.png`, `pages.json`, `manifest.jsonl`,
+- [~] Emit local `pd-ocr-trainer/v1` detection layout:
+      `images/page_*.png`, `labels.json`, `manifest.jsonl`,
       `recipe.snapshot.yaml`, `stats.json`.
-- [ ] `pages.json` schema confirmed against
+      (`DetectionWriter` scaffolding lands with full force/resume
+      semantics + bbox→polygon expansion; `run_recipe` dispatch wire-up
+      still TODO. Filename matches the trainer's `labels.json` reader,
+      not the spec's earlier `pages.json` draft — see spec 08 §Detection
+      mode layout.)
+- [ ] `labels.json` schema confirmed against
       `pd-ocr-trainer/dataset_store.py` (cross-project integration test).
 
 ### HF detection publish

@@ -56,39 +56,50 @@ the same naming convention.
 ├── images/
 │   ├── page_0000000.png
 │   └── ...
-├── pages.json          # all-pages annotation file
+├── labels.json         # per-image annotation map
 ├── manifest.jsonl
 ├── recipe.snapshot.yaml
 └── stats.json
 ```
 
-`pages.json` matches the `pd-ocr-trainer` detection schema:
+`labels.json` is what `doctr.datasets.DetectionDataset` (used by
+`pd-ocr-trainer/train_detect.py`) actually reads. Its top-level keys
+are page filenames; each value is an annotation object that carries
+both the doctr-required fields and our richer ground truth:
 
 ```json
 {
-  "version": 1,
-  "pages": [
-    {
-      "image": "images/page_0000000.png",
-      "size": [1200, 1800],
-      "lines": [
-        {
-          "bbox": [120, 200, 1080, 240],
-          "text": "Cuiḋ ḋ'á aimsir...",
-          "words": [
-            { "bbox": [120, 205, 220, 235], "text": "Cuiḋ" },
-            ...
-          ]
-        }
-      ]
-    }
-  ]
+  "page_0000000.png": {
+    "img_dimensions": [1200, 1800],
+    "img_hash": "<sha256 hex>",
+    "polygons": [
+      [[120, 200], [1080, 200], [1080, 240], [120, 240]],
+      ...
+    ],
+    "lines": [
+      {
+        "bbox": [120, 200, 1080, 240],
+        "polygon": [[120, 200], [1080, 200], [1080, 240], [120, 240]],
+        "text": "Cuiḋ ḋ'á aimsir...",
+        "words": [
+          { "bbox": [120, 205, 220, 235], "text": "Cuiḋ" }
+        ]
+      }
+    ]
+  }
 }
 ```
 
-(The exact shape is whatever `pd-ocr-trainer/dataset_store.py` reads.
-The integration spec keeps the schema centralized there; this project
-imports the writer rather than duplicating the format.)
+`polygons` is the flat list (one 4-corner polygon per detected line)
+that doctr's detection head consumes; `lines` is the rich GT we use
+ourselves and emit so the labeler / parquet publish path can recover
+the full annotation without re-rendering. Doctr ignores fields it
+doesn't recognize.
+
+(An earlier draft of this spec specified `pages.json`; the trainer's
+existing reader is the canonical contract, so we matched its
+`labels.json` filename during M09 — same precedent as recognition mode
+matching `labels.json` over the original `labels.csv` draft.)
 
 ## `manifest.jsonl`
 
