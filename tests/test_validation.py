@@ -350,12 +350,19 @@ def test_known_degradation_set_includes_canonical_kinds() -> None:
 
 
 @pytest.mark.parametrize("layout_mode", ["paragraphs", "pages"])
+@pytest.mark.parametrize("alignment", ["left", "center", "right"])
 def test_paragraph_alignment_accepted_on_paragraph_modes(
     tmp_path: Path,
     writable_font_bytes: bytes,
     layout_mode: str,
+    alignment: str,
 ) -> None:
-    """``paragraph_alignment`` is permitted on ``paragraphs`` + ``pages`` without warning."""
+    """``paragraph_alignment`` is permitted on ``paragraphs`` + ``pages`` without warning.
+
+    All three implemented values (``left`` / ``center`` / ``right``)
+    must round-trip through the validator cleanly on both paragraph-
+    style modes.
+    """
     font = tmp_path / "fake.otf"
     font.write_bytes(writable_font_bytes)
     seed = _make_file(tmp_path / "seed.txt", "hello\n")
@@ -367,7 +374,7 @@ def test_paragraph_alignment_accepted_on_paragraph_modes(
             f"  mode: {layout_mode}\n"
             f"  padding_px: 8\n"
             f"  max_width_px: 800\n"
-            f"  paragraph_alignment: center\n"
+            f"  paragraph_alignment: {alignment}\n"
         ),
     )
     yaml_text = yaml_text.replace("mode: recognition", "mode: detection")

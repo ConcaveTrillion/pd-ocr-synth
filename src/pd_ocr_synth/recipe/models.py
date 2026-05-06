@@ -242,13 +242,15 @@ class Layout(_Frozen):
     # box. ``None`` (default) and ``"left"`` both preserve the existing
     # left-aligned output bit-for-bit. ``"center"`` centers each line
     # within ``paragraph_width`` (the width of the longest line, plus
-    # any first-line indent contribution). Only meaningful for
-    # ``mode in {paragraphs, pages}`` — recognition-mode samples are
-    # tight crops where alignment is undefined. ``"right"`` and
-    # ``"justify"`` are advertised by spec 06 but not yet implemented;
-    # they are rejected at validation time. See
-    # docs/roadmap/09-detection-mode.md § Paragraph alignment.
-    paragraph_alignment: Literal["left", "center"] | None = None
+    # any first-line indent contribution); ``"right"`` flushes each
+    # line to the right edge of ``paragraph_width``. Only meaningful
+    # for ``mode in {paragraphs, pages}`` — recognition-mode samples
+    # are tight crops where alignment is undefined. ``"justify"`` is
+    # advertised by spec 06 but not yet implemented (it requires per-
+    # word/inter-glyph spacing adjustment); it is rejected at recipe-
+    # load time. See docs/roadmap/09-detection-mode.md § Paragraph
+    # alignment.
+    paragraph_alignment: Literal["left", "center", "right"] | None = None
     # Explicit fixed page canvas size in pixels (width, height). When
     # set, ``render_page`` produces output of *exactly* this size by
     # rendering content at its natural extent and then padding the

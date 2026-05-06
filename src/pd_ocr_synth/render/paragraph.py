@@ -200,11 +200,13 @@ def render_paragraph(
     ``"left"`` are no-ops (bit-identical to the historical render);
     ``"center"`` centers each line's image, glyph runs, word boxes,
     and line bbox by the same per-line offset
-    ``(paragraph_width - line_natural_width) // 2``. Lines that are
-    already as wide as the paragraph (the longest line, by
-    construction) get a zero offset. ``"right"`` and ``"justify"``
-    are spec'd but not yet implemented and are rejected at
-    validation time.
+    ``(paragraph_width - line_natural_width) // 2``; ``"right"``
+    flushes each line to the right edge of ``paragraph_width`` with
+    the per-line offset ``paragraph_width - line_natural_width``.
+    Lines that are already as wide as the paragraph (the longest
+    line, by construction) get a zero offset under both ``"center"``
+    and ``"right"``. ``"justify"`` is spec'd but not yet implemented
+    (per-word stretching) and is rejected at recipe-load time.
 
     Raises:
         RenderError: if ``lines`` is empty, or any line is empty /
@@ -221,13 +223,14 @@ def render_paragraph(
             f"render_paragraph: first_line_indent_px must be >= 0, got {first_line_indent_px}"
         )
     alignment = recipe.layout.paragraph_alignment or "left"
-    if alignment not in {"left", "center"}:
+    if alignment not in {"left", "center", "right"}:
         # Defensive: pydantic's Literal already gates this, and the
-        # validator rejects anything outside {left, center}. The
-        # safety net keeps mypy and future literal-additions honest.
+        # validator rejects anything outside {left, center, right}.
+        # The safety net keeps mypy and future literal-additions
+        # honest (e.g. ``"justify"`` lands as a separate chunk).
         raise RenderError(
             f"render_paragraph: unsupported paragraph_alignment {alignment!r}; "
-            "only 'left' and 'center' are implemented"
+            "only 'left', 'center', and 'right' are implemented"
         )
     _validate_lines(lines)
 
@@ -317,13 +320,19 @@ def render_paragraph(
         # bit. For "center", each line is centered against
         # ``paragraph_width`` based on its **natural** width
         # (``frag.width + indent``); the longest line gets offset 0
-        # and shorter lines slide right by the half-difference. The
-        # same offset is applied to every coordinate this line emits
-        # (image paste, glyph runs, word boxes, line bbox) so the
-        # ground truth tracks the rendered ink.
+        # and shorter lines slide right by the half-difference. For
+        # "right", each line is flushed to the right edge: the offset
+        # is the full ``paragraph_width - line_natural_width``, so
+        # the longest line still gets offset 0 and shorter lines
+        # slide right by the full difference. The same offset is
+        # applied to every coordinate this line emits (image paste,
+        # glyph runs, word boxes, line bbox) so the ground truth
+        # tracks the rendered ink.
         line_natural_width = frag.width + indent
         if alignment == "center":
             align_offset = (paragraph_width - line_natural_width) // 2
+        elif alignment == "right":
+            align_offset = paragraph_width - line_natural_width
         else:  # "left"
             align_offset = 0
         line_left_in_canvas = padding + indent + align_offset

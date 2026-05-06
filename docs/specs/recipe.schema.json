@@ -438,7 +438,8 @@
             {
               "enum": [
                 "left",
-                "center"
+                "center",
+                "right"
               ],
               "type": "string"
             },

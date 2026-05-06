@@ -144,28 +144,31 @@ future small chunk.
 - [~] Spec 06 § `paragraphs` advertises
       `alignment: justify | left | right | center` and spec 06
       § Ground truth captured per sample documents `lines` /
-      `words` GT regardless of alignment. `"left"` and `"center"`
-      land as a layout key
-      `paragraph_alignment: Literal["left", "center"] | None = None`
+      `words` GT regardless of alignment. `"left"`, `"center"`, and
+      `"right"` land as a layout key
+      `paragraph_alignment: Literal["left", "center", "right"] | None = None`
       (`None` and `"left"` both preserve the historical un-aligned
       output bit-for-bit). The validator permits the field on
       `paragraphs` and `pages` modes and warns `layout_key_unused`
-      on `word_crops` / `lines`
-      (`tests/test_validation.py::test_paragraph_alignment_*`).
-      `render_paragraph` applies a per-line offset
-      `(paragraph_width - line_natural_width) // 2` to image paste,
-      glyph runs, word boxes, and line bbox under `"center"`; the
-      longest line gets offset 0 so canvas size is unchanged
-      (`tests/test_render_paragraph.py::*alignment_center*`).
-      `render_page` inherits alignment via the recipe (no extra
-      wiring); per-paragraph centering happens against each
-      paragraph's own max line width, not the page's
-      (`tests/test_render_page.py::*alignment_center*`). `"right"`
-      is mostly symmetric with `"center"`; `"justify"` is a separate
-      chunk because it needs inter-word stretching (and the spec is
-      silent on whether the last line of a paragraph stretches) —
-      both rejected at recipe-load time today by the pydantic
-      `Literal["left", "center"]`.
+      on `word_crops` / `lines`, parametrized across all three
+      values (`tests/test_validation.py::test_paragraph_alignment_*`).
+      `render_paragraph` applies a per-line offset to image paste,
+      glyph runs, word boxes, and line bbox: under `"center"` the
+      offset is `(paragraph_width - line_natural_width) // 2`; under
+      `"right"` it is the full `paragraph_width - line_natural_width`,
+      so short lines flush their right edge to the longest line's
+      right edge. The longest line gets offset 0 under both
+      `"center"` and `"right"` so canvas size is unchanged
+      (`tests/test_render_paragraph.py::*alignment_center*`,
+      `*alignment_right_*`). `render_page` inherits alignment via
+      the recipe (no extra wiring); per-paragraph alignment happens
+      against each paragraph's own max line width, not the page's
+      (`tests/test_render_page.py::*alignment_center_*`,
+      `*alignment_right_*`). `"justify"` is a separate (and
+      genuinely larger) chunk because it needs per-word/inter-glyph
+      stretching, and the spec is silent on whether the last line
+      of a paragraph stretches — it remains rejected at recipe-load
+      time by the pydantic `Literal["left", "center", "right"]`.
 
 ### First-line indent for paragraphs
 

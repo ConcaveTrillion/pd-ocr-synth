@@ -880,6 +880,69 @@ def test_render_page_alignment_center_word_boxes_stay_inside_canvas(
         assert 0 <= y0 < y1 <= h, f"word {wb.text!r} bbox out of canvas: {wb.bbox}, canvas={w}x{h}"
 
 
+def test_render_page_alignment_right_flushes_short_lines_per_paragraph(
+    tmp_path: Path,
+) -> None:
+    """Right alignment shifts short lines to each paragraph's right edge.
+
+    Same per-paragraph independence as ``"center"``: the short line in
+    paragraph A is right-flushed against paragraph A's max line width,
+    not the page's max line width. The shift under ``"right"`` is
+    twice that under ``"center"`` (the full ``paragraph_width -
+    line_width`` gap rather than half of it).
+    """
+
+    paragraphs = [["alpha beta gamma delta", "x"], ["mu nu", "y"]]
+
+    recipe_left = _build_aligned_recipe(tmp_path, "left")
+    recipe_right = _build_aligned_recipe(tmp_path, "right")
+
+    ctx_left = RenderContext.for_seed(recipe_left.seed)
+    ctx_left.reseed_for_sample(0)
+    sample_left = render_page(paragraphs, recipe=recipe_left, ctx=ctx_left)
+
+    ctx_right = RenderContext.for_seed(recipe_right.seed)
+    ctx_right.reseed_for_sample(0)
+    sample_right = render_page(paragraphs, recipe=recipe_right, ctx=ctx_right)
+
+    assert len(sample_left.line_boxes) == len(sample_right.line_boxes) == 4
+
+    # Paragraph 0 long line: unchanged.
+    assert sample_right.line_boxes[0].bbox[0] == sample_left.line_boxes[0].bbox[0]
+    # Paragraph 0 short line: shifts right and flushes to long line's
+    # right edge.
+    delta_p0 = sample_right.line_boxes[1].bbox[0] - sample_left.line_boxes[1].bbox[0]
+    assert delta_p0 > 0
+    assert sample_right.line_boxes[1].bbox[2] == sample_right.line_boxes[0].bbox[2]
+
+    # Paragraph 1 long line: unchanged.
+    assert sample_right.line_boxes[2].bbox[0] == sample_left.line_boxes[2].bbox[0]
+    # Paragraph 1 short line: flushes to paragraph 1's long-line right
+    # edge (which differs from paragraph 0's because the paragraph
+    # widths differ).
+    delta_p1 = sample_right.line_boxes[3].bbox[0] - sample_left.line_boxes[3].bbox[0]
+    assert delta_p1 > 0
+    assert sample_right.line_boxes[3].bbox[2] == sample_right.line_boxes[2].bbox[2]
+
+
+def test_render_page_alignment_right_word_boxes_stay_inside_canvas(
+    tmp_path: Path,
+) -> None:
+    """Right-aligned word boxes still sit inside the page canvas."""
+
+    paragraphs = [["alpha beta gamma", "x y"], ["delta epsilon", "z"]]
+    recipe = _build_aligned_recipe(tmp_path, "right")
+    ctx = RenderContext.for_seed(recipe.seed)
+    ctx.reseed_for_sample(0)
+    sample = render_page(paragraphs, recipe=recipe, ctx=ctx)
+
+    w, h = sample.size
+    for wb in sample.word_boxes:
+        x0, y0, x1, y1 = wb.bbox
+        assert 0 <= x0 < x1 <= w, f"word {wb.text!r} bbox out of canvas: {wb.bbox}, canvas={w}x{h}"
+        assert 0 <= y0 < y1 <= h, f"word {wb.text!r} bbox out of canvas: {wb.bbox}, canvas={w}x{h}"
+
+
 # ---------------------------------------------------------------------------
 # Explicit page_size_px (fixed-canvas pad)
 # ---------------------------------------------------------------------------
