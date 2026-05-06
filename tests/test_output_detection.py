@@ -82,11 +82,16 @@ def _word_box(text: str, bbox: tuple[int, int, int, int]) -> SimpleNamespace:
     return SimpleNamespace(text=text, bbox=bbox)
 
 
+def _paragraph_box(text: str, bbox: tuple[int, int, int, int]) -> SimpleNamespace:
+    return SimpleNamespace(text=text, bbox=bbox)
+
+
 def _fake_page_sample(
     *,
     font_path: Path | None = None,
     line_boxes: tuple[Any, ...] = (),
     word_boxes: tuple[Any, ...] = (),
+    paragraph_boxes: tuple[Any, ...] = (),
     size: tuple[int, int] = (200, 100),
 ) -> SimpleNamespace:
     """Duck-typed stand-in for ``RenderedSample`` for detection tests."""
@@ -105,6 +110,7 @@ def _fake_page_sample(
         glyph_runs=(),
         line_boxes=line_boxes,
         word_boxes=word_boxes,
+        paragraph_boxes=paragraph_boxes,
     )
 
 
@@ -468,3 +474,190 @@ def test_detection_stats_record_skip_counts_reasons() -> None:
     s.record_skip("no_corpus_token")
     assert s.samples_skipped == 3
     assert s.skip_reasons == {"missing_glyph": 2, "no_corpus_token": 1}
+
+
+# ---------------------------------------------------------------------------
+# Paragraph-box pass-through (regression: M07/M08-review pass)
+#
+# Pages and paragraphs renderers attach ``paragraph_boxes`` to the
+# ``RenderedSample``. The original M09 detection writer never consumed
+# them, silently dropping per-paragraph GT — a no-silent-drop violation.
+# These tests pin the writer, manifest, stats, and content-SHA-relevant
+# byte stability so the regression doesn't return.
+# ---------------------------------------------------------------------------
+
+
+def test_write_rendered_emits_paragraphs_block_when_provided(tmp_path: Path) -> None:
+    """When the renderer attaches ``paragraph_boxes``, the writer surfaces
+    them under a top-level ``paragraphs`` array in ``labels.json`` plus
+    an ``n_paragraphs`` counter in the manifest."""
+
+    rp = _build_recipe(tmp_path)
+    recipe = load_recipe(rp)
+    out = tmp_path / "out"
+
+    line1 = _line_box("alpha beta", (10, 10, 110, 30))
+    line2 = _line_box("gamma delta", (10, 40, 110, 60))
+    words = (
+        _word_box("alpha", (10, 12, 50, 28)),
+        _word_box("beta", (60, 12, 110, 28)),
+        _word_box("gamma", (10, 42, 60, 58)),
+        _word_box("delta", (70, 42, 110, 58)),
+    )
+    para = _paragraph_box("alpha beta\ngamma delta", (10, 10, 110, 60))
+
+    with DetectionWriter.open(recipe, out, seed=recipe.seed) as writer:
+        sample = _fake_page_sample(
+            line_boxes=(line1, line2),
+            word_boxes=words,
+            paragraph_boxes=(para,),
+            size=(200, 100),
+        )
+        writer.write_rendered(0, sample)
+
+    name = page_filename(0, width=7)
+    labels = json.loads((out / LABELS_FILENAME).read_text(encoding="utf-8"))
+    entry = labels[name]
+    assert "paragraphs" in entry
+    assert entry["paragraphs"] == [
+        {
+            "text": "alpha beta\ngamma delta",
+            "bbox": [10, 10, 110, 60],
+            "polygon": [[10, 10], [110, 10], [110, 60], [10, 60]],
+        }
+    ]
+
+    manifest_lines = (out / MANIFEST_FILENAME).read_text(encoding="utf-8").splitlines()
+    rec = json.loads(manifest_lines[0])
+    assert rec["n_paragraphs"] == 1
+
+
+def test_write_rendered_omits_paragraphs_block_when_absent(tmp_path: Path) -> None:
+    """No ``paragraph_boxes`` on the sample → no ``paragraphs`` key in
+    labels and no ``n_paragraphs`` key in the manifest. This preserves
+    byte-for-byte compatibility with pre-fix manifest / labels files
+    so the publish content-SHA idempotency loop stays stable for runs
+    that don't go through the paragraph/page path (e.g. tests that
+    only feed line_boxes through the detection writer)."""
+
+    rp = _build_recipe(tmp_path)
+    recipe = load_recipe(rp)
+    out = tmp_path / "out"
+
+    with DetectionWriter.open(recipe, out, seed=recipe.seed) as writer:
+        sample = _fake_page_sample(
+            line_boxes=(_line_box("alpha", (10, 10, 50, 30)),),
+            word_boxes=(_word_box("alpha", (10, 12, 50, 28)),),
+            # paragraph_boxes intentionally not supplied
+        )
+        writer.write_rendered(0, sample)
+
+    name = page_filename(0, width=7)
+    labels = json.loads((out / LABELS_FILENAME).read_text(encoding="utf-8"))
+    entry = labels[name]
+    assert "paragraphs" not in entry
+
+    manifest_lines = (out / MANIFEST_FILENAME).read_text(encoding="utf-8").splitlines()
+    rec = json.loads(manifest_lines[0])
+    assert "n_paragraphs" not in rec
+
+
+def test_write_rendered_emits_multiple_paragraphs_for_pages_mode(tmp_path: Path) -> None:
+    """``pages`` mode samples carry one ``ParagraphBox`` per paragraph
+    on the page. The writer must emit them in input order, one per
+    entry, with each entry's polygon matching its bbox."""
+
+    rp = _build_recipe(tmp_path)
+    recipe = load_recipe(rp)
+    out = tmp_path / "out"
+
+    paras = (
+        _paragraph_box("first", (10, 10, 200, 50)),
+        _paragraph_box("second", (10, 60, 200, 100)),
+        _paragraph_box("third", (10, 110, 200, 150)),
+    )
+    with DetectionWriter.open(recipe, out, seed=recipe.seed) as writer:
+        sample = _fake_page_sample(
+            line_boxes=(_line_box("first", (10, 10, 200, 50)),),
+            word_boxes=(),
+            paragraph_boxes=paras,
+            size=(220, 200),
+        )
+        writer.write_rendered(0, sample)
+
+    name = page_filename(0, width=7)
+    labels = json.loads((out / LABELS_FILENAME).read_text(encoding="utf-8"))
+    paragraphs = labels[name]["paragraphs"]
+    assert len(paragraphs) == 3
+    assert [p["text"] for p in paragraphs] == ["first", "second", "third"]
+    # Each polygon is bbox_to_polygon of the entry's bbox.
+    for entry in paragraphs:
+        assert entry["polygon"] == bbox_to_polygon(tuple(entry["bbox"]))
+
+    manifest_lines = (out / MANIFEST_FILENAME).read_text(encoding="utf-8").splitlines()
+    rec = json.loads(manifest_lines[0])
+    assert rec["n_paragraphs"] == 3
+
+
+def test_detection_stats_paragraphs_total_aggregates() -> None:
+    """Stats accumulate paragraph counts across renders (mirroring the
+    lines/words counters)."""
+
+    s = DetectionStats(samples_planned=10)
+    s.record_render(font_name="A.otf", n_lines=3, n_words=12, n_paragraphs=2)
+    s.record_render(font_name="A.otf", n_lines=1, n_words=4)  # default 0
+    s.record_render(font_name="B.otf", n_lines=4, n_words=16, n_paragraphs=3)
+    assert s.paragraphs_total == 5
+    # Existing counters stay correct alongside the new one.
+    assert s.lines_total == 8
+    assert s.words_total == 32
+
+
+def test_resume_preserves_paragraphs_total_from_existing_manifest(tmp_path: Path) -> None:
+    """Resume rolls up ``n_paragraphs`` from prior manifest records into
+    the stats accumulator. Without this, ``stats.json`` after a resume
+    would under-count paragraphs from the first run.
+
+    Also covers the back-compat shape: a manifest record without
+    ``n_paragraphs`` (i.e. one written before this fix landed) must be
+    tolerated as zero paragraphs rather than blowing up on KeyError."""
+
+    rp = _build_recipe(tmp_path, count=4)
+    recipe = load_recipe(rp)
+    out = tmp_path / "out"
+
+    para = _paragraph_box("alpha beta", (10, 10, 110, 30))
+    with DetectionWriter.open(recipe, out, seed=recipe.seed) as w1:
+        w1.write_rendered(
+            0,
+            _fake_page_sample(
+                line_boxes=(_line_box("alpha beta", (10, 10, 110, 30)),),
+                word_boxes=(),
+                paragraph_boxes=(para,),
+            ),
+        )
+        # Index 1 has no paragraph GT (older-style record) — resume
+        # must still tolerate it.
+        w1.write_rendered(
+            1,
+            _fake_page_sample(
+                line_boxes=(_line_box("gamma", (10, 10, 60, 30)),),
+                word_boxes=(),
+                paragraph_boxes=(),
+            ),
+        )
+
+    with DetectionWriter.open(recipe, out, seed=recipe.seed, resume=True) as w2:
+        w2.write_rendered(
+            2,
+            _fake_page_sample(
+                line_boxes=(_line_box("delta", (10, 10, 60, 30)),),
+                word_boxes=(),
+                paragraph_boxes=(_paragraph_box("delta", (10, 10, 60, 30)),),
+            ),
+        )
+
+    stats = json.loads((out / STATS_FILENAME).read_text(encoding="utf-8"))
+    assert stats["paragraphs_total"] == 2
+    assert stats["samples_written"] == 3
+    assert stats["lines_total"] == 3

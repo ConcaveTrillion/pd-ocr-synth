@@ -85,6 +85,13 @@ both the doctr-required fields and our richer ground truth:
           { "bbox": [120, 205, 220, 235], "text": "Cuiḋ" }
         ]
       }
+    ],
+    "paragraphs": [
+      {
+        "bbox": [120, 200, 1080, 520],
+        "polygon": [[120, 200], [1080, 200], [1080, 520], [120, 520]],
+        "text": "Cuiḋ ḋ'á aimsir..."
+      }
     ]
   }
 }
@@ -93,8 +100,11 @@ both the doctr-required fields and our richer ground truth:
 `polygons` is the flat list (one 4-corner polygon per detected line)
 that doctr's detection head consumes; `lines` is the rich GT we use
 ourselves and emit so the labeler / parquet publish path can recover
-the full annotation without re-rendering. Doctr ignores fields it
-doesn't recognize.
+the full annotation without re-rendering. `paragraphs` (only present
+when the renderer attached `paragraph_boxes` to the sample — i.e. for
+`paragraphs` and `pages` layout modes) carries per-paragraph GT for
+the same downstream tooling. Doctr ignores fields it doesn't
+recognize, so the extra payload is free.
 
 (An earlier draft of this spec specified `pages.json`; the trainer's
 existing reader is the canonical contract, so we matched its

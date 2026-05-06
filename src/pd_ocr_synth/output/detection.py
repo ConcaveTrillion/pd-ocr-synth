@@ -166,6 +166,13 @@ class DetectionStats:
     fonts_used: dict[str, int] = field(default_factory=dict)
     lines_total: int = 0
     words_total: int = 0
+    # Per-page paragraph count, summed across the run. Populated when
+    # the renderer attaches ``paragraph_boxes`` to the sample (pages /
+    # paragraphs layout modes); stays at zero for older recordings or
+    # for renderers that don't emit paragraph GT. Symmetric with
+    # ``lines_total`` / ``words_total`` so a downstream tool can read a
+    # consistent shape regardless of which fields were populated.
+    paragraphs_total: int = 0
     tokens_unique: int = 0
     wall_time_seconds: float = 0.0
 
@@ -173,11 +180,19 @@ class DetectionStats:
         self.samples_skipped += 1
         self.skip_reasons[reason] = self.skip_reasons.get(reason, 0) + 1
 
-    def record_render(self, *, font_name: str, n_lines: int, n_words: int) -> None:
+    def record_render(
+        self,
+        *,
+        font_name: str,
+        n_lines: int,
+        n_words: int,
+        n_paragraphs: int = 0,
+    ) -> None:
         self.samples_written += 1
         self.fonts_used[font_name] = self.fonts_used.get(font_name, 0) + 1
         self.lines_total += int(n_lines)
         self.words_total += int(n_words)
+        self.paragraphs_total += int(n_paragraphs)
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -243,6 +258,11 @@ class DetectionWriter:
                 self.stats.samples_written += 1
                 self.stats.lines_total += int(rec.get("n_lines", 0))
                 self.stats.words_total += int(rec.get("n_words", 0))
+                # ``n_paragraphs`` was added after the initial M09 writer
+                # landed (M07/M08-review pass); ``.get(..., 0)`` keeps
+                # resume-from-old-manifest working without a one-shot
+                # migration script.
+                self.stats.paragraphs_total += int(rec.get("n_paragraphs", 0))
             elif rec.get("status") == "skipped":
                 self.stats.record_skip(str(rec.get("reason", "unknown")))
         self._closed = False
@@ -401,6 +421,7 @@ class DetectionWriter:
 
         line_boxes = tuple(getattr(sample, "line_boxes", ()) or ())
         word_boxes = tuple(getattr(sample, "word_boxes", ()) or ())
+        paragraph_boxes = tuple(getattr(sample, "paragraph_boxes", ()) or ())
 
         # Build per-line entries (rich GT). Assign each word_box to
         # the line whose bbox contains the word's vertical center;
@@ -446,6 +467,27 @@ class DetectionWriter:
             "polygons": polygons,
             "lines": line_entries,
         }
+        # ``paragraphs`` carries per-paragraph GT (text + tight bbox +
+        # 4-corner polygon) emitted by the paragraph / page renderers.
+        # Doctr's DetectionDataset ignores unknown keys, so adding this
+        # block is non-breaking for the trainer while letting our own
+        # tooling (labeler, parquet publish, structured-OCR loops)
+        # recover paragraph segmentation without re-rendering. Per the
+        # no-silent-word/box-drop rule, dropping these on the floor —
+        # which the original M09 writer did — would lose ground truth
+        # for pages-mode runs. Only emitted when populated so existing
+        # labels.json files (recognition-shape carry-overs, single-line
+        # paragraph runs) stay byte-identical and the content-SHA
+        # idempotency loop in publish/ keeps holding.
+        if paragraph_boxes:
+            label_entry["paragraphs"] = [
+                {
+                    "text": pb.text,
+                    "bbox": [int(v) for v in pb.bbox],
+                    "polygon": bbox_to_polygon(tuple(int(v) for v in pb.bbox)),
+                }
+                for pb in paragraph_boxes
+            ]
         if unassigned_words:
             # Per the no-silent-drop rule: words without a containing
             # line still appear in the label so trainer/labeler tools
@@ -458,6 +500,7 @@ class DetectionWriter:
 
         font_path = Path(sample.font_path)
         n_words = sum(len(entry["words"]) for entry in line_entries) + len(unassigned_words)
+        n_paragraphs = len(paragraph_boxes)
         record: dict[str, Any] = {
             "index": idx,
             "id": Path(name).stem,
@@ -479,11 +522,18 @@ class DetectionWriter:
             "transforms_applied": [t.name for t in self.recipe.text_transforms],
             "degradations_applied": list(applied_degradations),
         }
+        # ``n_paragraphs`` is omitted (rather than written as 0) when
+        # the renderer didn't supply paragraph GT — keeps existing
+        # manifest.jsonl files byte-identical for runs that didn't go
+        # through the paragraph/page path.
+        if n_paragraphs:
+            record["n_paragraphs"] = n_paragraphs
         self._manifest[idx] = record
         self.stats.record_render(
             font_name=font_path.name,
             n_lines=len(line_entries),
             n_words=n_words,
+            n_paragraphs=n_paragraphs,
         )
 
     def write_skipped(
