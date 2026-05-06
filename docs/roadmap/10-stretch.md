@@ -70,6 +70,13 @@ if they start mattering:
   ``PD_OCR_SYNTH_NO_AUDIT=1``. _Read-side chunk landed:_
   ``pd-ocr-synth audit <output_dir>`` reads the JSONL back, with
   ``--json`` for machine-readable output and ``--limit N`` to tail to
-  the most recent N entries. Future chunks: filtering by
-  recipe/seed/SHA, and a global ``~/.cache/pd-ocr-synth/audit.jsonl``
-  aggregate so cross-recipe runs share one timeline.
+  the most recent N entries. _Filter chunk landed:_ ``--since`` and
+  ``--until`` accept ISO-8601 timestamps (date-only allowed; both
+  bounds inclusive on the second-precision audit timestamp), and
+  ``--recipe-sha PREFIX`` does a case-insensitive prefix match against
+  ``recipe_sha`` (entries with a null SHA are excluded — a SHA filter
+  implies "find runs of recipe X"). Filters apply _before_ ``--limit``
+  so "last N matching" composes naturally. Future chunks: a global
+  ``~/.cache/pd-ocr-synth/audit.jsonl`` aggregate so cross-recipe runs
+  share one timeline, and an ``--summary`` flag that aggregates
+  runtime / sample counts across the matched window.

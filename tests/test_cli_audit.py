@@ -287,3 +287,322 @@ def test_audit_truncates_long_recipe_names(
     assert rc == 0, captured.err
     assert long_name not in captured.out  # full name shouldn't fit
     assert "this-is-a-very-long-recipe" in captured.out or "…" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# Filter flags: --since / --until / --recipe-sha (M10 stretch follow-up)
+# ---------------------------------------------------------------------------
+#
+# These exercise the filtering layer that sits between the JSONL read and
+# the ``--limit`` tail. The contract under test:
+#
+# - ``--since`` / ``--until`` are inclusive on both ends (second-precision
+#   ISO-8601 timestamps make an exclusive bound user-hostile);
+# - ``--recipe-sha`` is a case-insensitive prefix match and excludes rows
+#   with a ``null`` SHA (an in-memory recipe shouldn't satisfy a "find
+#   runs of recipe X" query);
+# - filters apply *before* ``--limit`` so "last N matching" composes;
+# - filter parse errors are usage errors (exit 2);
+# - an empty filter result is still exit 0 (a successful query that
+#   matched nothing isn't an error).
+
+
+def _ts(hour: int) -> str:
+    """ISO-8601 timestamp for ``2026-05-06T<hour>:00:00Z`` (test convenience)."""
+
+    return f"2026-05-06T{hour:02d}:00:00Z"
+
+
+def test_audit_since_filters_inclusive_lower_bound(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    out = tmp_path / "render-out"
+    _seed_audit(
+        out,
+        [
+            _make_entry(timestamp=_ts(1), seed=1),
+            _make_entry(timestamp=_ts(2), seed=2),
+            _make_entry(timestamp=_ts(3), seed=3),
+        ],
+    )
+
+    rc = main(["audit", str(out), "--json", "--since", _ts(2)])
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+
+    payload = json.loads(captured.out)
+    # ``--since`` is inclusive: the 02:00 row is kept.
+    assert [entry["seed"] for entry in payload] == [2, 3]
+
+
+def test_audit_until_filters_inclusive_upper_bound(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    out = tmp_path / "render-out"
+    _seed_audit(
+        out,
+        [
+            _make_entry(timestamp=_ts(1), seed=1),
+            _make_entry(timestamp=_ts(2), seed=2),
+            _make_entry(timestamp=_ts(3), seed=3),
+        ],
+    )
+
+    rc = main(["audit", str(out), "--json", "--until", _ts(2)])
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+
+    payload = json.loads(captured.out)
+    # ``--until`` is inclusive: the 02:00 row is kept.
+    assert [entry["seed"] for entry in payload] == [1, 2]
+
+
+def test_audit_since_and_until_compose(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    out = tmp_path / "render-out"
+    _seed_audit(
+        out,
+        [_make_entry(timestamp=_ts(h), seed=h) for h in range(1, 6)],
+    )
+
+    rc = main(
+        ["audit", str(out), "--json", "--since", _ts(2), "--until", _ts(4)],
+    )
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+
+    payload = json.loads(captured.out)
+    # Closed range [02:00, 04:00].
+    assert [entry["seed"] for entry in payload] == [2, 3, 4]
+
+
+def test_audit_since_accepts_date_only(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--since 2026-05-06`` means ``2026-05-06T00:00:00Z`` (start-of-day).
+
+    The convenience date-only form lets a user say "everything from
+    today" without typing a time component.
+    """
+
+    out = tmp_path / "render-out"
+    _seed_audit(
+        out,
+        [
+            _make_entry(timestamp="2026-05-05T23:59:59Z", seed=1),
+            _make_entry(timestamp="2026-05-06T00:00:00Z", seed=2),
+            _make_entry(timestamp="2026-05-06T12:00:00Z", seed=3),
+        ],
+    )
+
+    rc = main(["audit", str(out), "--json", "--since", "2026-05-06"])
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+
+    payload = json.loads(captured.out)
+    # The midnight row is on the inclusive boundary; the prior-day row
+    # is dropped.
+    assert [entry["seed"] for entry in payload] == [2, 3]
+
+
+def test_audit_since_invalid_format_is_usage_error(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    out = tmp_path / "render-out"
+    _seed_audit(out, [_make_entry()])
+
+    rc = main(["audit", str(out), "--since", "yesterday"])
+    captured = capsys.readouterr()
+    assert rc == 2  # USAGE_EXIT
+    assert "since" in captured.err.lower()
+
+
+def test_audit_until_invalid_format_is_usage_error(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    out = tmp_path / "render-out"
+    _seed_audit(out, [_make_entry()])
+
+    rc = main(["audit", str(out), "--until", "not-a-date"])
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "until" in captured.err.lower()
+
+
+def test_audit_recipe_sha_prefix_filters(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    out = tmp_path / "render-out"
+    _seed_audit(
+        out,
+        [
+            _make_entry(timestamp=_ts(1), seed=1, recipe_sha="aaaa" + "0" * 60),
+            _make_entry(timestamp=_ts(2), seed=2, recipe_sha="bbbb" + "0" * 60),
+            _make_entry(timestamp=_ts(3), seed=3, recipe_sha="aaaa" + "1" * 60),
+        ],
+    )
+
+    rc = main(["audit", str(out), "--json", "--recipe-sha", "aaaa"])
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+
+    payload = json.loads(captured.out)
+    assert [entry["seed"] for entry in payload] == [1, 3]
+
+
+def test_audit_recipe_sha_is_case_insensitive(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    out = tmp_path / "render-out"
+    _seed_audit(
+        out,
+        [_make_entry(recipe_sha="abcdef" + "0" * 58)],
+    )
+
+    rc = main(["audit", str(out), "--json", "--recipe-sha", "ABCDEF"])
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+    assert len(json.loads(captured.out)) == 1
+
+
+def test_audit_recipe_sha_excludes_null_sha_entries(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A SHA filter is read as "find runs of recipe X" — a null SHA
+    means "no recipe identity recorded" and shouldn't satisfy that."""
+
+    out = tmp_path / "render-out"
+    _seed_audit(
+        out,
+        [
+            _make_entry(timestamp=_ts(1), seed=1, recipe_sha=None),
+            _make_entry(timestamp=_ts(2), seed=2, recipe_sha="aa" + "0" * 62),
+        ],
+    )
+
+    rc = main(["audit", str(out), "--json", "--recipe-sha", "aa"])
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+    assert [entry["seed"] for entry in json.loads(captured.out)] == [2]
+
+
+def test_audit_recipe_sha_empty_string_is_usage_error(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A flag value of ``""`` would otherwise match every entry — that
+    silent surprise is more user-hostile than asking for a real prefix."""
+
+    out = tmp_path / "render-out"
+    _seed_audit(out, [_make_entry()])
+
+    rc = main(["audit", str(out), "--recipe-sha", ""])
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "recipe-sha" in captured.err.lower() or "recipe_sha" in captured.err.lower()
+
+
+def test_audit_filter_then_limit_composes(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--limit`` applies *after* the filters: "last 2 from today"."""
+
+    out = tmp_path / "render-out"
+    _seed_audit(
+        out,
+        [_make_entry(timestamp=_ts(h), seed=h) for h in range(1, 6)],
+    )
+
+    rc = main(
+        [
+            "audit",
+            str(out),
+            "--json",
+            "--since",
+            _ts(2),
+            "--until",
+            _ts(4),
+            "--limit",
+            "2",
+        ],
+    )
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+
+    payload = json.loads(captured.out)
+    # Filter window is [02:00, 04:00] → seeds [2, 3, 4]; tail-2 → [3, 4].
+    assert [entry["seed"] for entry in payload] == [3, 4]
+
+
+def test_audit_empty_filter_result_returns_zero_in_json_mode(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A filter that matches nothing isn't an error — it's a successful
+    query of an empty result set. JSON mode emits ``[]``."""
+
+    out = tmp_path / "render-out"
+    _seed_audit(out, [_make_entry(timestamp=_ts(1))])
+
+    rc = main(
+        ["audit", str(out), "--json", "--since", "2099-01-01"],
+    )
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+    assert json.loads(captured.out) == []
+
+
+def test_audit_empty_filter_result_returns_zero_in_table_mode(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Same contract in table mode: header + ``(no audit entries)``."""
+
+    out = tmp_path / "render-out"
+    _seed_audit(out, [_make_entry(timestamp=_ts(1))])
+
+    rc = main(
+        ["audit", str(out), "--recipe-sha", "deadbeef"],
+    )
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+    assert "(no audit entries)" in captured.out
+
+
+def test_audit_since_with_z_suffix_matches_stored_format(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The audit writer stores timestamps with a ``Z`` suffix; passing
+    a ``+00:00`` form must still produce identical filter behaviour."""
+
+    out = tmp_path / "render-out"
+    _seed_audit(
+        out,
+        [
+            _make_entry(timestamp=_ts(1), seed=1),
+            _make_entry(timestamp=_ts(3), seed=3),
+        ],
+    )
+
+    rc = main(
+        ["audit", str(out), "--json", "--since", "2026-05-06T02:00:00+00:00"],
+    )
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+
+    # Both forms (Z, +00:00) should normalize to the same comparison
+    # string and keep only the 03:00 row.
+    payload = json.loads(captured.out)
+    assert [entry["seed"] for entry in payload] == [3]

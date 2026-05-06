@@ -193,6 +193,28 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         help="only show the most recent N entries (tail behaviour)",
     )
+    p_audit.add_argument(
+        "--since",
+        help=(
+            "only show entries with timestamp >= this ISO-8601 value "
+            "(e.g. '2026-05-06' or '2026-05-06T10:30:00Z'); applied before --limit"
+        ),
+    )
+    p_audit.add_argument(
+        "--until",
+        help=(
+            "only show entries with timestamp <= this ISO-8601 value "
+            "(same parser as --since); applied before --limit"
+        ),
+    )
+    p_audit.add_argument(
+        "--recipe-sha",
+        dest="recipe_sha",
+        help=(
+            "only show entries whose recipe_sha starts with this hex prefix "
+            "(case-insensitive); entries with a null sha are excluded"
+        ),
+    )
 
     p_clean = subparsers.add_parser("clean", help="remove cached corpora for a recipe")
     _add_recipe_arg(p_clean)
@@ -853,7 +875,48 @@ def _cmd_clean(recipe_arg: str, *, cache_dir: str | None) -> int:
     return 0
 
 
-def _cmd_audit(output_dir_arg: str, *, as_json: bool, limit: int | None) -> int:
+def _parse_audit_timestamp(raw: str) -> str | None:
+    """Normalize an audit ``--since`` / ``--until`` value to an ISO-8601 string.
+
+    Accepts the same shapes the audit writer emits (``YYYY-MM-DDTHH:MM:SSZ``)
+    plus the convenience date-only form (``YYYY-MM-DD``) so a user can ask
+    "everything since today" without typing a time component. Returns the
+    normalized string with ``+00:00`` rewritten as ``Z`` so simple lex
+    comparison against the stored ``timestamp`` field works.
+
+    Returns ``None`` when ``raw`` is unparseable; the caller turns that
+    into a usage-error exit.
+    """
+
+    from datetime import datetime
+
+    candidate = raw.strip()
+    if not candidate:
+        return None
+    # ``datetime.fromisoformat`` accepts ``Z`` natively from 3.11+, but be
+    # defensive: rewrite a trailing ``Z`` to ``+00:00`` so older parser
+    # paths (and a date-only string that the user expects to mean
+    # ``00:00:00Z``) work uniformly.
+    normalized = candidate
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    iso = parsed.isoformat()
+    return iso.replace("+00:00", "Z")
+
+
+def _cmd_audit(
+    output_dir_arg: str,
+    *,
+    as_json: bool,
+    limit: int | None,
+    since: str | None = None,
+    until: str | None = None,
+    recipe_sha: str | None = None,
+) -> int:
     """Read back the per-render audit log written by ``render``.
 
     The render command appends one JSONL line per invocation to
@@ -873,13 +936,33 @@ def _cmd_audit(output_dir_arg: str, *, as_json: bool, limit: int | None) -> int:
 
     ``--limit N`` keeps only the *most recent* N rows (i.e. the tail);
     a negative or zero value is rejected as a usage error to avoid
-    silent surprises.
+    silent surprises. ``--limit`` applies *after* the filters below so
+    "last 5 entries from today" composes naturally as
+    ``--since 2026-05-06 --limit 5``.
+
+    Filters:
+
+    - ``--since ISO`` / ``--until ISO``: keep entries whose
+      ``timestamp`` field falls inside the half-open / closed range
+      ``[since, until]`` (both bounds inclusive — the audit timestamp
+      has second precision so an exclusive upper bound would surprise
+      users who pass the same date for ``--since`` and ``--until``).
+      Comparison is lexicographic on the normalized ``...Z`` string,
+      which is correct for ISO-8601 UTC.
+    - ``--recipe-sha PREFIX``: keep entries whose ``recipe_sha`` starts
+      with the (case-insensitively normalized) hex prefix. Entries with
+      a ``null`` SHA are excluded — a SHA filter implies "I want runs
+      that recorded a SHA", and an in-memory recipe wouldn't satisfy
+      that intent.
 
     Exit codes:
 
     - ``0`` — success, even if the file exists but is empty (we still
-      emit the header in table mode and ``[]`` in JSON mode).
-    - ``2`` — usage error (bad ``--limit``).
+      emit the header in table mode and ``[]`` in JSON mode), and even
+      if the filters reduce the set to zero entries (a filter that
+      matches nothing is a successful query of an empty result set).
+    - ``2`` — usage error (bad ``--limit``, unparseable ``--since``
+      or ``--until``).
     - ``6`` — output dir doesn't exist or has no audit file. We reuse
       the destination-invalid family because the consumer pointed us
       at something that isn't a valid render output.
@@ -890,6 +973,36 @@ def _cmd_audit(output_dir_arg: str, *, as_json: bool, limit: int | None) -> int:
     if limit is not None and limit <= 0:
         print(f"error: --limit must be positive (got {limit})", file=sys.stderr)
         return USAGE_EXIT
+
+    since_iso: str | None = None
+    if since is not None:
+        since_iso = _parse_audit_timestamp(since)
+        if since_iso is None:
+            print(
+                f"error: --since must be ISO-8601 (got {since!r})",
+                file=sys.stderr,
+            )
+            return USAGE_EXIT
+
+    until_iso: str | None = None
+    if until is not None:
+        until_iso = _parse_audit_timestamp(until)
+        if until_iso is None:
+            print(
+                f"error: --until must be ISO-8601 (got {until!r})",
+                file=sys.stderr,
+            )
+            return USAGE_EXIT
+
+    sha_prefix: str | None = None
+    if recipe_sha is not None:
+        sha_prefix = recipe_sha.strip().lower()
+        if not sha_prefix:
+            print(
+                "error: --recipe-sha must be a non-empty hex prefix",
+                file=sys.stderr,
+            )
+            return USAGE_EXIT
 
     output_dir = Path(output_dir_arg).expanduser()
     if not output_dir.exists():
@@ -906,6 +1019,22 @@ def _cmd_audit(output_dir_arg: str, *, as_json: bool, limit: int | None) -> int:
         return DESTINATION_EXIT
 
     entries = read_audit_entries(audit_path)
+
+    # Apply filters before the tail-limit so "last N entries matching
+    # the filter" composes correctly. Each filter is independent — the
+    # final set is the conjunction.
+    if since_iso is not None:
+        entries = [e for e in entries if str(e.get("timestamp", "")) >= since_iso]
+    if until_iso is not None:
+        entries = [e for e in entries if str(e.get("timestamp", "")) <= until_iso]
+    if sha_prefix is not None:
+        entries = [
+            e
+            for e in entries
+            if isinstance(e.get("recipe_sha"), str)
+            and str(e["recipe_sha"]).lower().startswith(sha_prefix)
+        ]
+
     if limit is not None:
         entries = entries[-limit:]
 
@@ -1015,6 +1144,9 @@ _IMPLEMENTED_DISPATCH = {
         args.output_dir,
         as_json=args.json,
         limit=args.limit,
+        since=args.since,
+        until=args.until,
+        recipe_sha=args.recipe_sha,
     ),
 }
 
