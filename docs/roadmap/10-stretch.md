@@ -110,6 +110,15 @@ heading are tracked in **Future work — beyond M10**.
       the reason. The Pillow version pin is documented inline since
       sha-digest stability across Pillow majors is not guaranteed
       (`a087054`).
+- [x] Degraded variant: a 5th canonical recipe pipes the `lines`
+      render through one certain (`probability: 1.0`) `skew` stage
+      (`angle_deg: 2.0`, `fill: background`) and pins the
+      post-degradation PNG sha256. This locks the geometry-stage
+      dispatch path in `apply_degradation`, PIL's `Image.rotate`
+      BILINEAR resampler, and the `_resolve_fill('background', ...)`
+      call site — none of which the four undegraded pins exercise.
+      Same self-bootstrap regen path via
+      `PD_OCR_SYNTH_REGEN_VISUAL_DIGESTS=1`.
 
 ### Real bug fixes shipped under M10
 
@@ -135,11 +144,11 @@ shipping or M11 from starting.
   (modern-spelling heuristic for a Gaelic / early-modern recipe),
   per-stage option sanity checks, cross-stage interaction warnings
   (e.g. `binarize` after `noise`).
-- **Visual regression — degraded + golden pins.** Bytes-level pin
-  for a degraded sample (lock the degradation pipeline once it
-  stabilizes); a "golden" pinned digest for `run_recipe` end-to-end
-  output (manifest + first sample) so the publish-ready artifact
-  contract is locked.
+- **Visual regression — golden end-to-end pin.** The degraded-sample
+  pin now ships under "Visual regression tests" above (locks one
+  certain `skew` stage on a `lines` render). Still open: a "golden"
+  pinned digest for `run_recipe` end-to-end output (manifest + first
+  sample) so the publish-ready artifact contract is locked.
 - **Audit — global aggregate cache.** A
   `~/.cache/pd-ocr-synth/audit.jsonl` aggregate so cross-recipe runs
   share one timeline. Today the audit log is per-output-dir;

@@ -75,6 +75,7 @@ from pathlib import Path
 
 import pytest
 
+from pd_ocr_synth.degradation import apply_degradation
 from pd_ocr_synth.recipe import load_recipe
 from pd_ocr_synth.render import (
     RenderContext,
@@ -212,6 +213,45 @@ layout:
   paragraph_spacing: 1.0
 """
 
+# Degraded variant: ``lines`` mode + a single, certain ``skew`` stage.
+# ``skew`` is geometry-aware (it rotates the image *and* updates every
+# bbox collection), so this recipe locks the degradation-pipeline byte
+# output across the bbox-update path that the four undegraded pins do
+# not touch. ``probability: 1.0`` removes the per-stage gate roll from
+# the output, ``angle_deg: 2.0`` is a fixed scalar (no range draw), and
+# ``fill: background`` re-uses the rendering background color so the
+# expanded canvas corners pick up a deterministic value rather than a
+# transparent / mode-dependent default.
+_RECIPE_LINES_DEGRADED = """\
+schema_version: 1
+name: visreg-lines-degraded
+seed: 1
+output:
+  format: pd-ocr-trainer/v1
+  mode: recognition
+  destination: ./out
+  count: 1
+corpus:
+  - type: local
+    path: ./words.txt
+fonts:
+  - path: {font_path}
+    weight: 1.0
+rendering:
+  font_size_pt: 18
+  dpi: 300
+  ink_color: {{ r: 10, g: 10, b: 10 }}
+  background_color: {{ r: 240, g: 235, b: 220 }}
+layout:
+  mode: lines
+  padding_px: 6
+degradation:
+  - kind: skew
+    probability: 1.0
+    angle_deg: 2.0
+    fill: background
+"""
+
 
 def _write_recipe(tmp_path: Path, template: str, name: str) -> object:
     font = _require_font()
@@ -240,6 +280,11 @@ _PINS = {
     "line:ḃeaḋ saoġal": "68864f7c91ff4a079701e6564e403e14ab7ba967be65cf6b03c35bafb4e5dba9",
     "paragraph:two-lines": "e625fabba7d3d0f5cfea548a3a7ab9b5685d6b1b12a3998cf996ba4a92be90b5",
     "page:two-paragraphs": "6ae102edf3f1bcf9c38b926e19e095c30fe288c710b5017c03e4074c3cf514f9",
+    # Degraded line: lines-mode render piped through a single certain
+    # skew stage at fixed +2 deg. Rotation expands the canvas and
+    # bilinear-resamples the rendered text; this pin locks that
+    # combined byte output. To regen, see _REGEN_ENV note above.
+    "line+skew:ḃeaḋ saoġal": "1a0487b7bd625eaeecc6b9e784f393b9752ea15d95f277c44415d031c2e5f142",
 }
 
 
@@ -333,3 +378,31 @@ def test_visreg_word_crop_digest_is_stable_across_two_calls(tmp_path: Path) -> N
         return _png_sha256(sample.image)
 
     assert _hash() == _hash()
+
+
+# ---------------------------------------------------------------------------
+# Degraded pin — locks the post-degradation byte output.
+#
+# The four pins above all skip ``apply_degradation``. This case wires
+# in one certain (``probability: 1.0``) ``skew`` stage so the resulting
+# digest covers:
+#   - the geometry-stage dispatch path in ``apply_degradation`` (vs. the
+#     pixel-stage path),
+#   - PIL's ``Image.rotate`` BILINEAR resampler with ``expand=True``,
+#   - the ``_resolve_fill('background', sample)`` call site,
+# none of which are exercised by the undegraded pins.
+#
+# Drift here can mean: a degradation refactor changed call ordering,
+# Pillow's bilinear resampler changed (rare, but happened in 9.x), or
+# a rendering change that flowed through to the rotated output. The
+# regen path is identical to the undegraded pins.
+# ---------------------------------------------------------------------------
+
+
+def test_visreg_line_with_skew_pinned_digest(tmp_path: Path) -> None:
+    recipe = _write_recipe(tmp_path, _RECIPE_LINES_DEGRADED, "lines_degraded")
+    ctx = RenderContext.for_seed(recipe.seed)
+    ctx.reseed_for_sample(0)
+    sample = render_line("ḃeaḋ saoġal", recipe=recipe, ctx=ctx)
+    sample = apply_degradation(sample, list(recipe.degradation), rng=ctx.rng)
+    _check_pin("line+skew:ḃeaḋ saoġal", sample.image)
