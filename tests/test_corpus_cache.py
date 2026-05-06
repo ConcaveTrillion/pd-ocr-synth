@@ -88,6 +88,46 @@ def test_long_keys_get_hashed(tmp_path: Path) -> None:
     assert meta.size_bytes == 1
 
 
+def test_safe_name_is_injective_for_short_keys_with_forbidden_chars(
+    tmp_path: Path,
+) -> None:
+    """Short keys differing only in forbidden characters must not collide.
+
+    Regression: ``_safe_name`` previously replaced forbidden characters
+    with ``_`` and returned the cleaned form unchanged for inputs
+    <=80 chars. That meant ``"a/b"`` and ``"a_b"`` (and ``"a:b"``)
+    all hashed to the same on-disk filename, so distinct cache entries
+    silently shared a slot — the second writer's text overwrote the
+    first, and reads returned the wrong content.
+    """
+
+    cache = CacheStore(root=tmp_path)
+    cache.write_text("p", "a/b", "text-from-slash", source="s1")
+    cache.write_text("p", "a_b", "text-from-underscore", source="s2")
+    cache.write_text("p", "a:b", "text-from-colon", source="s3")
+    assert cache.read_text("p", "a/b") == "text-from-slash"
+    assert cache.read_text("p", "a_b") == "text-from-underscore"
+    assert cache.read_text("p", "a:b") == "text-from-colon"
+    # Three distinct on-disk files — no collision.
+    written = sorted(p.name for p in (tmp_path / "p").glob("*.txt"))
+    assert len(written) == 3, written
+
+
+def test_safe_name_passes_through_common_provider_keys(tmp_path: Path) -> None:
+    """Provider-generated keys (``<provider>-<digest>``) must remain
+    human-readable on disk — i.e. unchanged after sanitization.
+
+    The injective-fix above must not regress this: only inputs that
+    actually require sanitization or truncation should pick up a
+    digest suffix.
+    """
+
+    cache = CacheStore(root=tmp_path)
+    cache.write_text("web", "web-1234567890abcdef", "x", source="s")
+    written = list((tmp_path / "web").glob("*.txt"))
+    assert [p.stem for p in written] == ["web-1234567890abcdef"]
+
+
 def test_cache_meta_for_text_computes_hash() -> None:
     meta = CacheMeta.for_text(
         provider="x",

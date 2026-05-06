@@ -173,14 +173,19 @@ _FORBIDDEN = set('<>:"/\\|?*\x00')
 def _safe_name(value: str) -> str:
     """Sanitize a path component to safe filename characters.
 
-    Long strings (URLs, etc.) are hashed; short ones pass through with
-    only forbidden characters replaced. The hash suffix is always
-    appended for long names so collisions on the human-readable prefix
-    don't merge cache entries.
+    The cache is content-addressable, so the sanitizer must be
+    *injective*: distinct inputs MUST produce distinct outputs.
+
+    - Long strings (URLs, etc.) are truncated and a 16-char sha256
+      digest is appended.
+    - Short strings whose cleaned form equals the raw input pass
+      through unchanged (the common provider case ``"web-<digest>"``).
+    - Short strings that contain forbidden characters get a digest
+      suffix too, so e.g. ``"a/b"`` and ``"a_b"`` cannot share a slot.
     """
 
     cleaned = "".join("_" if c in _FORBIDDEN else c for c in value)
-    if len(cleaned) <= 80:
+    if cleaned == value and len(cleaned) <= 80:
         return cleaned
     digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
     head = cleaned[:60].rstrip("._-")
