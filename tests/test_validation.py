@@ -180,6 +180,77 @@ def test_implemented_corpus_providers_pass_clean(
     assert "corpus_provider_not_implemented" not in codes, [i.format() for i in report.issues]
 
 
+def test_unimplemented_text_transform_is_error(tmp_path: Path) -> None:
+    """Spec-known but not-yet-registered text transforms must error at validate time.
+
+    ``u_v_swap`` is documented in spec 05 ("Built-in: scriptio
+    continua / antique conventions") but the M04 runtime registry does
+    not register it yet — see ``docs/roadmap/04-text-transforms.md``
+    "Antique-conventions built-ins". Calling render on a recipe that
+    uses it would raise
+    :class:`pd_ocr_synth.text_transforms.UnknownTransformError` deep in
+    :func:`pd_ocr_synth.text_transforms.apply_pipeline`, well after
+    corpus-fetch + setup costs.
+
+    Mirrors the iter-65 ``degradation_kind_not_implemented`` / iter-73
+    ``corpus_provider_not_implemented`` precedents: surface the gap up
+    front, with a distinct error code separate from any structural
+    rejection pydantic would do at YAML load (the recipe model accepts
+    any string for ``TextTransform.name``).
+    """
+
+    yaml_text = _minimal_yaml(
+        font=str(_make_file(tmp_path / "fake.otf")),
+        dest=str(tmp_path / "out"),
+        corpus=str(_make_file(tmp_path / "seed.txt")),
+    )
+    yaml_text = yaml_text + "text_transforms:\n  - u_v_swap\n"
+    recipe = load_recipe(_write(tmp_path, yaml_text))
+    report = validate_recipe(recipe)
+    codes = [i.code for i in report.errors]
+    assert "text_transform_not_implemented" in codes, [i.format() for i in report.issues]
+    msg = next(i.message for i in report.errors if i.code == "text_transform_not_implemented")
+    # Error message points at the roadmap so the user knows where to
+    # look for status / contribute, matching the
+    # ``corpus_provider_not_implemented`` shape.
+    assert "04-text-transforms.md" in msg
+    assert "u_v_swap" in msg
+
+
+def test_implemented_text_transforms_pass_clean(tmp_path: Path, writable_font_bytes: bytes) -> None:
+    """A recipe using only registered transforms must validate clean.
+
+    Companion to ``test_unimplemented_text_transform_is_error``: pin
+    the negative-space invariant that the new
+    ``text_transform_not_implemented`` check does *not* fire for the
+    M04 builtins. If a future refactor accidentally drops a registered
+    transform from the default registry, this test surfaces it
+    immediately rather than as a downstream regression in render.
+    """
+
+    font = tmp_path / "fake.otf"
+    font.write_bytes(writable_font_bytes)
+    seed = _make_file(tmp_path / "seed.txt", "hello\n")
+    yaml_text = _minimal_yaml(
+        font=str(font),
+        dest=str(tmp_path / "out"),
+        corpus=str(seed),
+    )
+    yaml_text = (
+        yaml_text
+        + "text_transforms:\n"
+        + "  - normalize_whitespace\n"
+        + "  - apply_lenition_dots:\n"
+        + "      mode: aggressive\n"
+        + "  - tironian_et:\n"
+        + "      probability: 0.7\n"
+    )
+    recipe = load_recipe(_write(tmp_path, yaml_text))
+    report = validate_recipe(recipe)
+    codes = [i.code for i in report.errors]
+    assert "text_transform_not_implemented" not in codes, [i.format() for i in report.issues]
+
+
 def test_unresolved_env_var_in_destination_is_error(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.delenv("DEFINITELY_UNSET_VAR", raising=False)
     yaml_text = _minimal_yaml(

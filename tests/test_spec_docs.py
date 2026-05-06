@@ -842,3 +842,127 @@ def test_corpus_model_types_documented_in_spec_04() -> None:
         "Add a `## `<name>`` section to spec 04 (or remove the "
         "model member if the type was withdrawn)."
     )
+
+
+# ---------------------------------------------------------------------------
+# Spec 05 ↔ text-transform registry drift
+#
+# Every transform documented in ``docs/specs/05-text-transforms.md`` must
+# be either registered with the runtime ``default_registry()`` or tracked
+# as deferred in ``docs/roadmap/04-text-transforms.md``. The companion
+# validation check ``text_transform_not_implemented`` (this iter) catches
+# *recipe-named* drift at validate time; this meta-test catches *spec-vs-
+# code* drift at test time. Together they mirror the iter-65 / iter-73
+# pattern for degradation kinds and corpus providers.
+#
+# Direction-by-direction:
+#   1. Every spec 05 transform name must be either runtime-registered or
+#      roadmap-deferred. A bare spec entry with no roadmap ack is
+#      vapourware — fail.
+#   2. Every runtime-registered transform must appear in spec 05.
+#      Otherwise users have a working feature with no public docs.
+# ---------------------------------------------------------------------------
+
+
+# Match ``### `name` / `name2` / ...`` headers (one or more inline-code
+# names, slash-separated). Each captured group becomes a separate
+# transform name. Spec 05 uses this form for ``lowercase / uppercase``
+# and ``nfc / nfd / nfkc / nfkd``.
+_SPEC_05_TRANSFORM_HEADER = re.compile(r"^### (`[a-z_]+`(?:\s*/\s*`[a-z_]+`)*)\s*$")
+_SPEC_05_INLINE_CODE = re.compile(r"`([a-z_]+)`")
+
+
+def _spec_05_transform_names() -> set[str]:
+    """Transform names parsed from ``### `name`` (and slash-joined) headings in spec 05.
+
+    The spec groups related transforms onto a single ``###`` line when
+    convenient — ``### `lowercase` / `uppercase```, ``### `nfc` / `nfd`
+    / `nfkc` / `nfkd```, etc. Each name in the line is a distinct
+    registered callable, so the parser unpacks them all.
+    """
+
+    names: set[str] = set()
+    for line in _spec_text("05-text-transforms.md").splitlines():
+        match = _SPEC_05_TRANSFORM_HEADER.match(line.rstrip())
+        if not match:
+            continue
+        for inline in _SPEC_05_INLINE_CODE.findall(match.group(1)):
+            names.add(inline)
+    return names
+
+
+def _registered_text_transform_names() -> set[str]:
+    """Transform names registered with the runtime ``default_registry``.
+
+    Wrapped in a helper so a future move of the registry source-of-
+    truth (e.g. switching to a different module) is one edit, not
+    spread across every meta-test.
+    """
+
+    from pd_ocr_synth.text_transforms import default_registry
+
+    return set(default_registry().names())
+
+
+# Roadmap-tracked deferred transforms, per
+# ``docs/roadmap/04-text-transforms.md`` "Antique-conventions
+# built-ins" and "``python:`` inline loader". Keep this list short; it
+# should shrink to empty once the transforms ship. If a new transform
+# gets added to spec 05 ahead of implementation, it lands here too —
+# but the long-term goal is for this set to equal the empty set and
+# for ``test_spec_05_transforms_match_registry_or_roadmap`` to enforce
+# that direction directly.
+_ROADMAP_DEFERRED_TEXT_TRANSFORMS: frozenset[str] = frozenset(
+    {
+        "u_v_swap",
+        "i_j_swap",
+        "ct_st_ligature_marker",
+    }
+)
+
+
+def test_spec_05_transforms_match_registry_or_roadmap() -> None:
+    """Every transform documented in spec 05 must be registered or roadmap-deferred.
+
+    Catches "vapourware drift": a new transform gets a section in spec
+    05 but never lands code, never lands a roadmap entry, and quietly
+    presents itself to recipe authors as a real option. This test
+    mirrors the corpus-provider catalog meta-test
+    (``test_spec_04_providers_match_runtime_or_roadmap``) and the
+    degradation-kind catalog meta-test
+    (``test_known_degradation_kinds_matches_spec_doc`` in
+    ``test_validation.py``).
+    """
+
+    spec_names = _spec_05_transform_names()
+    registered = _registered_text_transform_names()
+    accounted_for = registered | _ROADMAP_DEFERRED_TEXT_TRANSFORMS
+    spec_only = sorted(spec_names - accounted_for)
+    assert not spec_only, (
+        "docs/specs/05-text-transforms.md documents transforms that are "
+        "neither registered with default_registry() nor tracked as "
+        f"deferred in docs/roadmap/04-text-transforms.md: {spec_only}.\n"
+        "Either ship the transform (and add it to register_builtins()), "
+        "remove the spec section, or add the name to "
+        "_ROADMAP_DEFERRED_TEXT_TRANSFORMS in this test "
+        "after adding a roadmap entry."
+    )
+
+
+def test_registered_text_transforms_documented_in_spec_05() -> None:
+    """Every registered transform must have a section in spec 05.
+
+    Reverse direction of the catalog match: a runtime transform with
+    no public spec entry is a working feature recipe authors can't
+    discover. Force the spec update.
+    """
+
+    spec_names = _spec_05_transform_names()
+    registered = _registered_text_transform_names()
+    runtime_only = sorted(registered - spec_names)
+    assert not runtime_only, (
+        "register_builtins() registers transforms missing from "
+        f"docs/specs/05-text-transforms.md: {runtime_only}.\n"
+        "Add a `### `<name>`` section to spec 05 documenting the "
+        "options each transform accepts."
+    )

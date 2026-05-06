@@ -151,6 +151,7 @@ def validate_recipe(recipe: Recipe, *, offline: bool = False) -> ValidationRepor
     issues.extend(_check_output(recipe))
     issues.extend(_check_fonts(recipe))
     issues.extend(_check_corpus(recipe))
+    issues.extend(_check_text_transforms(recipe))
     issues.extend(_check_layout(recipe))
     issues.extend(_check_output_layout_pairing(recipe))
     issues.extend(_check_degradation(recipe))
@@ -317,6 +318,68 @@ def _check_corpus(recipe: Recipe) -> list[ValidationIssue]:
                     location=f"corpus[{i}].type",
                 )
             )
+    return out
+
+
+def _registered_text_transform_names() -> frozenset[str]:
+    """Return the set of text-transform names the runtime registry can dispatch.
+
+    Triggers the lazy default-registry build (which registers M04's
+    builtins). Wrapped in a helper so tests can patch / reuse this when
+    asserting against the runtime set, mirroring the
+    ``_registered_corpus_provider_types`` and
+    ``_registered_degradation_kinds`` shapes used elsewhere in this
+    module.
+    """
+
+    from pd_ocr_synth.text_transforms import default_registry
+
+    return frozenset(default_registry().names())
+
+
+def _check_text_transforms(recipe: Recipe) -> list[ValidationIssue]:
+    """Surface recipe-named transforms the runtime registry doesn't know.
+
+    The recipe model accepts any string for ``TextTransform.name`` (so
+    YAML loads cleanly), but ``apply_pipeline`` will raise
+    :class:`pd_ocr_synth.text_transforms.UnknownTransformError` deep in
+    the render pipeline if the registry doesn't ship the named callable.
+    Surfacing it at validate time mirrors the iter-65
+    ``degradation_kind_not_implemented`` and iter-73
+    ``corpus_provider_not_implemented`` precedents: tell the user up
+    front before they kick off corpus fetch + render.
+
+    Currently this catches the spec-05 transforms left deferred in the
+    M04 roadmap: ``u_v_swap``, ``i_j_swap``, ``ct_st_ligature_marker``
+    (antique-conventions), and the ``python:`` inline loader. See
+    ``docs/roadmap/04-text-transforms.md`` "Antique-conventions
+    built-ins" / "``python:`` inline loader" for status.
+
+    Note this is a strict catalog check — third-party transforms
+    registered through the ``pd_ocr_synth.text_transforms`` entry-point
+    group participate in the default registry, so this check naturally
+    accepts them too.
+    """
+
+    out: list[ValidationIssue] = []
+    registered = _registered_text_transform_names()
+    for i, transform in enumerate(recipe.text_transforms):
+        if transform.name in registered:
+            continue
+        out.append(
+            ValidationIssue(
+                severity="error",
+                code="text_transform_not_implemented",
+                message=(
+                    f"text transform '{transform.name}' is in the recipe schema but not "
+                    f"yet implemented by the M04 runtime; render would raise. "
+                    f"Implemented transforms: {', '.join(sorted(registered))}. "
+                    "See docs/roadmap/04-text-transforms.md "
+                    "(Antique-conventions built-ins / python: inline loader)."
+                ),
+                location=f"text_transforms[{i}].name",
+            )
+        )
     return out
 
 
