@@ -28,6 +28,7 @@ pd-ocr-synth = "pd_ocr_synth.cli:main"
 | `render <recipe>` | Full run; writes the dataset to the output destination |
 | `publish <recipe>` | Upload rendered output to a Hugging Face dataset repo (see [10 — Publishing](10-publishing.md)) |
 | `clean <recipe>` | Remove cached corpora (and optionally rendered output) |
+| `audit <output-dir>` | Read back the per-render audit JSONL log written by `render` (M10 stretch) |
 
 ## Common options
 

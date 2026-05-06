@@ -10,6 +10,8 @@ Subcommands wired to date:
   lands in a later chunk of M08).
 - M10: ``lint`` (heuristic recipe checks layered on top of
   ``validate``; see ``docs/roadmap/10-stretch.md``).
+- M10: ``audit`` (read back the per-render JSONL log written by
+  ``render``; see ``docs/roadmap/10-stretch.md``).
 """
 
 from __future__ import annotations
@@ -166,6 +168,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_publish.add_argument("--render-first", action="store_true")
     p_publish.add_argument("--no-create", action="store_true")
     p_publish.add_argument("--dry-run", action="store_true")
+
+    p_audit = subparsers.add_parser(
+        "audit",
+        help="read back the per-render audit JSONL from a render output dir (M10 stretch)",
+    )
+    p_audit.add_argument(
+        "output_dir",
+        help="render output directory containing _audit.jsonl",
+    )
+    p_audit.add_argument(
+        "--json",
+        action="store_true",
+        help="emit a JSON array of entries (machine-readable) instead of the table",
+    )
+    p_audit.add_argument(
+        "--limit",
+        type=int,
+        help="only show the most recent N entries (tail behaviour)",
+    )
 
     p_clean = subparsers.add_parser("clean", help="remove cached corpora for a recipe")
     _add_recipe_arg(p_clean)
@@ -780,6 +801,96 @@ def _cmd_clean(recipe_arg: str, *, cache_dir: str | None) -> int:
     return 0
 
 
+def _cmd_audit(output_dir_arg: str, *, as_json: bool, limit: int | None) -> int:
+    """Read back the per-render audit log written by ``render``.
+
+    The render command appends one JSONL line per invocation to
+    ``<output_dir>/_audit.jsonl`` (see :mod:`pd_ocr_synth.audit`). This
+    subcommand surfaces those entries for traceability without forcing
+    the user to ``cat`` the file or know the schema.
+
+    Modes:
+
+    - **table** (default): a fixed-column human-readable layout
+      (``timestamp``, short ``recipe_sha``, ``recipe_name``, ``count``,
+      ``rendered``, ``skipped``, ``seed``, ``runtime_seconds``). The
+      short SHA is the first 8 hex chars (or ``-`` when the entry has
+      no SHA — e.g. an in-memory recipe).
+    - **json** (``--json``): a JSON array, one object per audit row,
+      schema verbatim. Suitable for piping into ``jq`` / scripts.
+
+    ``--limit N`` keeps only the *most recent* N rows (i.e. the tail);
+    a negative or zero value is rejected as a usage error to avoid
+    silent surprises.
+
+    Exit codes:
+
+    - ``0`` — success, even if the file exists but is empty (we still
+      emit the header in table mode and ``[]`` in JSON mode).
+    - ``2`` — usage error (bad ``--limit``).
+    - ``6`` — output dir doesn't exist or has no audit file. We reuse
+      the destination-invalid family because the consumer pointed us
+      at something that isn't a valid render output.
+    """
+
+    from pd_ocr_synth.audit import AUDIT_FILENAME, read_audit_entries
+
+    if limit is not None and limit <= 0:
+        print(f"error: --limit must be positive (got {limit})", file=sys.stderr)
+        return USAGE_EXIT
+
+    output_dir = Path(output_dir_arg).expanduser()
+    if not output_dir.exists():
+        print(f"error: output dir does not exist: {output_dir}", file=sys.stderr)
+        return DESTINATION_EXIT
+
+    audit_path = output_dir / AUDIT_FILENAME
+    if not audit_path.is_file():
+        print(
+            f"error: no audit file at {audit_path} "
+            "(was the render run with --no-audit or PD_OCR_SYNTH_NO_AUDIT?)",
+            file=sys.stderr,
+        )
+        return DESTINATION_EXIT
+
+    entries = read_audit_entries(audit_path)
+    if limit is not None:
+        entries = entries[-limit:]
+
+    if as_json:
+        print(json.dumps(entries, indent=2, ensure_ascii=False))
+        return 0
+
+    # Table mode. Column widths chosen for an 80-col terminal:
+    #   timestamp (20) + sha (8) + name (≤24) + count (≥6) + rendered
+    #   (≥8) + skipped (≥7) + seed (≥6) + runtime (≥10) ≈ tight but
+    #   fits the bundled gaelic recipe name.
+    header = (
+        f"{'timestamp':<20}  {'sha':<8}  {'recipe':<24}  "
+        f"{'count':>6}  {'rendered':>8}  {'skipped':>7}  {'seed':>6}  {'runtime_s':>10}"
+    )
+    print(header)
+    print("-" * len(header))
+    if not entries:
+        print("(no audit entries)")
+        return 0
+    for entry in entries:
+        sha = entry.get("recipe_sha")
+        sha_short = sha[:8] if isinstance(sha, str) else "-"
+        name = str(entry.get("recipe_name", ""))
+        if len(name) > 24:
+            name = name[:23] + "…"
+        runtime = entry.get("runtime_seconds")
+        runtime_text = f"{runtime:>10.2f}" if isinstance(runtime, int | float) else f"{'-':>10}"
+        print(
+            f"{str(entry.get('timestamp', '')):<20}  {sha_short:<8}  {name:<24}  "
+            f"{int(entry.get('count', 0)):>6}  {int(entry.get('rendered', 0)):>8}  "
+            f"{int(entry.get('skipped', 0)):>7}  {int(entry.get('seed', 0)):>6}  "
+            f"{runtime_text}"
+        )
+    return 0
+
+
 def _cmd_schema(output: str | None) -> int:
     from pd_ocr_synth.recipe.models import Recipe
 
@@ -848,6 +959,11 @@ _IMPLEMENTED_DISPATCH = {
         render_first=args.render_first,
     ),
     "clean": lambda args: _cmd_clean(args.recipe, cache_dir=args.cache_dir),
+    "audit": lambda args: _cmd_audit(
+        args.output_dir,
+        as_json=args.json,
+        limit=args.limit,
+    ),
 }
 
 

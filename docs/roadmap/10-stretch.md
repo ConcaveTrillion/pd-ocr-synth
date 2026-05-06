@@ -59,7 +59,9 @@ if they start mattering:
   timestamp, recipe name + source-bytes SHA-256, output dir, seed,
   effective count, worker count, rendered/skipped counts, and
   wall-time. Disabled via CLI ``--no-audit`` or env var
-  ``PD_OCR_SYNTH_NO_AUDIT=1``. Future chunks: a ``pd-ocr-synth audit``
-  subcommand for tabular display + filtering, and a global
-  ``~/.cache/pd-ocr-synth/audit.jsonl`` aggregate so cross-recipe runs
-  share one timeline.
+  ``PD_OCR_SYNTH_NO_AUDIT=1``. _Read-side chunk landed:_
+  ``pd-ocr-synth audit <output_dir>`` reads the JSONL back, with
+  ``--json`` for machine-readable output and ``--limit N`` to tail to
+  the most recent N entries. Future chunks: filtering by
+  recipe/seed/SHA, and a global ``~/.cache/pd-ocr-synth/audit.jsonl``
+  aggregate so cross-recipe runs share one timeline.
