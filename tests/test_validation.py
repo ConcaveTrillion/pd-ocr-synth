@@ -150,6 +150,41 @@ def test_unknown_degradation_kind_is_error(tmp_path: Path) -> None:
     assert "degradation_kind_unknown" in codes
 
 
+@pytest.mark.parametrize(
+    "kind",
+    ["perspective", "scale", "bleed_through", "scratches", "fold_line", "binarize"],
+)
+def test_unimplemented_degradation_kind_is_error(tmp_path: Path, kind: str) -> None:
+    """Spec-known but not-yet-registered kinds must error at validate time.
+
+    These kinds appear in ``docs/specs/07-degradation.md`` but the M06
+    runtime registry does not implement them yet (see
+    ``docs/roadmap/06-degradation.md`` "Future work"). Calling render
+    on a recipe that references one would raise
+    ``DegradationError(f"unknown degradation kind {kind!r}")`` deep in
+    the pipeline, well after corpus fetch + setup costs. Surface the
+    gap at validate time so the user discovers it up front, with a
+    distinct error code separate from the truly-unknown kind path.
+    """
+
+    yaml_text = _minimal_yaml(
+        font=str(_make_file(tmp_path / "fake.otf")),
+        dest=str(tmp_path / "out"),
+        corpus=str(_make_file(tmp_path / "seed.txt")),
+    )
+    yaml_text += f"degradation:\n  - kind: {kind}\n    probability: 0.5\n"
+    recipe = load_recipe(_write(tmp_path, yaml_text))
+    report = validate_recipe(recipe)
+    codes = [i.code for i in report.errors]
+    # Must use the dedicated code, not the generic unknown-kind code.
+    assert "degradation_kind_not_implemented" in codes, [i.format() for i in report.issues]
+    assert "degradation_kind_unknown" not in codes
+    # Error message points at the roadmap so the user knows where to
+    # look for status / contribute.
+    msg = next(i.message for i in report.errors if i.code == "degradation_kind_not_implemented")
+    assert "06-degradation.md" in msg
+
+
 def test_paper_texture_missing_directory_key_is_error(tmp_path: Path) -> None:
     yaml_text = _minimal_yaml(
         font=str(_make_file(tmp_path / "fake.otf")),

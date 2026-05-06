@@ -333,8 +333,23 @@ def _check_output_layout_pairing(recipe: Recipe) -> list[ValidationIssue]:
     ]
 
 
+def _registered_degradation_kinds() -> frozenset[str]:
+    """Return the set of degradation kinds the runtime registry can dispatch.
+
+    Triggers the lazy builtin registration so the registry reflects
+    everything M06 ships with. Wrapped in a helper so tests can patch
+    or reuse this when they need to assert against the runtime set.
+    """
+
+    from pd_ocr_synth.degradation.pipeline import REGISTRY, _ensure_builtins_registered
+
+    _ensure_builtins_registered()
+    return frozenset(REGISTRY)
+
+
 def _check_degradation(recipe: Recipe) -> list[ValidationIssue]:
     out: list[ValidationIssue] = []
+    registered_kinds = _registered_degradation_kinds()
     for i, stage in enumerate(recipe.degradation):
         if stage.kind not in KNOWN_DEGRADATION_KINDS:
             out.append(
@@ -344,6 +359,33 @@ def _check_degradation(recipe: Recipe) -> list[ValidationIssue]:
                     message=(
                         f"unknown degradation kind '{stage.kind}'. Known kinds: "
                         f"{', '.join(sorted(KNOWN_DEGRADATION_KINDS))}"
+                    ),
+                    location=f"degradation[{i}].kind",
+                )
+            )
+            continue
+        # ``preset`` is a structural marker — the loader has already
+        # expanded any preset entries by the time this validator runs,
+        # so it never appears in ``recipe.degradation`` at runtime.
+        # Nothing else to check; carry on.
+        if stage.kind == "preset":
+            continue
+        if stage.kind not in registered_kinds:
+            # Spec-known but not registered with the M06 runtime — the
+            # render pass would raise ``DegradationError`` on first use.
+            # Flag it as an error at validate time so the user discovers
+            # the gap before kicking off a long render. See
+            # docs/roadmap/06-degradation.md "Future work" for the list
+            # of planned kinds.
+            out.append(
+                ValidationIssue(
+                    severity="error",
+                    code="degradation_kind_not_implemented",
+                    message=(
+                        f"degradation kind '{stage.kind}' is in the spec but not yet "
+                        f"implemented by the M06 runtime; render would raise. "
+                        f"Implemented kinds: {', '.join(sorted(registered_kinds))}. "
+                        "See docs/roadmap/06-degradation.md (Future work)."
                     ),
                     location=f"degradation[{i}].kind",
                 )
