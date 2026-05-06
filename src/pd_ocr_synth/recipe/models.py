@@ -97,6 +97,13 @@ class CorpusFilterConfig(_Frozen):
 
 class _CorpusBase(_Frozen):
     cache: bool = True
+    # Override the cache key for this entry — spec 04 "Common keys"
+    # documents this as an "advanced" knob recipe authors can use to
+    # split or merge cache slots across runs without changing the
+    # underlying provider options. ``None`` falls through to the
+    # provider's ``cache_key(options)`` derivation. Tracked in the
+    # iter-N (this commit) per-provider parity audit.
+    cache_key: str | None = None
     max_chars: int | None = None
     min_word_length: int = 1
     language: str | None = None
@@ -113,11 +120,37 @@ class WebCorpus(_CorpusBase):
     # pulling different sub-trees from the same URL each get their own
     # cache slot.
     field_path: str | None = None
+    # HTTP transport options documented in spec 04's ``web`` example.
+    # ``user_agent`` overrides the default ``pd-ocr-synth/<version>``
+    # UA string set in :mod:`pd_ocr_synth.corpus.http`. ``retries`` and
+    # ``timeout_seconds`` plumb the polite-defaults knobs from spec 04
+    # ("Polite defaults: 1 req/sec per host, 30s timeout, 3 retries
+    # with backoff"). ``respect_robots`` toggles the documented
+    # robots.txt honoring (default ``true``). All four were missing
+    # from the model pre-iter-N — pydantic's ``extra='forbid'`` was
+    # rejecting them at YAML load even though spec 04 advertises them
+    # as the canonical surface, so a recipe that copy-pasted the spec
+    # example crashed with ValidationError. The runtime side already
+    # reads ``retries`` (web.py:_http_get); the other three are
+    # forward-looking fields that the model accepts today and the
+    # runtime can wire through in follow-up commits without another
+    # spec/model drift round.
+    user_agent: str | None = None
+    retries: int | None = None
+    timeout_seconds: float | None = None
+    respect_robots: bool | None = None
 
 
 class LocalCorpus(_CorpusBase):
     type: Literal["local"]
     path: Path
+    # Explicit parser override; spec 04 ``local`` block documents that
+    # parsers are inferred from extension *or* set explicitly via
+    # ``parser:``. The local provider already reads
+    # ``options.get("parser")`` (local.py:43), but the model used to
+    # reject the key — meaning the documented escape-hatch was
+    # unreachable from any recipe.
+    parser: str | None = None
 
 
 class HFDatasetCorpus(_CorpusBase):
@@ -125,12 +158,45 @@ class HFDatasetCorpus(_CorpusBase):
     name: str
     split: str = "train"
     field: str = "text"
+    # Per-recipe row cap; spec 04 ``hf_dataset`` block advertises this
+    # as the streaming-truncate knob. ``None`` means "stream all
+    # available rows", matching the spec's "unlimited" default.
+    max_rows: int | None = None
 
 
 class WikisourceCorpus(_CorpusBase):
     type: Literal["wikisource"]
     language: str
-    titles: list[str]
+    # Spec 04 ``wikisource`` block documents two YAML examples: one
+    # with ``titles:``, one with ``category:``. The pre-iter-N model
+    # required ``titles`` even when ``category:`` was the supplied
+    # selector, which contradicted the spec. Default to an empty list
+    # so the category-only example loads cleanly; the wikisource
+    # provider already raises ``ProviderError`` if neither is set
+    # (wikisource.py:_fetch_title pre-check).
+    titles: list[str] = Field(default_factory=list)
+    # Category-based selector + page cap. The provider reads
+    # ``options.get("category")`` today (and raises a deferred-feature
+    # ``ProviderError``); accepting the field on the model is the
+    # forward-looking move so a recipe author following the spec gets
+    # the deferred-feature error from the runtime rather than a
+    # confusing ``extra_forbidden`` ValidationError at load.
+    category: str | None = None
+    max_pages: int | None = None
+
+    @model_validator(mode="after")
+    def _titles_or_category(self) -> WikisourceCorpus:
+        # Spec 04 ``wikisource`` block presents ``titles:`` and
+        # ``category:`` as alternative selectors; one of them must be
+        # set or there's nothing to fetch. Enforce at load so the
+        # error message points at the recipe, not at a runtime
+        # ``ProviderError`` deeper in the pipeline.
+        if not self.titles and not self.category:
+            raise ValueError(
+                "wikisource corpus entry must declare at least one of "
+                "'titles' or 'category' (spec 04 §wikisource)"
+            )
+        return self
 
 
 CorpusEntry = Annotated[

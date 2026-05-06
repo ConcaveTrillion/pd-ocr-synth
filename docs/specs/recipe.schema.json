@@ -186,6 +186,18 @@
           "title": "Cache",
           "type": "boolean"
         },
+        "cache_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cache Key"
+        },
         "max_chars": {
           "anyOf": [
             {
@@ -244,6 +256,18 @@
           "default": "text",
           "title": "Field",
           "type": "string"
+        },
+        "max_rows": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Rows"
         }
       },
       "required": [
@@ -488,6 +512,18 @@
           "title": "Cache",
           "type": "boolean"
         },
+        "cache_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cache Key"
+        },
         "max_chars": {
           "anyOf": [
             {
@@ -537,6 +573,18 @@
           "format": "path",
           "title": "Path",
           "type": "string"
+        },
+        "parser": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parser"
         }
       },
       "required": [
@@ -749,6 +797,18 @@
           "title": "Cache",
           "type": "boolean"
         },
+        "cache_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cache Key"
+        },
         "max_chars": {
           "anyOf": [
             {
@@ -821,6 +881,54 @@
           ],
           "default": null,
           "title": "Field Path"
+        },
+        "user_agent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "User Agent"
+        },
+        "retries": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retries"
+        },
+        "timeout_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timeout Seconds"
+        },
+        "respect_robots": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Respect Robots"
         }
       },
       "required": [
@@ -876,6 +984,18 @@
           "title": "Cache",
           "type": "boolean"
         },
+        "cache_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cache Key"
+        },
         "max_chars": {
           "anyOf": [
             {
@@ -919,12 +1039,35 @@
           },
           "title": "Titles",
           "type": "array"
+        },
+        "category": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Category"
+        },
+        "max_pages": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Pages"
         }
       },
       "required": [
         "language",
-        "type",
-        "titles"
+        "type"
       ],
       "title": "WikisourceCorpus",
       "type": "object"

@@ -1069,6 +1069,266 @@ def test_corpus_model_types_documented_in_spec_04() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Spec 04 ↔ pydantic per-provider field parity (this iter)
+#
+# Iter 96 fixed one slice of this drift: ``WebCorpus.field_path`` was
+# documented in spec 04 (``parser: json`` example shows the
+# ``field_path:`` key) but missing from the pydantic model, so
+# pydantic's ``extra='forbid'`` rejected it at YAML load — making the
+# documented option unreachable from any recipe. The recommended
+# follow-up was a structural meta-test that walks every provider's
+# documented options and asserts the matching pydantic model accepts
+# them. This is that meta-test.
+#
+# Method:
+#   - Parse spec 04 by walking each ``## `<provider>``` section and
+#     pulling option keys from (a) the per-provider YAML examples and
+#     (b) the leading "Common keys" table that applies across all
+#     providers.
+#   - Build the model-side surface from the union member's
+#     ``model_fields`` plus an explicit allow-list of runtime-only
+#     keys that intentionally never reach the model (e.g. ``urls`` on
+#     ``web_list`` — that provider is roadmap-deferred, has no
+#     pydantic model, and the spec lists keys we'll need when it
+#     ships).
+#   - Assert ``provider_keys_in_spec ⊆ model_field_names ∪
+#     ALLOWED_RUNTIME_KEYS``. A key in the spec but missing from both
+#     is real drift — exactly the iter-96 bug class.
+#
+# When the meta-test surfaces drift, the fix is the iter-96 pattern:
+# add the field to the model, regenerate ``docs/specs/recipe.schema.json``
+# via ``make schema``, and add a load-path test in
+# ``tests/test_recipe_loader.py`` that pins the round-trip. Update
+# the allow-list only when the missing key is genuinely runtime-only
+# (not a recipe-author-facing knob).
+# ---------------------------------------------------------------------------
+
+
+# Provider sections in spec 04 that don't have a pydantic model today
+# because the runtime provider is roadmap-deferred. The spec sections
+# stay (so authors can preview the eventual surface) but there's
+# nothing model-side to enforce against. Per
+# ``_ROADMAP_DEFERRED_CORPUS_PROVIDERS`` above.
+_SPEC_04_PROVIDERS_WITHOUT_MODEL: frozenset[str] = frozenset(
+    {
+        "web_list",
+        "internet_archive",
+        "gutenberg",
+    }
+)
+
+
+# Map: spec 04 ``## `<name>``` section heading → pydantic union member.
+# Stays small and explicit; the catalog meta-tests above already
+# enforce that the key set matches the union members.
+def _model_for_provider(name: str) -> type | None:
+    from pd_ocr_synth.recipe.models import (
+        HFDatasetCorpus,
+        LocalCorpus,
+        WebCorpus,
+        WikisourceCorpus,
+    )
+
+    return {
+        "local": LocalCorpus,
+        "web": WebCorpus,
+        "wikisource": WikisourceCorpus,
+        "hf_dataset": HFDatasetCorpus,
+    }.get(name)
+
+
+# Keys that intentionally live on the runtime side, not on the
+# pydantic model. Each entry needs a one-line reason — if the reason
+# stops being true (e.g. someone wires a knob through ``model_dump``),
+# remove the entry so the meta-test fails loudly until the model is
+# updated. None today: every key spec 04 documents under a modelled
+# provider should land on its pydantic model. Keep the structure in
+# place so a future runtime-only key has a clear home.
+_ALLOWED_RUNTIME_ONLY_OPTION_KEYS: frozenset[str] = frozenset()
+
+
+_SPEC_04_PROVIDER_SECTION_HEADER = re.compile(r"^## `([a-z_]+)`\s*$")
+_SPEC_04_YAML_FENCE = re.compile(r"```yaml\n(.*?)\n```", re.DOTALL)
+_SPEC_04_COMMON_KEYS_TABLE_ROW = re.compile(r"^\|\s*`([a-z_]+)`")
+
+
+def _spec_04_common_keys() -> set[str]:
+    """Keys parsed from the leading ``## Common keys`` table in spec 04.
+
+    The table heading is ``| Key | Default | Meaning |``; each row
+    starts with the key wrapped in backticks. ``type`` is implicit
+    (it's the discriminator) and isn't listed in the table.
+    """
+
+    keys: set[str] = set()
+    in_section = False
+    for raw_line in _spec_text("04-corpus-providers.md").splitlines():
+        line = raw_line.rstrip()
+        stripped = line.strip()
+        if stripped.startswith("## Common keys"):
+            in_section = True
+            continue
+        if in_section and stripped.startswith("## ") and "Common keys" not in stripped:
+            break
+        if not in_section:
+            continue
+        match = _SPEC_04_COMMON_KEYS_TABLE_ROW.match(stripped)
+        if match:
+            keys.add(match.group(1))
+    return keys
+
+
+def _spec_04_provider_sections() -> dict[str, str]:
+    """Return ``{provider_name: full_section_markdown}`` for each provider.
+
+    The section ends at the next top-level ``##`` heading. Each
+    section's body holds the per-provider YAML examples that
+    advertise option keys.
+    """
+
+    text = _spec_text("04-corpus-providers.md")
+    sections: dict[str, str] = {}
+    current_name: str | None = None
+    current_lines: list[str] = []
+    for raw_line in text.splitlines():
+        match = _SPEC_04_PROVIDER_SECTION_HEADER.match(raw_line.rstrip())
+        if match:
+            if current_name is not None:
+                sections[current_name] = "\n".join(current_lines)
+            current_name = match.group(1)
+            current_lines = []
+            continue
+        # A non-provider ``## `` heading closes the current provider
+        # section (e.g. ``## Caching``, ``## Tokenization``).
+        if (
+            current_name is not None
+            and raw_line.startswith("## ")
+            and not raw_line.startswith("## `")
+        ):
+            sections[current_name] = "\n".join(current_lines)
+            current_name = None
+            current_lines = []
+            continue
+        if current_name is not None:
+            current_lines.append(raw_line)
+    if current_name is not None:
+        sections[current_name] = "\n".join(current_lines)
+    return sections
+
+
+def _option_keys_from_yaml_examples(section_text: str) -> set[str]:
+    """Top-level mapping keys from each ``yaml`` fenced block in the section.
+
+    Each provider section contains one or more YAML examples that
+    open with ``- type: <name>``. The ``- `` makes the block a
+    list-of-mappings; we walk each entry and collect its top-level
+    keys. ``type`` is excluded (it's the discriminator, captured by
+    the spec-04 catalog meta-tests).
+    """
+
+    import yaml
+
+    keys: set[str] = set()
+    for fence in _SPEC_04_YAML_FENCE.findall(section_text):
+        try:
+            parsed = yaml.safe_load(fence)
+        except yaml.YAMLError:
+            continue
+        if isinstance(parsed, list):
+            for entry in parsed:
+                if isinstance(entry, dict):
+                    keys.update(k for k in entry if k != "type")
+        elif isinstance(parsed, dict):
+            keys.update(k for k in parsed if k != "type")
+    return keys
+
+
+def test_spec_04_per_provider_options_accepted_by_pydantic_model() -> None:
+    """Every option spec 04 documents per provider must be on its pydantic model.
+
+    Walks each ``## `<provider>``` section in spec 04, collects the
+    option keys advertised in the YAML examples (plus the cross-
+    provider ``Common keys`` table), and asserts each key is either
+    a field on the matching pydantic model or in the runtime-only
+    allow-list.
+
+    A failure here is the iter-96 bug class: spec advertises an
+    option, recipe author copies the example, pydantic rejects the
+    YAML at load with ``extra_forbidden``. Fix is to add the field
+    to the model (see iter-96 ``WebCorpus.field_path`` precedent),
+    regenerate the JSON schema, and add a load-path test in
+    ``tests/test_recipe_loader.py``.
+    """
+
+    common_keys = _spec_04_common_keys()
+    sections = _spec_04_provider_sections()
+
+    failures: list[str] = []
+    for name, section_text in sorted(sections.items()):
+        if name in _SPEC_04_PROVIDERS_WITHOUT_MODEL:
+            continue
+        model = _model_for_provider(name)
+        assert model is not None, (
+            f"spec 04 provider {name!r} has no entry in _model_for_provider() — "
+            "if it's a new provider, add it to the dispatch (and to the "
+            "CorpusEntry union); if it's roadmap-deferred, add it to "
+            "_SPEC_04_PROVIDERS_WITHOUT_MODEL."
+        )
+        spec_keys = _option_keys_from_yaml_examples(section_text) | common_keys
+        # ``type`` is the discriminator; pydantic models declare it
+        # as a Literal but spec_keys excludes it explicitly above.
+        # Subtract it from model_fields too in case it sneaks back in.
+        model_keys = set(model.model_fields) - {"type"}
+        missing = sorted(spec_keys - model_keys - _ALLOWED_RUNTIME_ONLY_OPTION_KEYS)
+        if missing:
+            failures.append(
+                f"  {name}: spec 04 documents options not on {model.__name__}: {missing}"
+            )
+
+    assert not failures, (
+        "docs/specs/04-corpus-providers.md per-provider options drift from "
+        "pd_ocr_synth.recipe.models (iter-96 bug class):\n"
+        + "\n".join(failures)
+        + "\n\nFix: add each missing field to the model "
+        "(see iter-96 WebCorpus.field_path for the pattern), regenerate "
+        "docs/specs/recipe.schema.json via `make schema`, and add a load-path "
+        "test in tests/test_recipe_loader.py.\nIf a key is intentionally "
+        "runtime-only (never reaches the model), allow-list it in "
+        "_ALLOWED_RUNTIME_ONLY_OPTION_KEYS with a one-line reason."
+    )
+
+
+def test_spec_04_provider_section_dispatch_complete() -> None:
+    """Every spec 04 provider section maps to either a model or the deferred set.
+
+    Sanity-check the dispatch in ``_model_for_provider`` against the
+    section headings actually present in spec 04. If a new ``## `<name>```
+    heading lands and the dispatch isn't updated, the parity test
+    above raises an explicit AssertionError (vs. silently skipping
+    the new provider). This test makes that promise explicit so a
+    future drift round shows up here first, with a clearer error.
+    """
+
+    sections = _spec_04_provider_sections()
+    failures: list[str] = []
+    for name in sorted(sections):
+        if name in _SPEC_04_PROVIDERS_WITHOUT_MODEL:
+            continue
+        if _model_for_provider(name) is None:
+            failures.append(
+                f"  {name}: spec 04 has a section but neither "
+                "_model_for_provider() nor _SPEC_04_PROVIDERS_WITHOUT_MODEL "
+                "knows about it."
+            )
+    assert not failures, (
+        "spec 04 provider section without a parity-test dispatch:\n"
+        + "\n".join(failures)
+        + "\nUpdate either _model_for_provider() (if a model exists) or "
+        "_SPEC_04_PROVIDERS_WITHOUT_MODEL (if the provider is roadmap-deferred)."
+    )
+
+
+# ---------------------------------------------------------------------------
 # Spec 05 ↔ text-transform registry drift
 #
 # Every transform documented in ``docs/specs/05-text-transforms.md`` must

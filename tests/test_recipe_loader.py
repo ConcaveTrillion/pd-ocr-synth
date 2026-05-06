@@ -282,6 +282,187 @@ def test_web_corpus_field_path_loads_from_yaml(write_recipe) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Spec 04 ↔ pydantic per-provider parity (this iter)
+#
+# Iter 96 caught one slice of this drift class (``WebCorpus.field_path``
+# missing); the per-provider audit then surfaced four more slices —
+# ``LocalCorpus.parser``, ``WebCorpus.{user_agent,retries,
+# timeout_seconds,respect_robots}``, ``WikisourceCorpus.{category,
+# max_pages}``, ``HFDatasetCorpus.max_rows``, plus the common
+# ``cache_key`` knob on ``_CorpusBase``. Each load-path test below
+# pins the round-trip the meta-test in ``tests/test_spec_docs.py``
+# enforces structurally: a recipe that copy-pastes the spec example
+# loads cleanly, the value lands on the typed model, and the
+# ``model_dump`` the runner hands to providers carries it.
+# ---------------------------------------------------------------------------
+
+
+def test_local_corpus_parser_loads_from_yaml(write_recipe) -> None:
+    """``parser:`` on a ``local`` entry must round-trip onto ``LocalCorpus``.
+
+    The local provider already reads ``options.get("parser")`` to
+    short-circuit extension inference (local.py:43). Pre-iter-N the
+    model rejected the key, so the documented escape-hatch was
+    unreachable from any recipe.
+    """
+
+    yaml_text = MINIMAL_RECIPE.replace(
+        "  - type: local\n    path: ./seed.txt\n",
+        "  - type: local\n    path: ./seed.txt\n    parser: plain\n",
+    )
+    recipe = load_recipe(write_recipe(yaml_text))
+    local_entries = [c for c in recipe.corpus if isinstance(c, LocalCorpus)]
+    assert len(local_entries) == 1
+    assert local_entries[0].parser == "plain"
+    assert local_entries[0].model_dump(mode="python")["parser"] == "plain"
+
+
+def test_web_corpus_transport_options_load_from_yaml(write_recipe) -> None:
+    """``user_agent``/``retries``/``timeout_seconds``/``respect_robots`` round-trip.
+
+    Spec 04 ``web`` block advertises all four as canonical keys on the
+    ``web`` provider entry. Pre-iter-N the model rejected each — a
+    recipe that copy-pasted the spec example crashed at load with an
+    ``extra_forbidden`` ValidationError instead of the documented
+    behaviour.
+    """
+
+    yaml_text = MINIMAL_RECIPE.replace(
+        "  - type: local\n    path: ./seed.txt\n",
+        (
+            "  - type: local\n    path: ./seed.txt\n"
+            "  - type: web\n"
+            "    url: https://example.com/page.html\n"
+            "    parser: html-text\n"
+            '    user_agent: "pd-ocr-synth/0.1 (+contact@example.com)"\n'
+            "    retries: 5\n"
+            "    timeout_seconds: 45\n"
+            "    respect_robots: true\n"
+        ),
+    )
+    recipe = load_recipe(write_recipe(yaml_text))
+    web_entries = [c for c in recipe.corpus if isinstance(c, WebCorpus)]
+    assert len(web_entries) == 1
+    web = web_entries[0]
+    assert web.user_agent == "pd-ocr-synth/0.1 (+contact@example.com)"
+    assert web.retries == 5
+    assert web.timeout_seconds == 45.0
+    assert web.respect_robots is True
+    dumped = web.model_dump(mode="python")
+    # The runner reaches the provider via ``model_dump``; the
+    # transport options must be on the dumped dict so the (current
+    # and future) HTTP layer can read them.
+    assert dumped["retries"] == 5
+    assert dumped["user_agent"] == "pd-ocr-synth/0.1 (+contact@example.com)"
+    assert dumped["timeout_seconds"] == 45.0
+    assert dumped["respect_robots"] is True
+
+
+def test_wikisource_corpus_category_loads_from_yaml(write_recipe) -> None:
+    """``category`` + ``max_pages`` on a ``wikisource`` entry round-trip.
+
+    Spec 04 ``wikisource`` block presents ``titles:`` and ``category:``
+    as alternative selectors. Pre-iter-N the model required ``titles``
+    even when ``category:`` was the supplied key, contradicting the
+    spec; the model also rejected ``max_pages``. The wikisource
+    provider already inspects ``options.get("category")`` (and raises
+    a deferred-feature ``ProviderError``) — the model must let the
+    YAML reach the runtime.
+    """
+
+    yaml_text = MINIMAL_RECIPE.replace(
+        "  - type: local\n    path: ./seed.txt\n",
+        (
+            "  - type: local\n    path: ./seed.txt\n"
+            "  - type: wikisource\n"
+            "    language: ga\n"
+            '    category: "Téacsleabhair sa Ghaeilge"\n'
+            "    max_pages: 50\n"
+        ),
+    )
+    recipe = load_recipe(write_recipe(yaml_text))
+    wiki_entries = [c for c in recipe.corpus if isinstance(c, WikisourceCorpus)]
+    assert len(wiki_entries) == 1
+    wiki = wiki_entries[0]
+    assert wiki.category == "Téacsleabhair sa Ghaeilge"
+    assert wiki.max_pages == 50
+    # Default ``titles`` to empty list is valid as long as ``category``
+    # is set (model_validator); the dumped dict should carry both.
+    assert wiki.titles == []
+    dumped = wiki.model_dump(mode="python")
+    assert dumped["category"] == "Téacsleabhair sa Ghaeilge"
+    assert dumped["max_pages"] == 50
+
+
+def test_wikisource_requires_titles_or_category(write_recipe) -> None:
+    """A wikisource entry with neither ``titles`` nor ``category`` fails load.
+
+    Spec 04 says the two are alternatives; an entry that supplies
+    neither has nothing to fetch. Pre-iter-N the model required
+    ``titles`` so this was caught for the titles-only path; with
+    ``titles`` defaulted the explicit cross-check has to enforce it.
+    """
+
+    from pydantic import ValidationError
+
+    yaml_text = MINIMAL_RECIPE.replace(
+        "  - type: local\n    path: ./seed.txt\n",
+        ("  - type: local\n    path: ./seed.txt\n  - type: wikisource\n    language: ga\n"),
+    )
+    with pytest.raises(ValidationError, match="titles.*category|category.*titles"):
+        load_recipe(write_recipe(yaml_text))
+
+
+def test_hf_dataset_max_rows_loads_from_yaml(write_recipe) -> None:
+    """``max_rows`` on an ``hf_dataset`` entry round-trips onto ``HFDatasetCorpus``.
+
+    Spec 04 advertises this as the row cap for streaming. Pre-iter-N
+    the model rejected the key. The hf_dataset provider itself is
+    deferred (M03 roadmap) — accepting the field today keeps the model
+    aligned with the spec so a recipe author following the docs hits
+    the deferred-provider error from runtime, not a confusing model
+    validation error at load.
+    """
+
+    yaml_text = MINIMAL_RECIPE.replace(
+        "  - type: local\n    path: ./seed.txt\n",
+        (
+            "  - type: local\n    path: ./seed.txt\n"
+            "  - type: hf_dataset\n"
+            "    name: example/irish-corpus\n"
+            "    split: train\n"
+            "    field: text\n"
+            "    max_rows: 10000\n"
+        ),
+    )
+    recipe = load_recipe(write_recipe(yaml_text))
+    from pd_ocr_synth.recipe.models import HFDatasetCorpus
+
+    hf_entries = [c for c in recipe.corpus if isinstance(c, HFDatasetCorpus)]
+    assert len(hf_entries) == 1
+    assert hf_entries[0].max_rows == 10000
+    assert hf_entries[0].model_dump(mode="python")["max_rows"] == 10000
+
+
+def test_corpus_cache_key_loads_from_yaml(write_recipe) -> None:
+    """``cache_key`` (common-keys override) round-trips onto any corpus entry.
+
+    Spec 04 "Common keys" documents ``cache_key`` as an advanced
+    override on every provider. Pre-iter-N the field was missing from
+    ``_CorpusBase`` so the override was unreachable from any recipe.
+    """
+
+    yaml_text = MINIMAL_RECIPE.replace(
+        "  - type: local\n    path: ./seed.txt\n",
+        ("  - type: local\n    path: ./seed.txt\n    cache_key: my-explicit-key\n"),
+    )
+    recipe = load_recipe(write_recipe(yaml_text))
+    local_entries = [c for c in recipe.corpus if isinstance(c, LocalCorpus)]
+    assert len(local_entries) == 1
+    assert local_entries[0].cache_key == "my-explicit-key"
+
+
+# ---------------------------------------------------------------------------
 # loader error paths
 # ---------------------------------------------------------------------------
 
