@@ -63,9 +63,20 @@ if they start mattering:
   Future chunks: corpus-language detection
   (modern-spelling heuristic), per-stage option sanity checks,
   cross-stage interaction warnings (e.g. `binarize` after `noise`).
-- **Visual regression tests.** A "golden" sample set for the Gaelic
-  recipe; CI re-renders and compares to detect accidental changes
-  in the rendering or degradation pipeline.
+- **Visual regression tests.** _First chunk landed:_
+  ``tests/test_render_visual_regression.py`` pins the PNG sha256 of
+  the four render entry points (``render_word_crop``, ``render_line``,
+  ``render_paragraph``, ``render_page``) under a tiny canonical
+  recipe (single Gaelic font, fixed seed, no degradations). Drift in
+  the rendering pipeline — refactor, font upgrade, RNG-state shift —
+  flips the digest and fails CI. To intentionally update the pin,
+  run with ``PD_OCR_SYNTH_REGEN_VISUAL_DIGESTS=1`` (prints the new
+  sha256 alongside the failure message), eyeball-verify the change
+  is intentional, paste the digest into ``_PINS``, and commit with
+  the reason. Future chunks: bytes-level pin for a degraded sample
+  (lock the degradation pipeline once it stabilizes); a "golden"
+  pinned digest for ``run_recipe`` end-to-end output (manifest +
+  first sample) so the publish-ready artifact contract is locked.
 - **Per-recipe `Makefile.local`.** Expose recipe-specific dev targets
   (e.g., `make gaelic-publish`) without bloating the main Makefile.
 - **Audit log.** _First chunk landed:_ ``run_recipe`` appends one
