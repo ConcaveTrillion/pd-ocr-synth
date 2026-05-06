@@ -1129,3 +1129,254 @@ def test_known_unread_dests_are_actually_unread() -> None:
         "reads these flags but they're still allow-listed. Remove "
         f"them: {sorted(stale)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Spec 02 (recipe format) ↔ pydantic recipe models
+#
+# Spec 02 is the user-facing contract for the YAML schema; the pydantic
+# models in ``pd_ocr_synth.recipe.models`` are the source-of-truth that
+# decides whether a key loads. ``extra="forbid"`` on the frozen base
+# rejects unknown keys, so any key spec 02 advertises that the model
+# doesn't declare would *fail loudly at load time* — not silently.
+# That's better than silent drift, but it's still a dishonest doc:
+# users following spec 02 verbatim hit a ValidationError instead of the
+# documented behaviour. (Iter 77 catalogued this whole class of drift;
+# this guard locks it down for spec 02.)
+#
+# Every fenced ``yaml`` block in spec 02 is parsed and its keys checked
+# against the appropriate model:
+#
+#   - the top-level overview block lists every ``Recipe`` field, so each
+#     of its keys must be in ``Recipe.model_fields``;
+#   - each per-block example (``output:``, ``rendering:``, ``layout:``,
+#     ``publish:``) has its inner keys checked against the matching
+#     block model;
+#   - per-entry list examples (``corpus:``, ``fonts:``, ``degradation:``,
+#     ``text_transforms:``) iterate the example entries and check the
+#     keys of each against the appropriate model — the corpus union is
+#     dispatched on ``type``.
+#
+# Goal: any future spec 02 example that mentions a key not on the model
+# (typo, half-finished feature, copy-paste from a spec stuck in roadmap)
+# fails this test instead of waiting for a recipe author to trip on it.
+# ---------------------------------------------------------------------------
+
+
+_SPEC_02_YAML_FENCE = re.compile(r"```yaml\n(.*?)\n```", re.DOTALL)
+
+
+def _spec_02_yaml_blocks() -> list[str]:
+    return _SPEC_02_YAML_FENCE.findall(_spec_text("02-recipe-format.md"))
+
+
+def test_spec_02_overview_keys_match_recipe_model() -> None:
+    """The top-level overview block in spec 02 must use Recipe field names.
+
+    The first ``yaml`` fence in spec 02 lists every documented top-level
+    key with a comment ("required", "optional; default ...", etc.). If
+    one of those keys isn't on ``Recipe``, the model rejects it at load
+    via ``extra="forbid"`` and the spec is lying about supported keys.
+    """
+
+    import yaml
+
+    from pd_ocr_synth.recipe.models import Recipe
+
+    blocks = _spec_02_yaml_blocks()
+    assert blocks, "spec 02 has no fenced YAML blocks; doc layout changed?"
+    overview = yaml.safe_load(blocks[0])
+    assert isinstance(overview, dict), (
+        f"first YAML block in spec 02 should be the top-level overview mapping; "
+        f"got {type(overview).__name__}"
+    )
+
+    recipe_fields = set(Recipe.model_fields) - {"source_path"}
+    spec_only = sorted(set(overview) - recipe_fields)
+    assert not spec_only, (
+        "docs/specs/02-recipe-format.md top-level overview lists keys that "
+        f"are not fields on Recipe: {spec_only}.\n"
+        "Either add the field to Recipe (and the relevant block model) "
+        "or remove the key from the overview snippet."
+    )
+
+
+# Map: spec 02 per-block heading → (block model class, "examples are entries"
+# flag). The examples-are-entries flag is True for blocks whose value is
+# a list of typed entries (corpus, fonts, degradation, text_transforms);
+# False for blocks whose value is a single mapping (output, rendering,
+# layout, publish). Per-entry blocks use a separate dispatcher because
+# corpus is a discriminated union and degradation has stage-specific
+# extras.
+def _per_block_yaml() -> dict[str, dict]:
+    """Parse each per-block YAML example keyed by its outer key.
+
+    The ``output:`` block parses to ``{"output": {...}}``, etc. We key
+    by the outer name so the test can dispatch each block to the right
+    model without depending on doc-section ordering.
+    """
+
+    import yaml
+
+    out: dict[str, dict] = {}
+    for raw in _spec_02_yaml_blocks():
+        data = yaml.safe_load(raw)
+        if not isinstance(data, dict) or len(data) != 1:
+            # The variable-types showcase block (``# Fixed scalar`` etc.)
+            # parses to a single ``font_size_pt`` mapping after YAML
+            # collapses repeated keys. It demonstrates value forms, not
+            # block keys, so skip it.
+            continue
+        ((key, value),) = data.items()
+        if key == "font_size_pt":
+            continue
+        out[key] = value
+    return out
+
+
+def test_spec_02_output_block_keys_match_model() -> None:
+    """Keys inside the ``output:`` example must be ``OutputBlock`` fields."""
+
+    from pd_ocr_synth.recipe.models import OutputBlock
+
+    blocks = _per_block_yaml()
+    assert "output" in blocks, "spec 02 ``output:`` example block missing"
+    spec_only = sorted(set(blocks["output"]) - set(OutputBlock.model_fields))
+    assert not spec_only, f"spec 02 ``output:`` example uses keys not on OutputBlock: {spec_only}"
+
+
+def test_spec_02_rendering_block_keys_match_model() -> None:
+    """Keys inside the ``rendering:`` example must be ``Rendering`` fields.
+
+    Sub-mappings ``ink_color`` / ``background_color`` are checked
+    against ``ColorSpec``.
+    """
+
+    from pd_ocr_synth.recipe.models import ColorSpec, Rendering
+
+    blocks = _per_block_yaml()
+    assert "rendering" in blocks, "spec 02 ``rendering:`` example block missing"
+    rendering = blocks["rendering"]
+    spec_only = sorted(set(rendering) - set(Rendering.model_fields))
+    assert not spec_only, f"spec 02 ``rendering:`` example uses keys not on Rendering: {spec_only}"
+
+    color_fields = set(ColorSpec.model_fields)
+    for color_key in ("ink_color", "background_color"):
+        spec_only_color = sorted(set(rendering[color_key]) - color_fields)
+        assert not spec_only_color, (
+            f"spec 02 ``rendering.{color_key}`` example uses keys not on "
+            f"ColorSpec: {spec_only_color}"
+        )
+
+
+def test_spec_02_layout_block_keys_match_model() -> None:
+    """Keys inside the ``layout:`` example must be ``Layout`` fields."""
+
+    from pd_ocr_synth.recipe.models import Layout
+
+    blocks = _per_block_yaml()
+    assert "layout" in blocks, "spec 02 ``layout:`` example block missing"
+    spec_only = sorted(set(blocks["layout"]) - set(Layout.model_fields))
+    assert not spec_only, f"spec 02 ``layout:`` example uses keys not on Layout: {spec_only}"
+
+
+def test_spec_02_publish_block_keys_match_model() -> None:
+    """Keys inside the ``publish:`` example must be ``PublishBlock`` /
+    ``HFDatasetPublishConfig`` fields."""
+
+    from pd_ocr_synth.recipe.models import HFDatasetPublishConfig, PublishBlock
+
+    blocks = _per_block_yaml()
+    assert "publish" in blocks, "spec 02 ``publish:`` example block missing"
+    publish = blocks["publish"]
+    spec_only = sorted(set(publish) - set(PublishBlock.model_fields))
+    assert not spec_only, f"spec 02 ``publish:`` example uses keys not on PublishBlock: {spec_only}"
+    hf = publish["hf_dataset"]
+    spec_only_hf = sorted(set(hf) - set(HFDatasetPublishConfig.model_fields))
+    assert not spec_only_hf, (
+        "spec 02 ``publish.hf_dataset`` example uses keys not on "
+        f"HFDatasetPublishConfig: {spec_only_hf}"
+    )
+
+
+def test_spec_02_corpus_entries_match_models() -> None:
+    """Each entry in the ``corpus:`` example must use keys on the matching
+    union member (dispatched on ``type``)."""
+
+    from pd_ocr_synth.recipe.models import (
+        HFDatasetCorpus,
+        LocalCorpus,
+        WebCorpus,
+        WikisourceCorpus,
+    )
+
+    by_type = {
+        "web": WebCorpus,
+        "local": LocalCorpus,
+        "hf_dataset": HFDatasetCorpus,
+        "wikisource": WikisourceCorpus,
+    }
+
+    blocks = _per_block_yaml()
+    assert "corpus" in blocks, "spec 02 ``corpus:`` example block missing"
+    entries = blocks["corpus"]
+    assert isinstance(entries, list) and entries, (
+        "spec 02 ``corpus:`` example must be a non-empty list"
+    )
+    for i, entry in enumerate(entries):
+        assert isinstance(entry, dict) and "type" in entry, (
+            f"spec 02 corpus entry {i} missing required ``type``: {entry!r}"
+        )
+        model = by_type.get(entry["type"])
+        assert model is not None, (
+            f"spec 02 corpus entry {i} uses unknown type {entry['type']!r}; "
+            f"add it to ``by_type`` if a new union member landed."
+        )
+        spec_only = sorted(set(entry) - set(model.model_fields))
+        assert not spec_only, (
+            f"spec 02 corpus entry {i} (type={entry['type']!r}) uses keys "
+            f"not on {model.__name__}: {spec_only}"
+        )
+
+
+def test_spec_02_fonts_entries_match_model() -> None:
+    """Each entry in the ``fonts:`` example must use ``Font`` fields."""
+
+    from pd_ocr_synth.recipe.models import Font
+
+    blocks = _per_block_yaml()
+    assert "fonts" in blocks, "spec 02 ``fonts:`` example block missing"
+    entries = blocks["fonts"]
+    assert isinstance(entries, list) and entries
+    for i, entry in enumerate(entries):
+        assert isinstance(entry, dict)
+        spec_only = sorted(set(entry) - set(Font.model_fields))
+        assert not spec_only, f"spec 02 fonts entry {i} uses keys not on Font: {spec_only}"
+
+
+def test_spec_02_degradation_entries_use_known_kind_field() -> None:
+    """Each entry in the ``degradation:`` example must declare a ``kind``.
+
+    ``DegradationStage`` allows extras (stage-specific options vary by
+    kind), so we can't enforce *all* keys here — that's
+    ``test_validation.py``'s job at runtime. What we *can* enforce is
+    that every example carries the model's required discriminator
+    fields, which keeps the spec example honest about the contract.
+    """
+
+    from pd_ocr_synth.recipe.models import DegradationStage
+
+    blocks = _per_block_yaml()
+    assert "degradation" in blocks, "spec 02 ``degradation:`` example block missing"
+    entries = blocks["degradation"]
+    assert isinstance(entries, list) and entries
+    required = {
+        name for name, field in DegradationStage.model_fields.items() if field.is_required()
+    }
+    for i, entry in enumerate(entries):
+        assert isinstance(entry, dict)
+        missing = sorted(required - set(entry))
+        assert not missing, (
+            f"spec 02 degradation entry {i} missing required field(s) "
+            f"on DegradationStage: {missing}; entry={entry!r}"
+        )
