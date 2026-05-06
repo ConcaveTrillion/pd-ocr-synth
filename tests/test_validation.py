@@ -205,6 +205,109 @@ def test_known_degradation_set_includes_canonical_kinds() -> None:
 
 
 # ---------------------------------------------------------------------------
+# output.mode / layout.mode pairing (spec 08, §Modes)
+# ---------------------------------------------------------------------------
+
+
+def _swap_output_layout_modes(yaml_text: str, *, output_mode: str, layout_mode: str) -> str:
+    """Swap the recognition/word_crops defaults emitted by ``_minimal_yaml``."""
+    swapped = yaml_text.replace("mode: recognition", f"mode: {output_mode}")
+    return swapped.replace("mode: word_crops", f"mode: {layout_mode}")
+
+
+def _layout_block_for(layout_mode: str) -> str:
+    """Render a minimal but mode-appropriate layout block.
+
+    ``_minimal_yaml`` already includes ``padding_px: 8`` for word_crops;
+    other modes add ``max_width_px`` so the keys-by-mode warning logic
+    doesn't fire and obscure the pairing assertion under test.
+    """
+    if layout_mode == "word_crops":
+        return "layout:\n  mode: word_crops\n  padding_px: 8\n"
+    return f"layout:\n  mode: {layout_mode}\n  padding_px: 8\n  max_width_px: 800\n"
+
+
+@pytest.mark.parametrize(
+    ("output_mode", "layout_mode"),
+    [
+        ("recognition", "paragraphs"),
+        ("recognition", "pages"),
+        ("detection", "word_crops"),
+        ("detection", "lines"),
+    ],
+)
+def test_output_layout_mode_mismatch_is_error(
+    tmp_path: Path,
+    writable_font_bytes: bytes,
+    output_mode: str,
+    layout_mode: str,
+) -> None:
+    font = tmp_path / "fake.otf"
+    font.write_bytes(writable_font_bytes)
+    seed = _make_file(tmp_path / "seed.txt", "hello\n")
+    yaml_text = _minimal_yaml(font=str(font), dest=str(tmp_path / "out"), corpus=str(seed))
+    # Replace the layout block wholesale so we can pick mode-appropriate keys.
+    yaml_text = yaml_text.replace(
+        "layout:\n  mode: word_crops\n  padding_px: 8\n",
+        _layout_block_for(layout_mode),
+    )
+    yaml_text = yaml_text.replace("mode: recognition", f"mode: {output_mode}")
+    recipe = load_recipe(_write(tmp_path, yaml_text))
+    report = validate_recipe(recipe)
+    codes = [i.code for i in report.errors]
+    assert "output_layout_mode_mismatch" in codes, [i.format() for i in report.issues]
+
+
+@pytest.mark.parametrize(
+    ("output_mode", "layout_mode"),
+    [
+        ("recognition", "word_crops"),
+        ("recognition", "lines"),
+        ("detection", "paragraphs"),
+        ("detection", "pages"),
+    ],
+)
+def test_output_layout_mode_pairing_valid_combinations_pass(
+    tmp_path: Path,
+    writable_font_bytes: bytes,
+    output_mode: str,
+    layout_mode: str,
+) -> None:
+    font = tmp_path / "fake.otf"
+    font.write_bytes(writable_font_bytes)
+    seed = _make_file(tmp_path / "seed.txt", "hello\n")
+    yaml_text = _minimal_yaml(font=str(font), dest=str(tmp_path / "out"), corpus=str(seed))
+    yaml_text = yaml_text.replace(
+        "layout:\n  mode: word_crops\n  padding_px: 8\n",
+        _layout_block_for(layout_mode),
+    )
+    yaml_text = yaml_text.replace("mode: recognition", f"mode: {output_mode}")
+    recipe = load_recipe(_write(tmp_path, yaml_text))
+    report = validate_recipe(recipe)
+    codes = [i.code for i in report.errors]
+    assert "output_layout_mode_mismatch" not in codes, [i.format() for i in report.issues]
+
+
+def test_output_layout_mode_mismatch_message_cites_spec(
+    tmp_path: Path, writable_font_bytes: bytes
+) -> None:
+    font = tmp_path / "fake.otf"
+    font.write_bytes(writable_font_bytes)
+    seed = _make_file(tmp_path / "seed.txt", "hello\n")
+    yaml_text = _swap_output_layout_modes(
+        _minimal_yaml(font=str(font), dest=str(tmp_path / "out"), corpus=str(seed)),
+        output_mode="detection",
+        layout_mode="word_crops",
+    )
+    recipe = load_recipe(_write(tmp_path, yaml_text))
+    report = validate_recipe(recipe)
+    msg = next(i.message for i in report.errors if i.code == "output_layout_mode_mismatch")
+    assert "08-output-format.md" in msg
+    # The message should hint at which layout modes are valid for detection.
+    assert "paragraphs" in msg and "pages" in msg
+
+
+# ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
 

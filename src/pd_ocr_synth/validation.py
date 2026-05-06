@@ -71,6 +71,18 @@ _LAYOUT_KEYS_BY_MODE: dict[str, frozenset[str]] = {
     "pages": frozenset({"padding_px", "max_width_px", "line_spacing"}),
 }
 
+# Per docs/specs/08-output-format.md §Modes:
+#
+#   Detection-mode rendering requires layout.mode in {paragraphs, pages}.
+#   Recognition-mode rendering requires layout.mode in {word_crops, lines}.
+#
+# Anything outside these pairings is rejected at validate time so a
+# malformed recipe can't reach the render writer.
+_LAYOUT_MODES_BY_OUTPUT_MODE: dict[str, frozenset[str]] = {
+    "recognition": frozenset({"word_crops", "lines"}),
+    "detection": frozenset({"paragraphs", "pages"}),
+}
+
 # Severity levels. ``error`` blocks ``validate`` from exiting 0;
 # ``warning`` is informational only.
 Severity = Literal["error", "warning"]
@@ -120,6 +132,7 @@ def validate_recipe(recipe: Recipe, *, offline: bool = False) -> ValidationRepor
     issues.extend(_check_fonts(recipe))
     issues.extend(_check_corpus(recipe))
     issues.extend(_check_layout(recipe))
+    issues.extend(_check_output_layout_pairing(recipe))
     issues.extend(_check_degradation(recipe))
     issues.extend(_check_publish(recipe))
     _ = offline  # placeholder for M03 wiring
@@ -263,6 +276,37 @@ def _check_layout(recipe: Recipe) -> list[ValidationIssue]:
                 )
             )
     return out
+
+
+def _check_output_layout_pairing(recipe: Recipe) -> list[ValidationIssue]:
+    """Enforce the spec-08 pairing between ``output.mode`` and ``layout.mode``.
+
+    Recognition mode is for tight per-word/per-line crops; detection
+    mode is for full-page synthesis with bbox annotations. Mixing them
+    yields output the trainer can't consume, so we block it here.
+    """
+
+    output_mode = recipe.output.mode
+    layout_mode = recipe.layout.mode
+    allowed = _LAYOUT_MODES_BY_OUTPUT_MODE.get(output_mode)
+    if allowed is None:
+        # Unknown output.mode would have been rejected by pydantic; the
+        # safety net keeps mypy and future literal-additions honest.
+        return []
+    if layout_mode in allowed:
+        return []
+    return [
+        ValidationIssue(
+            severity="error",
+            code="output_layout_mode_mismatch",
+            message=(
+                f"output.mode='{output_mode}' requires layout.mode in "
+                f"{{{', '.join(sorted(allowed))}}}, got '{layout_mode}'. "
+                "See docs/specs/08-output-format.md (Modes table)."
+            ),
+            location="layout.mode",
+        )
+    ]
 
 
 def _check_degradation(recipe: Recipe) -> list[ValidationIssue]:
