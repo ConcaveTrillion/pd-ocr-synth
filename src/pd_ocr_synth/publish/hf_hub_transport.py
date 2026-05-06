@@ -28,16 +28,20 @@ Protocol method               ``HfApi`` call
 ============================  ==============================================
 
 Why ``upload_large_folder`` rather than ``upload_folder``: spec 10
-mandates the resumable variant. The trade-off is that
-``upload_large_folder`` does not accept a ``commit_message``; the
-chunked uploads use HF's auto-generated messages. We honor the
-caller-supplied ``commit_message`` by including it in our own log
-output but cannot stamp it on the on-HF commit. Recovering the latest
-commit SHA after upload is done via
-``HfApi.list_repo_commits(...)[0]``; if that probe fails we fall back
-to an empty SHA rather than failing the whole publish — the upload
-itself succeeded by then and surfacing a misleading TransportError
-would mask a genuine success.
+§ Tooling used mandates the resumable variant. The trade-off is that
+``upload_large_folder`` does not accept a ``commit_message`` at all
+(per its huggingface_hub 1.13 signature and docstring); the chunked
+uploads use HF's auto-generated messages. The CLI surfaces this with
+a stderr warning when the user passes ``--message`` — see
+``cli_runner.py`` ``_MESSAGE_LIMITATION_WARNING`` and
+``docs/specs/10-publishing.md`` § Tooling used → Known limitation.
+The Protocol still accepts ``commit_message`` so the orchestrator
+keeps a single message-formation site and so a future detection-mode
+``push_to_hub`` path can honor it. Recovering the latest commit SHA
+after upload is done via ``HfApi.list_repo_commits(...)[0]``; if that
+probe fails we fall back to an empty SHA rather than failing the
+whole publish — the upload itself succeeded by then and surfacing a
+misleading TransportError would mask a genuine success.
 
 Error wrapping: every ``huggingface_hub`` exception is repackaged as
 :class:`pd_ocr_synth.publish.transport.TransportError`. Tests assert
@@ -217,10 +221,20 @@ class HfHubTransport:
         and let the runner print a "see HF UI for commit" line.
 
         The ``commit_message`` parameter cannot be honored by
-        ``upload_large_folder`` (the chunked API auto-generates
-        per-chunk messages). It is accepted to satisfy the Protocol
-        and so the orchestrator's commit-message logic still lives at
-        one site; the adapter docstring documents the limitation.
+        ``upload_large_folder``: the chunked API does not accept it
+        at all (huggingface_hub 1.13, ``hf_api.py``: the parameter is
+        absent from the function signature; the docstring states
+        "you cannot set a custom commit_message and commit_description
+        since multiple commits are created"). The Protocol still
+        accepts ``commit_message`` so the orchestrator's commit-message
+        logic lives at one site and so a future ``push_to_hub`` path
+        (detection-mode parquet — spec 10 § Tooling used) can use
+        the same field. The CLI runner emits a stderr warning when the
+        user explicitly passes ``--message`` so the gap is visible at
+        the command line; see ``docs/specs/10-publishing.md``
+        § Tooling used → Known limitation, and
+        ``docs/roadmap/08-publishing-hf.md`` § Residual M08 work →
+        Commit-message limitation.
         """
 
         try:

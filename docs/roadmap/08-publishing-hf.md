@@ -61,9 +61,11 @@ Spec: [`10-publishing.md`](../specs/10-publishing.md).
 - [x] `--message` overrides the auto-generated commit message.
       (`pd_ocr_synth.publish.commit_message.resolve_commit_message`;
       default falls back to `pd-ocr-synth render @<recipe-sha>` derived
-      from the staging README's `pd-ocr-recipe-sha`. Note: the
-      `upload_large_folder` SDK call does not honor `commit_message`
-      directly — see "Residual M08 work" below.)
+      from the staging README's `pd-ocr-recipe-sha`. The
+      `upload_large_folder` SDK call cannot stamp `commit_message`
+      on the remote commit — flag accepted with a stderr warning;
+      see "Residual M08 work → Commit-message limitation" below for
+      the chosen strategy and citation.)
 
 ### CLI surface
 
@@ -135,15 +137,29 @@ following gaps remain — pick any of them as a future small chunk.
 
 ### Commit-message limitation
 
-- `huggingface_hub.HfApi.upload_large_folder` ignores its caller's
-  `commit_message` argument (the chunked API auto-generates per-chunk
-  messages). The current `HfHubTransport.upload_folder` accepts the
-  parameter to satisfy the Protocol but cannot stamp it on the
-  on-HF commit. Spec 10 § Versioning describes
-  `--message "..."` overriding the auto-generated commit message.
-  Either: (a) document this as a known limitation in spec 10, (b)
-  fall back to `upload_folder` for small uploads, or (c) post a
-  separate metadata-only commit carrying the message.
+- [x] **Strategy A picked: document + warn.** Investigation
+      (huggingface_hub 1.13.0, `hf_api.py:5859-5973`) confirmed
+      `upload_large_folder` does not even accept a `commit_message`
+      argument; its docstring states "you cannot set a custom
+      `commit_message` and `commit_description` since multiple commits
+      are created." Strategies (B) post-hoc empty commit and (C/D)
+      switch to `upload_folder` were rejected: (B) is fragile because
+      `create_commit` requires at least one operation, and (C/D) would
+      contradict spec 10 § Tooling used, which explicitly mandates
+      `upload_large_folder` for the resumability behavior on large
+      recognition datasets. Outcome: `HfHubTransport.upload_folder`
+      continues to accept and ignore `commit_message` (Protocol
+      contract), the CLI runner emits a single-line stderr warning
+      when `--message` is explicitly supplied
+      (`_MESSAGE_LIMITATION_WARNING` in `cli_runner.py`), and
+      `docs/specs/10-publishing.md` § Tooling used grew a "Known
+      limitation" subsection plus a row in § Errors and recovery.
+      Tests in `tests/test_cli_publish_upload.py` lock both the
+      warning-on-`--message` and silence-on-default behaviors. The
+      `FakeTransport` test seam still records `commit_message`
+      verbatim, which is correct — the Protocol is honest, and a
+      future detection-mode `push_to_hub` path (which DOES honor the
+      message) will use the same field.
 
 ### Content-SHA scope
 

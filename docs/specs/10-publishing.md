@@ -203,6 +203,25 @@ namespace. Read-only operations during render do not need a token.
 
 No custom upload code; all primitives come from the official libraries.
 
+### Known limitation: `--message` with `upload_large_folder`
+
+`HfApi.upload_large_folder` does **not accept** a `commit_message`
+argument — its docstring (huggingface_hub ≥ 1.13) states "you cannot
+set a custom `commit_message` and `commit_description` since multiple
+commits are created." The chunked upload auto-generates per-shard
+commit messages.
+
+We accept `--message <MSG>` for forward-compatibility (a future
+detection-mode parquet path may use `push_to_hub`, which honors it)
+and so the orchestrator's commit-message logic lives at one site, but
+the value **does not appear on the remote commit** for recognition
+uploads. The CLI prints a single-line stderr warning when `--message`
+is explicitly supplied so the gap is visible at run time. The
+auto-generated default (`pd-ocr-synth render @<recipe-sha>`) is
+likewise unstamped on the HF commit; we keep it because a future
+switch to `upload_folder` (for small datasets) would honor it
+verbatim.
+
 ## Dry run
 
 `--dry-run` shows what would be uploaded without contacting HF:
@@ -229,6 +248,7 @@ Content SHA: 2c4f8e... (no existing commit; first publish)
 | Repo doesn't exist | Auto-create unless `--no-create` |
 | Missing local render | Exit code 5 with "render first or use --render-first" |
 | Local output corrupt (manifest mismatch) | Exit code 6; refuse to upload partial data |
+| `--message` supplied | Stderr warning; flag accepted but `upload_large_folder` will not stamp it on the remote commit (see § Tooling used → Known limitation) |
 
 ## CLI summary
 
