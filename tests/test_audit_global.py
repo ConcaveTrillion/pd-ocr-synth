@@ -17,6 +17,9 @@ Coverage matrix here:
   ``PD_OCR_SYNTH_NO_GLOBAL_AUDIT``).
 - End-to-end: ``run_recipe`` mirrors the row to the global path
   alongside the per-output-dir log, and the rows match.
+- Failure isolation: the global mirror's ``OSError`` does not mask
+  a successful render or the per-output-dir audit (e.g. read-only
+  ``$PD_OCR_SYNTH_CACHE``).
 """
 
 from __future__ import annotations
@@ -404,3 +407,131 @@ def test_global_audit_round_trips_through_jsonl(
     assert parsed["recipe_name"] == "round-trip"
     assert parsed["recipe_sha"] == "ab" * 32
     assert parsed["schema_version"] == AUDIT_SCHEMA_VERSION
+
+
+# ---------------------------------------------------------------------------
+# Failure isolation: a global-mirror write failure must not leak.
+# ---------------------------------------------------------------------------
+
+
+def test_global_audit_mirror_oserror_does_not_fail_render(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    writable_font_bytes: bytes,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A read-only / unwriteable cache root must not break a render.
+
+    The global mirror is deliberately best-effort — the per-output-dir
+    audit is the source of truth, and the cross-recipe aggregate is a
+    convenience over it. ``run_recipe`` therefore wraps the global
+    append in ``try / except OSError`` and downgrades a failure to a
+    stderr warning. This regression test exercises that path
+    end-to-end via fault injection so the failure-mode contract has
+    actual test coverage instead of just a ``pragma: no cover`` marker.
+
+    Setup: monkeypatch ``pd_ocr_synth.render.run.append_audit_entry``
+    so that the *first* call (per-output-dir, into ``output_dir``) is
+    delegated to the real implementation, and the *second* call
+    (global mirror, into ``<cache_root>/audit.jsonl``) raises
+    ``OSError("read-only filesystem")``. Asserts:
+
+    - ``main(['render', ...])`` returns 0 (render succeeded).
+    - The per-output-dir ``_audit.jsonl`` exists and contains the row.
+    - The global ``audit.jsonl`` does *not* exist.
+    - stderr contains a warning line that mentions the failure mode.
+    """
+
+    from pd_ocr_synth.render import run as run_mod
+
+    cache_root = tmp_path / "cache"
+    monkeypatch.setenv("PD_OCR_SYNTH_CACHE", str(cache_root))
+    monkeypatch.delenv(GLOBAL_AUDIT_DISABLE_ENV, raising=False)
+
+    real_append = run_mod.append_audit_entry
+    expected_global = cache_root / GLOBAL_AUDIT_FILENAME
+    calls: list[Path] = []
+
+    def _flaky_append(audit_path: Path, entry: AuditEntry) -> None:
+        calls.append(audit_path)
+        if audit_path == expected_global:
+            raise OSError("read-only filesystem")
+        real_append(audit_path, entry)
+
+    monkeypatch.setattr(run_mod, "append_audit_entry", _flaky_append)
+
+    rp = _setup_recipe(tmp_path, writable_font_bytes)
+    out = tmp_path / "trainer-out"
+    rc = _drive_render(rp, out)
+    assert rc == 0, "render must not fail when the global mirror is unwriteable"
+
+    # Per-output-dir audit landed.
+    local_audit = out / AUDIT_FILENAME
+    assert local_audit.is_file(), "per-output audit must be written even if global fails"
+    local_rows = read_audit_entries(local_audit)
+    assert len(local_rows) == 1
+    assert local_rows[0]["recipe_name"] == "global-audit-smoke"
+
+    # Global mirror was attempted but raised; no file produced.
+    assert not expected_global.exists()
+
+    # Both append targets were attempted (per-output-dir first, global second).
+    assert calls == [out / AUDIT_FILENAME, expected_global]
+
+    # stderr carries the documented warning.
+    captured = capsys.readouterr()
+    assert "global audit log write failed" in captured.err
+    assert "read-only filesystem" in captured.err
+    assert "render output unaffected" in captured.err
+
+
+def test_global_audit_mirror_oserror_still_emits_per_output_audit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    writable_font_bytes: bytes,
+) -> None:
+    """The per-output-dir audit must be readable end-to-end after a global failure.
+
+    Companion to the OSError-isolation test above: focuses on the
+    *forensic* property — even when the cross-recipe timeline is
+    unwriteable, the per-output-dir audit (the canonical record for
+    that one render) round-trips through the same reader the
+    ``audit`` subcommand uses, with its standard schema_version and
+    field set. This guards against a regression where a global
+    failure path accidentally short-circuits the per-output-dir
+    write or corrupts its content.
+    """
+
+    from pd_ocr_synth.render import run as run_mod
+
+    cache_root = tmp_path / "cache"
+    monkeypatch.setenv("PD_OCR_SYNTH_CACHE", str(cache_root))
+    monkeypatch.delenv(GLOBAL_AUDIT_DISABLE_ENV, raising=False)
+
+    real_append = run_mod.append_audit_entry
+    expected_global = cache_root / GLOBAL_AUDIT_FILENAME
+
+    def _flaky_append(audit_path: Path, entry: AuditEntry) -> None:
+        if audit_path == expected_global:
+            raise OSError("disk quota exceeded")
+        real_append(audit_path, entry)
+
+    monkeypatch.setattr(run_mod, "append_audit_entry", _flaky_append)
+
+    rp = _setup_recipe(tmp_path, writable_font_bytes)
+    out = tmp_path / "trainer-out"
+    rc = _drive_render(rp, out)
+    assert rc == 0
+
+    # Per-output-dir audit is byte-complete and parseable.
+    rows = read_audit_entries(out / AUDIT_FILENAME)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["schema_version"] == AUDIT_SCHEMA_VERSION
+    assert row["recipe_name"] == "global-audit-smoke"
+    assert row["count"] == 3
+    assert row["seed"] == 21
+    # ``output_dir`` is recorded as the resolved render destination
+    # (not the cache root) — the audit row is about *this* render,
+    # not the global aggregate that failed to receive it.
+    assert Path(row["output_dir"]).resolve() == out.resolve()

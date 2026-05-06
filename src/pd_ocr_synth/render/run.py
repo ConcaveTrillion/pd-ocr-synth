@@ -376,7 +376,14 @@ def run_recipe(
         if should_emit_global_audit(audit=audit):
             try:
                 append_audit_entry(default_global_audit_path(), entry)
-            except OSError as exc:  # pragma: no cover - exceptional path
+            except OSError as exc:
+                # Best-effort mirror: a failure here (read-only cache
+                # root, disk quota, NFS hiccup) must not mask the
+                # successful render or the per-output-dir audit. The
+                # OSError branch is covered by
+                # ``tests/test_audit_global.py::test_global_audit_mirror_oserror_*``
+                # via fault injection; do not gate this with
+                # ``# pragma: no cover``.
                 print(
                     f"warning: global audit log write failed ({exc}); "
                     f"per-output audit and render output unaffected",

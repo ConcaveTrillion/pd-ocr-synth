@@ -53,6 +53,44 @@ The ``timestamp`` field is wall-clock and therefore non-deterministic
 across runs. A test that asserts byte-for-byte equality on the audit
 file should either freeze time or assert on the parsed-back JSON
 shape — see ``tests/test_audit.py`` for the parse-back pattern.
+
+## Concurrent writes
+
+The global aggregate at ``<cache_root>/audit.jsonl`` (see
+:func:`default_global_audit_path`) can be written-to by two parallel
+``run_recipe`` invocations from independent CLI processes. We rely
+on the POSIX guarantee that ``write(2)`` calls smaller than
+``PIPE_BUF`` (4096 bytes on Linux) on a file opened with ``O_APPEND``
+are atomic and ordered — Python's ``open(path, "a", encoding="utf-8")``
+maps to ``O_APPEND`` on POSIX, and the buffered writer flushes one
+serialized JSONL line + newline as a single underlying ``write``. A
+typical audit line is a few hundred bytes (timestamp + identity +
+counts + a single ``output_dir`` path bounded by ``PATH_MAX``); even
+a pathological deep ``output_dir`` stays under 4 KB.
+
+Caveats this assumption does *not* cover:
+
+- **Non-POSIX filesystems** (Windows native, NFS without
+  ``actimeo=0``): ``O_APPEND`` atomicity is not guaranteed. Mixed
+  lines on a shared NFS-backed cache root are possible. Operators
+  who run pd-ocr-synth across multiple hosts pointed at one shared
+  ``$PD_OCR_SYNTH_CACHE`` should set ``PD_OCR_SYNTH_NO_GLOBAL_AUDIT=1``
+  on all but one host (or accept the risk and grep ``jq -c .`` over
+  the file, which skips malformed lines).
+- **Lines exceeding ``PIPE_BUF``** (very long ``output_dir``
+  strings): theoretically possible but bounded by ``PATH_MAX`` (4096
+  on Linux) which gives roughly the same budget as ``PIPE_BUF``.
+  Documented here so a future schema bump that adds a large field
+  forces this comment to be re-evaluated.
+- **In-process concurrency**: ``run_recipe`` writes the audit row
+  exactly once at the end of a render, after the worker pool has
+  joined. No same-process race.
+
+Reader-side: :func:`read_audit_entries` calls ``json.loads`` per line
+and raises ``JSONDecodeError`` on malformed JSON. A torn line from
+the rare cross-host NFS case would surface loudly rather than being
+silently dropped — preferred since silently dropping rows from a
+forensic log is worse than a noisy parse error.
 """
 
 from __future__ import annotations
