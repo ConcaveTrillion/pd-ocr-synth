@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Literal
 
 from pd_ocr_synth.recipe import Recipe
-from pd_ocr_synth.recipe.models import SUPPORTED_SCHEMA_VERSIONS, LocalCorpus
+from pd_ocr_synth.recipe.models import SUPPORTED_SCHEMA_VERSIONS, Layout, LocalCorpus
 
 # Built-in degradation kinds, per docs/specs/07-degradation.md. ``preset``
 # is a structural marker (the loader expands it before this validator
@@ -273,18 +273,16 @@ def _check_corpus(recipe: Recipe) -> list[ValidationIssue]:
 
 def _check_layout(recipe: Recipe) -> list[ValidationIssue]:
     allowed = _LAYOUT_KEYS_BY_MODE.get(recipe.layout.mode, frozenset())
-    set_keys: dict[str, object] = {
-        "padding_px": recipe.layout.padding_px,
-        "baseline_jitter_px": recipe.layout.baseline_jitter_px,
-        "max_width_px": recipe.layout.max_width_px,
-        "line_spacing": recipe.layout.line_spacing,
-        "paragraph_spacing": recipe.layout.paragraph_spacing,
-        "paragraph_indent_px": recipe.layout.paragraph_indent_px,
-        "paragraph_alignment": recipe.layout.paragraph_alignment,
-        "page_size_px": recipe.layout.page_size_px,
-    }
+    # Enumerate set_keys directly from the Layout model so adding a new
+    # field on Layout automatically participates in the unused-key check
+    # without a parallel hand-written list to keep in sync. ``mode``
+    # itself is not a "configuration key" — it's the discriminator the
+    # permitted-keys table is keyed *by*.
     out: list[ValidationIssue] = []
-    for key, value in set_keys.items():
+    for key in Layout.model_fields:
+        if key == "mode":
+            continue
+        value = getattr(recipe.layout, key)
         if value is None:
             continue
         if key not in allowed:

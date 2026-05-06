@@ -804,6 +804,121 @@ def test_output_layout_mode_mismatch_message_cites_spec(
 
 
 # ---------------------------------------------------------------------------
+# Layout-model ↔ permitted-keys drift guard.
+#
+# ``_LAYOUT_KEYS_BY_MODE`` lists, per layout mode, which keys are
+# *meaningful* in that mode. Anything set but not listed surfaces a
+# ``layout_key_unused`` warning. That dispatch only works while the
+# table is **kept in sync with** the ``Layout`` model in
+# ``recipe/models.py``:
+#
+# * If a new Layout field is added but never enters
+#   ``_LAYOUT_KEYS_BY_MODE``, every recipe that sets it gets a
+#   misleading "unused" warning regardless of mode (false positive),
+#   *or* the field is silently dead (no mode reads it).
+# * If ``_LAYOUT_KEYS_BY_MODE`` lists a key that isn't actually a
+#   Layout field, the validator advertises a config knob the model
+#   doesn't accept — ``extra="forbid"`` rejects it at load time, so the
+#   permitted-keys entry is a false promise.
+#
+# These two meta-tests catch both directions. They have to be kept in
+# lockstep — by design — so any drift caught here is a real bug.
+# ---------------------------------------------------------------------------
+
+
+def _layout_field_names() -> frozenset[str]:
+    """Pydantic model fields on ``Layout``, including ``mode``."""
+
+    from pd_ocr_synth.recipe.models import Layout
+
+    return frozenset(Layout.model_fields.keys())
+
+
+def _permitted_layout_keys() -> frozenset[str]:
+    """Union of keys permitted by any layout mode."""
+
+    from pd_ocr_synth.validation import _LAYOUT_KEYS_BY_MODE
+
+    out: set[str] = set()
+    for keys in _LAYOUT_KEYS_BY_MODE.values():
+        out.update(keys)
+    return frozenset(out)
+
+
+def test_permitted_layout_keys_are_all_layout_fields() -> None:
+    """Every key in ``_LAYOUT_KEYS_BY_MODE`` must be an actual ``Layout`` field.
+
+    A permitted key that isn't a model field is a false promise — pydantic
+    rejects the field at load time (``extra='forbid'``), so the validator
+    table advertises a knob users can never set.
+    """
+
+    permitted = _permitted_layout_keys()
+    fields = _layout_field_names()
+    extra = permitted - fields
+    assert not extra, (
+        f"_LAYOUT_KEYS_BY_MODE lists keys not on the Layout model: "
+        f"{sorted(extra)}. Either add the field to "
+        "src/pd_ocr_synth/recipe/models.py:Layout or drop the key from "
+        "_LAYOUT_KEYS_BY_MODE in src/pd_ocr_synth/validation.py."
+    )
+
+
+def test_every_layout_field_appears_in_some_mode() -> None:
+    """Every ``Layout`` field (except ``mode``) must be permitted in at least one mode.
+
+    A Layout field absent from every permitted set means either:
+    * the validator emits ``layout_key_unused`` whenever the user sets
+      it regardless of mode (false positive), or
+    * the renderer silently ignores it (dead field).
+
+    ``mode`` is excluded — it's the discriminator the table is keyed
+    *by*, not a per-mode configuration key.
+    """
+
+    fields = _layout_field_names() - {"mode"}
+    permitted = _permitted_layout_keys()
+    missing = fields - permitted
+    assert not missing, (
+        f"Layout fields not permitted in any mode by _LAYOUT_KEYS_BY_MODE: "
+        f"{sorted(missing)}. Add each field to the appropriate mode(s) in "
+        "src/pd_ocr_synth/validation.py:_LAYOUT_KEYS_BY_MODE, or drop it "
+        "from src/pd_ocr_synth/recipe/models.py:Layout if it's truly unused."
+    )
+
+
+def test_permitted_layout_keys_table_modes_match_layout_mode_literal() -> None:
+    """``_LAYOUT_KEYS_BY_MODE`` must cover every value of ``Layout.mode``.
+
+    A mode missing from the table falls through to ``frozenset()`` in
+    ``_check_layout`` — every key the user sets would then warn as
+    unused, regardless of legitimacy. A mode in the table that isn't a
+    legal ``Layout.mode`` literal is dead config (pydantic would reject
+    it at load time, so the validator never sees it).
+    """
+
+    import typing
+
+    from pd_ocr_synth.recipe.models import Layout
+    from pd_ocr_synth.validation import _LAYOUT_KEYS_BY_MODE
+
+    mode_field = Layout.model_fields["mode"]
+    literal_modes = frozenset(typing.get_args(mode_field.annotation))
+    table_modes = frozenset(_LAYOUT_KEYS_BY_MODE.keys())
+    missing = literal_modes - table_modes
+    extra = table_modes - literal_modes
+    assert not missing, (
+        f"_LAYOUT_KEYS_BY_MODE is missing layout modes: {sorted(missing)}. "
+        "Every value of Layout.mode must have a permitted-keys entry."
+    )
+    assert not extra, (
+        f"_LAYOUT_KEYS_BY_MODE lists modes not in Layout.mode: "
+        f"{sorted(extra)}. Drop them from "
+        "src/pd_ocr_synth/validation.py:_LAYOUT_KEYS_BY_MODE."
+    )
+
+
+# ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
 
