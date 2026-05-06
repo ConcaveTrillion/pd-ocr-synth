@@ -21,10 +21,11 @@ Spec: [`10-publishing.md`](../specs/10-publishing.md).
         plus flat provenance columns (`font`, `font_size_pt`,
         `degradations`, `corpus`).
   - [x] `recipe.snapshot.yaml` — copied as-is.
-  - [ ] `README.md` — generated dataset card with the documented YAML
+  - [x] `README.md` — generated dataset card with the documented YAML
         front matter (license, task, language, tags, `pd-ocr-shape`,
         `pd-ocr-source`, `pd-ocr-recipe-sha`,
-        `pd-ocr-render-tool-version`).
+        `pd-ocr-render-tool-version`). `pd-ocr-content-sha` is added
+        at upload time, not by the staging builder.
 
 ### Auth resolution
 

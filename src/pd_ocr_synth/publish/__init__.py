@@ -16,6 +16,13 @@ separated from the format-conversion decisions.
 
 from __future__ import annotations
 
+from pd_ocr_synth.publish.dataset_card import (
+    README_FILENAME,
+    DatasetCardInputs,
+    load_card_inputs,
+    render_dataset_card,
+    write_dataset_card,
+)
 from pd_ocr_synth.publish.recognition import (
     DATA_DIRNAME,
     METADATA_FILENAME,
@@ -25,7 +32,12 @@ from pd_ocr_synth.publish.recognition import (
 
 __all__ = [
     "DATA_DIRNAME",
+    "DatasetCardInputs",
     "METADATA_FILENAME",
+    "README_FILENAME",
     "StagingResult",
     "build_recognition_staging",
+    "load_card_inputs",
+    "render_dataset_card",
+    "write_dataset_card",
 ]

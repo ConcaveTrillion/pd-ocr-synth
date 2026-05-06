@@ -48,6 +48,10 @@ from pd_ocr_synth.output.recognition import (
     MANIFEST_FILENAME,
 )
 from pd_ocr_synth.output.snapshot import SNAPSHOT_FILENAME
+from pd_ocr_synth.publish.dataset_card import (
+    load_card_inputs,
+    write_dataset_card,
+)
 
 # HF imagefolder convention: images live under ``data/`` and the
 # ``file_name`` column in ``metadata.jsonl`` is the path relative to
@@ -79,6 +83,7 @@ class StagingResult:
     images_copied: int = 0
     rows_written: int = 0
     snapshot_copied: bool = False
+    readme_written: bool = False
     skipped_manifest_rows: int = 0
     # Filenames present in ``labels.json`` whose image file was missing
     # on disk. Surfaced (not silently dropped) so a corrupt local
@@ -177,6 +182,15 @@ def build_recognition_staging(
     if snapshot_src.is_file():
         shutil.copy2(snapshot_src, staging / SNAPSHOT_FILENAME)
         result.snapshot_copied = True
+
+    # Dataset-card README. Generated only when we have a snapshot to
+    # build it from — without the snapshot we'd be missing the recipe
+    # block, the tool version, and the recipe-SHA front-matter key, so
+    # an empty README would mislead consumers more than its absence.
+    if result.snapshot_copied:
+        card_inputs = load_card_inputs(local)
+        write_dataset_card(staging, card_inputs)
+        result.readme_written = True
 
     return result
 
