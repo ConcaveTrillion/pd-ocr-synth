@@ -10,13 +10,17 @@ module in isolation; the run-through-CLI integration test lives in
 from __future__ import annotations
 
 import json
+import warnings
 from pathlib import Path
+
+import pytest
 
 from pd_ocr_synth.audit import (
     AUDIT_DISABLE_ENV,
     AUDIT_FILENAME,
     AUDIT_SCHEMA_VERSION,
     AuditEntry,
+    AuditSchemaVersionWarning,
     append_audit_entry,
     compute_recipe_sha,
     now_timestamp,
@@ -211,3 +215,170 @@ def test_append_audit_entry_creates_nested_parent_dirs(tmp_path: Path) -> None:
     audit_path = tmp_path / "deeply" / "nested" / "out" / AUDIT_FILENAME
     append_audit_entry(audit_path, _make_entry())
     assert audit_path.is_file()
+
+
+# ---------------------------------------------------------------------------
+# Forward-compat: schema_version skip-with-warning policy
+# ---------------------------------------------------------------------------
+
+
+def _v2_line(**overrides) -> str:
+    """Build a synthetic ``schema_version=2`` audit line.
+
+    Future-version rows must be tolerated by today's reader (skipped,
+    not crashed-on). The shape here mirrors v1 minus a hypothetical
+    field rename so the test exercises the version branch even if
+    field-set parity happens to hold.
+    """
+
+    payload = {
+        "timestamp": "2099-01-01T00:00:00Z",
+        "recipe_name": "future-recipe",
+        "recipe_sha": "f" * 64,
+        "output_dir": "/tmp/v2",
+        "planned_count": 16,  # hypothetical v2 rename of ``count``
+        "seed": 99,
+        "workers": 2,
+        "rendered": 16,
+        "skipped": 0,
+        "runtime_milliseconds": 2500,  # hypothetical v2 unit change
+        "schema_version": 2,
+    }
+    payload.update(overrides)
+    return json.dumps(payload)
+
+
+def test_read_audit_entries_skips_future_schema_version_with_warning(
+    tmp_path: Path,
+) -> None:
+    """v2 row + v1 row → only v1 returned, one aggregated warning."""
+
+    p = tmp_path / AUDIT_FILENAME
+    v1_line = _make_entry(seed=1).to_jsonl()
+    p.write_text(_v2_line() + "\n" + v1_line + "\n", encoding="utf-8")
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", AuditSchemaVersionWarning)
+        entries = read_audit_entries(p)
+
+    assert len(entries) == 1
+    assert entries[0]["seed"] == 1  # the v1 row
+    # Exactly one warning even though we could have fired per-row;
+    # the aggregated form keeps long mixed-version files quiet.
+    schema_warnings = [w for w in caught if issubclass(w.category, AuditSchemaVersionWarning)]
+    assert len(schema_warnings) == 1
+    msg = str(schema_warnings[0].message)
+    assert "schema_version" in msg
+    assert "2" in msg  # the unknown version mentioned
+
+
+def test_read_audit_entries_no_warning_when_all_rows_current_version(
+    tmp_path: Path,
+) -> None:
+    """All-v1 file → no schema-version warning emitted."""
+
+    p = tmp_path / AUDIT_FILENAME
+    append_audit_entry(p, _make_entry(seed=1))
+    append_audit_entry(p, _make_entry(seed=2))
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", AuditSchemaVersionWarning)
+        entries = read_audit_entries(p)
+
+    assert len(entries) == 2
+    schema_warnings = [w for w in caught if issubclass(w.category, AuditSchemaVersionWarning)]
+    assert schema_warnings == []
+
+
+def test_read_audit_entries_aggregates_multiple_unknown_versions(
+    tmp_path: Path,
+) -> None:
+    """Multiple distinct unknown versions → still one warning, naming each."""
+
+    p = tmp_path / AUDIT_FILENAME
+    p.write_text(
+        _v2_line()
+        + "\n"
+        + _v2_line()
+        + "\n"
+        + _v2_line(schema_version=3)
+        + "\n"
+        + _make_entry().to_jsonl()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", AuditSchemaVersionWarning)
+        entries = read_audit_entries(p)
+
+    assert len(entries) == 1
+    schema_warnings = [w for w in caught if issubclass(w.category, AuditSchemaVersionWarning)]
+    assert len(schema_warnings) == 1
+    msg = str(schema_warnings[0].message)
+    # Both encountered versions surfaced with their counts so an
+    # operator skimming the warning sees the full picture.
+    assert "2" in msg and "3" in msg
+    assert "2x" in msg  # two v2 rows
+
+
+def test_read_audit_entries_treats_missing_schema_version_as_v1(
+    tmp_path: Path,
+) -> None:
+    """Hand-edited / legacy lines without ``schema_version`` are kept.
+
+    Forward-compat applies to *unknown* versions; absence of the field
+    is interpreted as legacy v1 to keep minimal fixtures and pre-v1
+    hand-rolled audit files readable.
+    """
+
+    p = tmp_path / AUDIT_FILENAME
+    legacy = json.dumps({"recipe_name": "legacy", "seed": 7})  # no schema_version
+    p.write_text(legacy + "\n", encoding="utf-8")
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", AuditSchemaVersionWarning)
+        entries = read_audit_entries(p)
+
+    assert len(entries) == 1
+    assert entries[0]["recipe_name"] == "legacy"
+    schema_warnings = [w for w in caught if issubclass(w.category, AuditSchemaVersionWarning)]
+    assert schema_warnings == []
+
+
+def test_read_audit_entries_treats_non_int_schema_version_as_unknown(
+    tmp_path: Path,
+) -> None:
+    """``"1"`` (string) and ``1.0`` (float) are NOT v1 — type-check is strict.
+
+    Prevents silent acceptance of malformed-but-truthy version values
+    that could mask a real schema migration bug. ``True`` is also
+    excluded (Python ``True == 1`` is True at the value level but the
+    intent in an audit row is clearly bogus).
+    """
+
+    p = tmp_path / AUDIT_FILENAME
+    bogus = json.dumps({"recipe_name": "bogus", "schema_version": "1"})
+    p.write_text(bogus + "\n", encoding="utf-8")
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", AuditSchemaVersionWarning)
+        entries = read_audit_entries(p)
+
+    assert entries == []
+    schema_warnings = [w for w in caught if issubclass(w.category, AuditSchemaVersionWarning)]
+    assert len(schema_warnings) == 1
+
+
+def test_read_audit_entries_warning_can_be_promoted_to_error(
+    tmp_path: Path,
+) -> None:
+    """Strict CI tooling can treat unknown versions as a hard error."""
+
+    p = tmp_path / AUDIT_FILENAME
+    p.write_text(_v2_line() + "\n", encoding="utf-8")
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", AuditSchemaVersionWarning)
+        with pytest.raises(AuditSchemaVersionWarning):
+            read_audit_entries(p)

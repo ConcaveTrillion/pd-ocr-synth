@@ -60,6 +60,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import warnings
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -79,6 +80,17 @@ AUDIT_DISABLE_ENV = "PD_OCR_SYNTH_NO_AUDIT"
 # shape changes; readers should round-trip an unknown version into a
 # best-effort dict and warn rather than crash.
 AUDIT_SCHEMA_VERSION = 1
+
+
+class AuditSchemaVersionWarning(UserWarning):
+    """Emitted by :func:`read_audit_entries` for unknown ``schema_version`` rows.
+
+    Subclass of :class:`UserWarning` so callers can selectively filter or
+    promote-to-error via the standard :mod:`warnings` machinery
+    (``warnings.simplefilter("error", AuditSchemaVersionWarning)`` in
+    strict CI tooling, etc.). The reader's default policy is
+    skip-with-warning — see ``read_audit_entries``.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,18 +211,78 @@ def append_audit_entry(audit_path: Path, entry: AuditEntry) -> None:
 def read_audit_entries(audit_path: Path) -> list[dict]:
     """Parse the audit JSONL back into a list of dicts.
 
-    Convenience for tests + future ``pd-ocr-synth audit`` subcommand
-    (out of scope for this chunk). Skips empty / whitespace-only
-    lines; raises :class:`json.JSONDecodeError` on malformed JSON so a
-    corrupted audit surfaces loudly rather than silently dropping
-    rows.
+    Convenience for tests + the ``pd-ocr-synth audit`` subcommand.
+    Skips empty / whitespace-only lines; raises
+    :class:`json.JSONDecodeError` on malformed JSON so a corrupted
+    audit surfaces loudly rather than silently dropping rows.
+
+    ## Forward-compat policy: skip-with-warning
+
+    Rows whose ``schema_version`` does not equal
+    :data:`AUDIT_SCHEMA_VERSION` are dropped from the returned list and
+    an :class:`AuditSchemaVersionWarning` is emitted naming the
+    encountered version. Rationale:
+
+    - A v1 reader cannot trust v2 field semantics (a future bump might
+      rename ``count`` to ``planned_count`` or change ``runtime_seconds``
+      from float-seconds to integer-milliseconds). Surfacing a v2 row to
+      a CLI summary that sums ``runtime_seconds`` would silently produce
+      wrong totals.
+    - A v2 reader (future code) can apply the same skip-with-warning
+      policy to v1 rows symmetrically — a mixed-version audit file
+      remains usable from either side, with each reader returning only
+      the rows it can interpret faithfully.
+    - Skipping (vs raising) lets ``audit --summary`` keep working in a
+      mixed-version environment: the user gets a warning that some rows
+      were ignored, and the summary covers what's understood.
+
+    Rows missing ``schema_version`` entirely are treated as legacy v1
+    (the field was introduced in v1, so absence implies pre-versioning
+    or hand-edited input — best-effort interpret as v1). This keeps
+    ``echo '{"recipe_name": "x"}' > _audit.jsonl`` style minimal test
+    fixtures working.
+
+    Callers that want to promote the warning to an error can use::
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", AuditSchemaVersionWarning)
+            entries = read_audit_entries(path)
+
+    or the equivalent module-level filter.
     """
 
     if not audit_path.is_file():
         return []
     out: list[dict] = []
+    unknown_versions: dict[object, int] = {}
     for raw in audit_path.read_text(encoding="utf-8").splitlines():
         if not raw.strip():
             continue
-        out.append(json.loads(raw))
+        entry = json.loads(raw)
+        # ``schema_version`` absent → legacy v1 (best-effort). Present
+        # with a non-int value (e.g. "1.0", "2") is also treated as
+        # unknown to avoid Python truthiness surprises like ``True == 1``.
+        version = entry.get("schema_version", AUDIT_SCHEMA_VERSION)
+        if (
+            not isinstance(version, int)
+            or isinstance(version, bool)
+            or version != AUDIT_SCHEMA_VERSION
+        ):
+            unknown_versions[version] = unknown_versions.get(version, 0) + 1
+            continue
+        out.append(entry)
+    if unknown_versions:
+        # One aggregated warning rather than one-per-row keeps the
+        # CLI quiet when a long audit file contains many future-version
+        # rows. ``stacklevel=2`` points at the caller, not this helper.
+        parts = ", ".join(
+            f"{ver!r} ({count}x)"
+            for ver, count in sorted(unknown_versions.items(), key=lambda kv: repr(kv[0]))
+        )
+        warnings.warn(
+            f"skipped audit rows with unsupported schema_version: {parts}; "
+            f"reader supports schema_version={AUDIT_SCHEMA_VERSION}",
+            AuditSchemaVersionWarning,
+            stacklevel=2,
+        )
     return out
