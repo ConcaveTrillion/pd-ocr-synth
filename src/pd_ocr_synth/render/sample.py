@@ -35,6 +35,24 @@ class WordBox:
 
 
 @dataclass(frozen=True, slots=True)
+class LineBox:
+    """One line's text + tight pixel bbox within the sample image.
+
+    Populated by multi-line layout modes (``paragraphs``, ``pages``).
+    Empty for ``word_crops`` and ``lines`` (a ``lines`` sample *is*
+    a single line, so per-line ground truth would be redundant with
+    ``RenderedSample.bbox``).
+
+    ``bbox`` is ``(x0, y0, x1, y1)`` in image-pixel coordinates,
+    matching ``RenderedSample.bbox``, ``WordBox.bbox`` and
+    ``GlyphRun.bbox``.
+    """
+
+    text: str
+    bbox: tuple[int, int, int, int]
+
+
+@dataclass(frozen=True, slots=True)
 class RenderedSample:
     """Per-sample render output.
 
@@ -46,6 +64,11 @@ class RenderedSample:
     bbox) for multi-word layout modes (``lines``, ``paragraphs``,
     ``pages``). It's empty for the ``word_crops`` layout where each
     sample is a single word.
+
+    ``line_boxes`` carries per-line ground-truth for multi-line layout
+    modes (``paragraphs``, ``pages``). It's empty for ``word_crops``
+    and ``lines`` (those samples are a single line by construction;
+    ``RenderedSample.bbox`` already covers the line).
     """
 
     text: str
@@ -58,6 +81,7 @@ class RenderedSample:
     background_color: tuple[int, int, int]
     glyph_runs: tuple[GlyphRun, ...] = field(default_factory=tuple)
     word_boxes: tuple[WordBox, ...] = field(default_factory=tuple)
+    line_boxes: tuple[LineBox, ...] = field(default_factory=tuple)
 
     @property
     def size(self) -> tuple[int, int]:
