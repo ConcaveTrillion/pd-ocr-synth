@@ -126,8 +126,17 @@ Spec: [`06-rendering.md`](../specs/06-rendering.md) +
       `tests/test_cli_render_pages.py`. A standalone "5-page" smoke
       driver in the README-shaped form below has not been added; the
       existing tests cover the same invariants on smaller fixtures.)
-- [ ] Trainer-side integration: `pd-ocr-trainer` reads the detection
+- [~] Trainer-side integration: `pd-ocr-trainer` reads the detection
       profile and reports expected page count + line count.
+      (Opt-in `tests/integration/test_trainer_dataset_contract.py`
+      drives `doctr.datasets.DetectionDataset` on synth output and
+      asserts `len(ds) == pages`; same pattern for
+      `RecognitionDataset`. Always-on shape contract tests in the
+      same file lock the `labels.json` schema doctr asserts at
+      reader-construction time. The richer "page count + line
+      count" assertion via the trainer's own `train_from_config`
+      driver is the next step beyond the doctr-reader-only contract
+      this lands.)
 - [ ] HF parquet round-trip: load the published parquet, verify a
       sample image and its boxes decode.
 
@@ -246,13 +255,28 @@ future small chunk.
 
 ### `pd-ocr-trainer` cross-project integration test
 
-- [ ] Cross-import the trainer's `RecognitionDataset` /
+- [x] Cross-import the trainer's `RecognitionDataset` /
       `DetectionDataset` and run a synthetic `DetectionWriter`
-      output through it. Belongs in `tests/integration/` with the
+      output through it. Lands in
+      `tests/integration/test_trainer_dataset_contract.py` with the
       same opt-in convention M08 established for live HF tests
-      (`PD_OCR_SYNTH_TRAINER_INTEGRATION=1` env-var gate). Without
-      this, `labels.json` schema drift between the two repos is only
-      caught at CLI runtime.
+      (`PD_OCR_SYNTH_TRAINER_E2E=1` env-var gate; doctr must also be
+      importable, treated as a skip rather than failure when missing).
+      Two layers: (1) **always-on** shape contract tests that
+      re-implement the exact assertions
+      `doctr.datasets.RecognitionDataset.__init__` /
+      `DetectionDataset.__init__` make on `labels.json` (key →
+      filename existence; recognition value is `str`; detection
+      value has `polygons` of shape `(N, 4, 2)` numerically castable
+      to `np.float32`). These run under default `make ci` and lock
+      schema drift on every commit. (2) **Opt-in** live tests that
+      import `doctr.datasets.RecognitionDataset` and `DetectionDataset`
+      directly, instantiate them on synth-produced output, and
+      assert sample count + class names; skipped under default
+      `make ci` because doctr isn't a synth runtime dep. Plus
+      gating-helper sanity tests that lock the truthy set in sync
+      with `test_publish_live_hf.py::_TRUTHY`. Without this, only
+      caught at trainer CLI runtime.
 
 ### HF detection publish path
 
