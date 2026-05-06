@@ -21,6 +21,7 @@ import json
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 from pd_ocr_synth import __version__
 
@@ -104,6 +105,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--offline",
         action="store_true",
         help="skip network-touching checks (forwarded to validate)",
+    )
+    p_lint.add_argument(
+        "--json",
+        action="store_true",
+        help="emit a JSON object of validation + lint issues (machine-readable)",
     )
 
     p_describe = subparsers.add_parser(
@@ -248,7 +254,7 @@ def _cmd_validate(recipe_arg: str, *, offline: bool) -> int:
     return VALIDATION_EXIT
 
 
-def _cmd_lint(recipe_arg: str, *, offline: bool) -> int:
+def _cmd_lint(recipe_arg: str, *, offline: bool, as_json: bool = False) -> int:
     """Run schema validation followed by heuristic lint checks.
 
     Exit-code matrix:
@@ -267,6 +273,19 @@ def _cmd_lint(recipe_arg: str, *, offline: bool) -> int:
     and lint warnings appear with ``lint_*`` codes (see
     :mod:`pd_ocr_synth.lint`). Both go to stdout; only true errors
     go to stderr.
+
+    Output modes:
+
+    - **text** (default): one line per issue, ``OK:`` summary at end.
+    - **json** (``--json``): a single JSON object on stdout with
+      ``recipe``, ``path``, ``ok``, ``validation`` (list of issue
+      dicts), ``lint`` (list of issue dicts), and ``summary`` keys.
+      Issue dicts carry ``severity``, ``code``, ``message``, and
+      ``location`` (``null`` if absent). JSON is only emitted on the
+      happy path (recipe loaded successfully). Pre-validate failures
+      (unresolved recipe / schema load failed) still go to stderr as
+      plain text — matching the existing ``describe --format json``
+      convention.
     """
 
     from pd_ocr_synth.lint import lint_recipe
@@ -300,6 +319,22 @@ def _cmd_lint(recipe_arg: str, *, offline: bool) -> int:
     validation = validate_recipe(recipe, offline=offline)
     lint = lint_recipe(recipe)
 
+    if as_json:
+        payload = {
+            "recipe": recipe.name,
+            "path": str(path),
+            "ok": validation.is_ok,
+            "validation": [_issue_to_dict(i) for i in validation.issues],
+            "lint": [_issue_to_dict(i) for i in lint.issues],
+            "summary": {
+                "validation_errors": len(validation.errors),
+                "validation_warnings": len(validation.warnings),
+                "lint_warnings": len(lint.warnings),
+            },
+        }
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return 0 if validation.is_ok else VALIDATION_EXIT
+
     # Print warnings first (stdout), then errors (stderr). The
     # ordering means a downstream pipe like ``| grep ERROR`` is
     # unaffected by warning verbosity.
@@ -319,6 +354,23 @@ def _cmd_lint(recipe_arg: str, *, offline: bool) -> int:
     else:
         print(f"OK: {recipe.name} ({path}) — {n_warnings} warning(s); see output above")
     return 0
+
+
+def _issue_to_dict(issue: Any) -> dict[str, Any]:
+    """Serialize a :class:`ValidationIssue` to a JSON-safe dict.
+
+    Used by ``lint --json`` to emit machine-readable issue records.
+    Kept module-level (not nested in ``_cmd_lint``) so future
+    consumers — e.g. an aggregate ``audit`` index that wants to embed
+    lint summaries — can reuse the same shape.
+    """
+
+    return {
+        "severity": issue.severity,
+        "code": issue.code,
+        "message": issue.message,
+        "location": issue.location,
+    }
 
 
 def _cmd_describe(recipe_arg: str, *, output_format: str) -> int:
@@ -914,7 +966,7 @@ def _cmd_schema(output: str | None) -> int:
 _IMPLEMENTED_DISPATCH = {
     "list": lambda args: _cmd_list(),
     "validate": lambda args: _cmd_validate(args.recipe, offline=args.offline),
-    "lint": lambda args: _cmd_lint(args.recipe, offline=args.offline),
+    "lint": lambda args: _cmd_lint(args.recipe, offline=args.offline, as_json=args.json),
     "describe": lambda args: _cmd_describe(args.recipe, output_format=args.format),
     "init": lambda args: _cmd_init(args.name, dir_=args.dir, force=args.force),
     "schema": lambda args: _cmd_schema(args.output),

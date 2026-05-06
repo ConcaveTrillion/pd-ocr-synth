@@ -46,9 +46,13 @@ if they start mattering:
   layered on top of `validate`, with heuristic warnings for
   `lint_degradation_always_certain`, `lint_single_font`,
   `lint_no_text_transforms`, `lint_low_sample_count`, and
-  `lint_seed_default`. Future chunks: corpus-language detection
-  (modern-spelling heuristic), per-stage option sanity checks,
-  cross-stage interaction warnings (e.g. `binarize` after `noise`).
+  `lint_seed_default`. _JSON-output chunk landed:_ `--json` emits a
+  single object with `recipe`, `path`, `ok`, `validation`,
+  `lint`, and `summary` keys; issue dicts carry
+  `severity`/`code`/`message`/`location` for editor / CI consumption.
+  Future chunks: corpus-language detection (modern-spelling
+  heuristic), per-stage option sanity checks, cross-stage interaction
+  warnings (e.g. `binarize` after `noise`).
 - **Visual regression tests.** A "golden" sample set for the Gaelic
   recipe; CI re-renders and compares to detect accidental changes
   in the rendering or degradation pipeline.
