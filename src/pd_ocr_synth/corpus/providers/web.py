@@ -28,7 +28,13 @@ class WebProvider:
     def cache_key(self, options: dict) -> str:
         url = str(options["url"])
         parser = options.get("parser") or "plain"
-        digest = hashlib.sha256(f"{parser}|{url}".encode()).hexdigest()[:16]
+        # ``field_path`` selects which JSON sub-tree the parser returns,
+        # so it changes the cached output and must be part of the key.
+        # Other options like ``retries``/``user_agent`` only affect the
+        # transport, not the content, so they are intentionally omitted.
+        field_path = options.get("field_path") or ""
+        material = f"{parser}|{field_path}|{url}"
+        digest = hashlib.sha256(material.encode()).hexdigest()[:16]
         return f"web-{digest}"
 
     def fetch(self, ctx: ProviderContext, options: dict) -> Iterable[str]:
@@ -48,7 +54,15 @@ class WebProvider:
             )
 
         body = _http_get(ctx, url, options)
-        text = _apply_parser(body, parser_name, options)
+        try:
+            text = _apply_parser(body, parser_name, options)
+        except ProviderError:
+            raise
+        except (ValueError, LookupError) as exc:
+            # ``parse_json`` can raise ``json.JSONDecodeError`` (a
+            # ``ValueError``) on malformed responses; wrap so callers
+            # see a uniform error surface across providers.
+            raise ProviderError(f"web parse failed for {url}: {exc}") from exc
 
         if cache_enabled:
             ctx.cache.write_text(
