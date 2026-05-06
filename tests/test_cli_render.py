@@ -443,6 +443,113 @@ def test_render_serial_and_parallel_produce_same_labels(
     assert serial_labels == parallel_labels
 
 
+def test_render_serial_and_parallel_produce_same_pngs_and_manifest(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``run_recipe`` round-trips render output bit-identically across worker counts.
+
+    The existing labels-only parity test (above) is comment-justified by
+    "PNG byte equality is already covered by the preview tests" — but
+    ``preview`` and ``render`` have **independent** parallel
+    implementations (:mod:`pd_ocr_synth.render.preview` vs
+    :mod:`pd_ocr_synth.render.run`), so preview's parity coverage does
+    not transit to ``run_recipe``.
+
+    The render-path parallel worker pickles a ``RenderedSample`` over
+    the worker boundary as PNG bytes + metadata; the parent then
+    reconstructs a sample shim and hands it to the writer. This
+    round-trip is only safe if:
+
+    * Pillow's PNG encode is deterministic for identical pixel data;
+    * a re-encode of decoded PNG bytes matches the original encode;
+    * the per-sample metadata (``word_boxes``, ``line_boxes``,
+      ``paragraph_boxes``, font/colour info) round-trips losslessly;
+    * worker completion order does not perturb the writer's index-keyed
+      output.
+
+    Locking byte equality on ``images/<seed>_<index>.png``,
+    ``manifest.jsonl`` (sorted by index), and ``stats.json`` makes any
+    future drift in any of those properties a test failure rather than
+    a silent dataset divergence between ``--workers 1`` and
+    ``--workers N``.
+    """
+
+    rp = _setup(tmp_path)
+    serial_out = tmp_path / "serial-bytes"
+    parallel_out = tmp_path / "parallel-bytes"
+
+    rc1 = main(
+        [
+            "render",
+            str(rp),
+            "--count",
+            "6",
+            "--output",
+            str(serial_out),
+            "--seed",
+            "21",
+            "--workers",
+            "1",
+        ]
+    )
+    assert rc1 == 0, capsys.readouterr().err
+
+    rc2 = main(
+        [
+            "render",
+            str(rp),
+            "--count",
+            "6",
+            "--output",
+            str(parallel_out),
+            "--seed",
+            "21",
+            "--workers",
+            "4",
+        ]
+    )
+    assert rc2 == 0, capsys.readouterr().err
+
+    # PNG byte equality per index — the load-bearing dataset payload.
+    serial_pngs = {p.name: p for p in (serial_out / "images").glob("*.png")}
+    parallel_pngs = {p.name: p for p in (parallel_out / "images").glob("*.png")}
+    assert serial_pngs.keys() == parallel_pngs.keys()
+    assert len(serial_pngs) == 6
+    for name in serial_pngs:
+        assert serial_pngs[name].read_bytes() == parallel_pngs[name].read_bytes(), (
+            f"render path png mismatch at {name} between workers=1 and workers=4"
+        )
+
+    # Manifest equality after sorting by index. The writer assembles
+    # the manifest in sample-index order, so the lines should already
+    # be in lockstep — but completion order through ``imap_unordered``
+    # is non-deterministic. Sorting is belt-and-braces.
+    serial_records = [
+        json.loads(line)
+        for line in (serial_out / MANIFEST_FILENAME).read_text().splitlines()
+        if line
+    ]
+    parallel_records = [
+        json.loads(line)
+        for line in (parallel_out / MANIFEST_FILENAME).read_text().splitlines()
+        if line
+    ]
+    serial_sorted = sorted(serial_records, key=lambda r: r["index"])
+    parallel_sorted = sorted(parallel_records, key=lambda r: r["index"])
+    assert serial_sorted == parallel_sorted
+
+    # Stats must match too — same rendered/skipped counts and skip
+    # reason histogram regardless of worker count.
+    # ``wall_time_seconds`` is wall-clock and not part of the
+    # determinism contract.
+    serial_stats = json.loads((serial_out / STATS_FILENAME).read_text())
+    parallel_stats = json.loads((parallel_out / STATS_FILENAME).read_text())
+    serial_stats.pop("wall_time_seconds", None)
+    parallel_stats.pop("wall_time_seconds", None)
+    assert serial_stats == parallel_stats
+
+
 # ---------------------------------------------------------------------------
 # Spec 07 ``name`` flow: recipe → manifest
 # ---------------------------------------------------------------------------

@@ -297,6 +297,98 @@ def test_render_paragraphs_serial_and_parallel_produce_same_labels(
     assert serial_labels == parallel_labels
 
 
+def test_render_paragraphs_serial_and_parallel_produce_same_pngs_and_manifest(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Detection-mode render path round-trips bit-identically across worker counts.
+
+    Companion to the labels-only parity test above. Detection mode
+    exercises the heaviest worker payload — ``word_boxes`` *and*
+    ``line_boxes`` *and* ``paragraph_boxes`` all need to round-trip
+    through the worker → parent boundary without dropping or reshaping
+    any field. PNG byte equality on ``images/page_*.png`` plus
+    manifest equality plus stats equality lock that contract: any
+    future change that subtly truncates a payload field — say, drops
+    ``paragraph_boxes`` or stops carrying a colour channel — will fail
+    here rather than silently diverging the worker=N dataset from the
+    worker=1 dataset.
+    """
+
+    rp = _setup(tmp_path)
+    serial_out = tmp_path / "serial-bytes"
+    parallel_out = tmp_path / "parallel-bytes"
+
+    rc1 = main(
+        [
+            "render",
+            str(rp),
+            "--count",
+            "3",
+            "--output",
+            str(serial_out),
+            "--seed",
+            "31",
+            "--workers",
+            "1",
+        ]
+    )
+    assert rc1 == 0, capsys.readouterr().err
+
+    rc2 = main(
+        [
+            "render",
+            str(rp),
+            "--count",
+            "3",
+            "--output",
+            str(parallel_out),
+            "--seed",
+            "31",
+            "--workers",
+            "2",
+        ]
+    )
+    assert rc2 == 0, capsys.readouterr().err
+
+    # PNG byte equality per index — detection mode emits ``page_*.png``.
+    serial_pngs = {p.name: p for p in (serial_out / "images").glob(f"{PAGE_PREFIX}*.png")}
+    parallel_pngs = {p.name: p for p in (parallel_out / "images").glob(f"{PAGE_PREFIX}*.png")}
+    assert serial_pngs.keys() == parallel_pngs.keys()
+    assert len(serial_pngs) == 3
+    for name in serial_pngs:
+        assert serial_pngs[name].read_bytes() == parallel_pngs[name].read_bytes(), (
+            f"detection render path png mismatch at {name} between workers=1 and workers=2"
+        )
+
+    # Manifest equality (sorted by index for completion-order
+    # independence). Detection manifest carries ``line_count`` and
+    # ``word_count`` keys so this also catches a subtle line/word-box
+    # round-trip regression.
+    serial_records = [
+        json.loads(line)
+        for line in (serial_out / MANIFEST_FILENAME).read_text().splitlines()
+        if line
+    ]
+    parallel_records = [
+        json.loads(line)
+        for line in (parallel_out / MANIFEST_FILENAME).read_text().splitlines()
+        if line
+    ]
+    serial_sorted = sorted(serial_records, key=lambda r: r["index"])
+    parallel_sorted = sorted(parallel_records, key=lambda r: r["index"])
+    assert serial_sorted == parallel_sorted
+
+    # Stats equality, modulo the wall-clock field which is excluded
+    # from the determinism contract by design (see ``run_recipe``
+    # docstring: "audit log is not part of the determinism contract").
+    serial_stats = json.loads((serial_out / STATS_FILENAME).read_text())
+    parallel_stats = json.loads((parallel_out / STATS_FILENAME).read_text())
+    serial_stats.pop("wall_time_seconds", None)
+    parallel_stats.pop("wall_time_seconds", None)
+    assert serial_stats == parallel_stats
+
+
 def test_render_paragraphs_parallel_carries_line_boxes_through_workers(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
