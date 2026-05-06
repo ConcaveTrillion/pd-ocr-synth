@@ -54,6 +54,12 @@ if they start mattering:
   in the rendering or degradation pipeline.
 - **Per-recipe `Makefile.local`.** Expose recipe-specific dev targets
   (e.g., `make gaelic-publish`) without bloating the main Makefile.
-- **Audit log.** A record of every render run + its content SHA for
-  the project journal; useful when a model trained from a specific
-  dataset version is later debugged.
+- **Audit log.** _First chunk landed:_ ``run_recipe`` appends one
+  JSONL line per invocation to ``<output_dir>/_audit.jsonl`` carrying
+  timestamp, recipe name + source-bytes SHA-256, output dir, seed,
+  effective count, worker count, rendered/skipped counts, and
+  wall-time. Disabled via CLI ``--no-audit`` or env var
+  ``PD_OCR_SYNTH_NO_AUDIT=1``. Future chunks: a ``pd-ocr-synth audit``
+  subcommand for tabular display + filtering, and a global
+  ``~/.cache/pd-ocr-synth/audit.jsonl`` aggregate so cross-recipe runs
+  share one timeline.

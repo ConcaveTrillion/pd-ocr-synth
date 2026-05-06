@@ -143,6 +143,11 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common_render_args(p_render)
     p_render.add_argument("--force", action="store_true", help="clear destination before render")
     p_render.add_argument("--resume", action="store_true", help="resume an interrupted render")
+    p_render.add_argument(
+        "--no-audit",
+        action="store_true",
+        help="suppress the per-run audit JSONL line under <output>/_audit.jsonl",
+    )
 
     p_publish = subparsers.add_parser("publish", help="upload rendered output to a HF dataset repo")
     _add_recipe_arg(p_publish)
@@ -538,6 +543,7 @@ def _cmd_render(
     force: bool,
     resume: bool,
     dry_run: bool,
+    no_audit: bool = False,
 ) -> int:
     """Render the full recipe dataset into the ``pd-ocr-trainer/v1`` layout.
 
@@ -640,6 +646,7 @@ def _cmd_render(
             cache_dir=cache_root,
             force=force,
             resume=resume,
+            audit=not no_audit,
         )
     except DestinationNotEmptyError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -824,6 +831,7 @@ _IMPLEMENTED_DISPATCH = {
         force=args.force,
         resume=args.resume,
         dry_run=args.dry_run,
+        no_audit=args.no_audit,
     ),
     "publish": lambda args: _cmd_publish(
         args.recipe,

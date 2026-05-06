@@ -72,6 +72,14 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from pd_ocr_synth.audit import (
+    AUDIT_FILENAME,
+    AuditEntry,
+    append_audit_entry,
+    compute_recipe_sha,
+    now_timestamp,
+    should_emit_audit,
+)
 from pd_ocr_synth.corpus import CacheStore, ProviderContext, default_cache_root
 from pd_ocr_synth.corpus.runner import collect_corpus_text
 from pd_ocr_synth.degradation import DegradationError, apply_degradation
@@ -218,6 +226,7 @@ def run_recipe(
     force: bool = False,
     resume: bool = False,
     progress: bool = True,
+    audit: bool = True,
 ) -> RunResult:
     """Render the full dataset for ``recipe`` into ``output_dir``.
 
@@ -228,8 +237,17 @@ def run_recipe(
     root. ``force`` clears the destination first; ``resume`` continues
     from any existing samples after validating the snapshot.
 
+    ``audit`` (default ``True``) emits one JSONL line per run into
+    ``<output_dir>/_audit.jsonl`` for traceability. Pass ``False`` to
+    suppress (the CLI ``--no-audit`` flag wires through here). The
+    env var ``PD_OCR_SYNTH_NO_AUDIT=1`` overrides the kwarg globally;
+    this is checked inside ``should_emit_audit``.
+
     Determinism contract: same recipe + same effective seed + same
     sample index → identical output bytes regardless of ``workers``.
+    The audit log is *not* part of the determinism contract — it
+    carries a wall-clock timestamp and lives in a separate file from
+    the dataset payload.
     """
 
     if recipe.layout.mode not in _SUPPORTED_LAYOUTS:
@@ -306,15 +324,49 @@ def run_recipe(
 
         writer.stats.tokens_unique = len(unique_tokens)
         writer.stats.wall_time_seconds = round(time.monotonic() - started, 3)
+        # Capture the writer's view of the run *before* the writer
+        # context manager tears down. Stats are mutable on the writer
+        # but the values we need for the audit entry are settled by
+        # this point (final bumps happened above).
+        rendered_count = writer.stats.samples_written
+        skipped_count = writer.stats.samples_skipped
+        skip_reasons = dict(writer.stats.skip_reasons)
+        wall_time = writer.stats.wall_time_seconds
 
     progress_reporter.done()
 
+    if should_emit_audit(audit=audit):
+        entry = AuditEntry(
+            timestamp=now_timestamp(),
+            recipe_name=recipe.name,
+            recipe_sha=compute_recipe_sha(recipe.source_path),
+            output_dir=str(output_dir.resolve()),
+            count=effective_count,
+            seed=effective_seed,
+            workers=worker_count,
+            rendered=rendered_count,
+            skipped=skipped_count,
+            runtime_seconds=wall_time,
+        )
+        # Best-effort: a write-failure on the audit sidecar must not
+        # mask a successful render. Log the failure but return the
+        # real result. (We don't have a logger surface here; stderr
+        # is the project's existing convention for runner-level
+        # diagnostics — see the progress reporter above.)
+        try:
+            append_audit_entry(output_dir / AUDIT_FILENAME, entry)
+        except OSError as exc:  # pragma: no cover - exceptional path
+            print(
+                f"warning: audit log write failed ({exc}); render output unaffected",
+                file=sys.stderr,
+            )
+
     return RunResult(
         output_dir=str(output_dir),
-        rendered=writer.stats.samples_written,
-        skipped=writer.stats.samples_skipped,
-        skip_reasons=dict(writer.stats.skip_reasons),
-        wall_time_seconds=writer.stats.wall_time_seconds,
+        rendered=rendered_count,
+        skipped=skipped_count,
+        skip_reasons=skip_reasons,
+        wall_time_seconds=wall_time,
     )
 
 
