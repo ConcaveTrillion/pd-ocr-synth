@@ -418,6 +418,34 @@ def _check_rendering(recipe: Recipe) -> list[ValidationIssue]:
                 location="rendering.shaping_engine",
             )
         )
+    # ``Rendering.antialiasing`` is on the model (default ``True``) per
+    # spec 06 "Size, color, DPI" but no renderer in
+    # ``pd_ocr_synth.render.*`` reads it — the freetype-py / Pillow
+    # paths produce anti-aliased glyphs unconditionally. A recipe
+    # setting ``antialiasing: false`` to harden against AA artifacts
+    # (e.g. for paleography test sets that want the hard-edge
+    # appearance of bitmap fonts) would be silently ignored, exactly
+    # the kind of "worse than a crash" gap the iter-65 / iter-73 /
+    # iter-74 / iter-75 ``*_not_implemented`` precedents address.
+    # Surface it at validate time, point at the roadmap, and keep
+    # ``antialiasing: true`` (the spec-stated default) clean.
+    if recipe.rendering.antialiasing is False:
+        out.append(
+            ValidationIssue(
+                severity="error",
+                code="antialiasing_disable_not_implemented",
+                message=(
+                    "rendering.antialiasing=false is in the recipe schema "
+                    '(spec 06 "Size, color, DPI") but not yet honored by '
+                    "the M05 renderer; freetype-py / Pillow paths produce "
+                    "anti-aliased glyphs unconditionally and the flag "
+                    "would be silently ignored. Remove the override (or "
+                    "set it to true) until aliased rendering lands. "
+                    "See docs/roadmap/05-rendering.md."
+                ),
+                location="rendering.antialiasing",
+            )
+        )
     return out
 
 

@@ -358,6 +358,104 @@ def test_implemented_shaping_engines_subset_of_model_literal() -> None:
     )
 
 
+def test_unimplemented_antialiasing_false_is_error(
+    tmp_path: Path, writable_font_bytes: bytes
+) -> None:
+    """``rendering.antialiasing: false`` must error at validate time.
+
+    Spec 06 "Size, color, DPI" advertises the flag and the recipe
+    model defaults it to ``True``, but no renderer in
+    ``pd_ocr_synth.render.*`` reads ``recipe.rendering.antialiasing``
+    — freetype-py / Pillow produce anti-aliased glyphs
+    unconditionally. A recipe asking for aliased output (paleography
+    sets that want hard-edge bitmap-style glyphs) would be silently
+    ignored, the same "worse than a crash" gap the iter-65 /
+    iter-73 / iter-74 / iter-75 ``*_not_implemented`` precedents
+    address. Surface it up front, point at the roadmap, with a
+    distinct error code.
+    """
+
+    font = tmp_path / "fake.otf"
+    font.write_bytes(writable_font_bytes)
+    seed = _make_file(tmp_path / "seed.txt", "hello\n")
+    yaml_text = _minimal_yaml(
+        font=str(font),
+        dest=str(tmp_path / "out"),
+        corpus=str(seed),
+    )
+    yaml_text = yaml_text.replace(
+        "layout:",
+        "  antialiasing: false\nlayout:",
+    )
+    recipe = load_recipe(_write(tmp_path, yaml_text))
+    report = validate_recipe(recipe)
+    codes = [i.code for i in report.errors]
+    assert "antialiasing_disable_not_implemented" in codes, [i.format() for i in report.issues]
+    msg = next(i.message for i in report.errors if i.code == "antialiasing_disable_not_implemented")
+    # Error message points at the roadmap so the user knows where to
+    # look for status / contribute, matching the
+    # ``shaping_engine_not_implemented`` shape.
+    assert "05-rendering.md" in msg
+    assert "antialiasing" in msg
+
+
+def test_default_antialiasing_passes_clean(tmp_path: Path, writable_font_bytes: bytes) -> None:
+    """``antialiasing: true`` (the spec-stated default) must validate clean.
+
+    Companion to ``test_unimplemented_antialiasing_false_is_error``:
+    pin the negative-space invariant that the new
+    ``antialiasing_disable_not_implemented`` check does *not* fire
+    for the default. If a future refactor accidentally inverts the
+    polarity (rejecting ``true`` instead of ``false``), this test
+    surfaces it immediately rather than as a downstream regression in
+    every render-using test.
+    """
+
+    font = tmp_path / "fake.otf"
+    font.write_bytes(writable_font_bytes)
+    seed = _make_file(tmp_path / "seed.txt", "hello\n")
+    yaml_text = _minimal_yaml(
+        font=str(font),
+        dest=str(tmp_path / "out"),
+        corpus=str(seed),
+    )
+    # Explicit true (rather than relying on the default) so a future
+    # default-flip is also caught here.
+    yaml_text = yaml_text.replace(
+        "layout:",
+        "  antialiasing: true\nlayout:",
+    )
+    recipe = load_recipe(_write(tmp_path, yaml_text))
+    report = validate_recipe(recipe)
+    codes = [i.code for i in report.errors]
+    assert "antialiasing_disable_not_implemented" not in codes, [i.format() for i in report.issues]
+
+
+def test_default_recipe_antialiasing_unset_passes_clean(
+    tmp_path: Path, writable_font_bytes: bytes
+) -> None:
+    """A recipe that omits ``antialiasing`` entirely must validate clean.
+
+    The model default is ``True``, so ``_minimal_yaml`` (which never
+    sets the field) must not trip the new check. Pins the default
+    contract: omitting the field is identical to setting it to
+    ``true``, both keep the recipe accepted today.
+    """
+
+    font = tmp_path / "fake.otf"
+    font.write_bytes(writable_font_bytes)
+    seed = _make_file(tmp_path / "seed.txt", "hello\n")
+    yaml_text = _minimal_yaml(
+        font=str(font),
+        dest=str(tmp_path / "out"),
+        corpus=str(seed),
+    )
+    recipe = load_recipe(_write(tmp_path, yaml_text))
+    report = validate_recipe(recipe)
+    codes = [i.code for i in report.errors]
+    assert "antialiasing_disable_not_implemented" not in codes, [i.format() for i in report.issues]
+
+
 def test_unresolved_env_var_in_destination_is_error(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.delenv("DEFINITELY_UNSET_VAR", raising=False)
     yaml_text = _minimal_yaml(
