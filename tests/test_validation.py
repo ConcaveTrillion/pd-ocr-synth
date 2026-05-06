@@ -251,6 +251,113 @@ def test_implemented_text_transforms_pass_clean(tmp_path: Path, writable_font_by
     assert "text_transform_not_implemented" not in codes, [i.format() for i in report.issues]
 
 
+def test_unimplemented_shaping_engine_is_error(tmp_path: Path) -> None:
+    """Spec-known but not-yet-implemented shaping engines must error at validate time.
+
+    Spec 06 ("Shaping engine") and the recipe model
+    (``Rendering.shaping_engine``) accept ``pillow`` alongside
+    ``harfbuzz``, but the M05 renderer in ``pd_ocr_synth.render.*``
+    calls ``uharfbuzz`` unconditionally — there is no engine dispatch
+    yet. ``docs/roadmap/05-rendering.md`` deliverable "Pillow-only
+    fallback engine" is explicitly deferred. Without this validator
+    check, a recipe declaring ``shaping_engine: pillow`` would
+    silently render via harfbuzz, applying ligatures the user opted
+    out of with no signal.
+
+    Mirrors the iter-65 ``degradation_kind_not_implemented`` /
+    iter-73 ``corpus_provider_not_implemented`` / iter-74
+    ``text_transform_not_implemented`` precedents: surface the gap up
+    front, point at the roadmap, with a distinct error code.
+    """
+
+    yaml_text = _minimal_yaml(
+        font=str(_make_file(tmp_path / "fake.otf")),
+        dest=str(tmp_path / "out"),
+        corpus=str(_make_file(tmp_path / "seed.txt")),
+    )
+    # The default rendering block in ``_minimal_yaml`` doesn't set
+    # ``shaping_engine`` at all (so it defaults to ``harfbuzz`` per the
+    # model). Inject the pillow override before ``layout:``.
+    yaml_text = yaml_text.replace(
+        "layout:",
+        "  shaping_engine: pillow\nlayout:",
+    )
+    recipe = load_recipe(_write(tmp_path, yaml_text))
+    report = validate_recipe(recipe)
+    codes = [i.code for i in report.errors]
+    assert "shaping_engine_not_implemented" in codes, [i.format() for i in report.issues]
+    msg = next(i.message for i in report.errors if i.code == "shaping_engine_not_implemented")
+    # Error message points at the roadmap so the user knows where to
+    # look for status / contribute, matching the
+    # ``corpus_provider_not_implemented`` / ``text_transform_not_implemented``
+    # shapes.
+    assert "05-rendering.md" in msg
+    assert "pillow" in msg
+
+
+def test_default_shaping_engine_passes_clean(tmp_path: Path, writable_font_bytes: bytes) -> None:
+    """A recipe with the default ``harfbuzz`` engine must validate clean.
+
+    Companion to ``test_unimplemented_shaping_engine_is_error``: pin
+    the negative-space invariant that the new
+    ``shaping_engine_not_implemented`` check does *not* fire for the
+    M05 implemented engine. If a future refactor accidentally drops
+    ``harfbuzz`` from ``_IMPLEMENTED_SHAPING_ENGINES``, this test
+    surfaces it immediately rather than as a downstream regression in
+    every render-using test.
+    """
+
+    font = tmp_path / "fake.otf"
+    font.write_bytes(writable_font_bytes)
+    seed = _make_file(tmp_path / "seed.txt", "hello\n")
+    yaml_text = _minimal_yaml(
+        font=str(font),
+        dest=str(tmp_path / "out"),
+        corpus=str(seed),
+    )
+    # Explicit harfbuzz (rather than relying on the default) so a
+    # future default-flip is also caught here.
+    yaml_text = yaml_text.replace(
+        "layout:",
+        "  shaping_engine: harfbuzz\nlayout:",
+    )
+    recipe = load_recipe(_write(tmp_path, yaml_text))
+    report = validate_recipe(recipe)
+    codes = [i.code for i in report.errors]
+    assert "shaping_engine_not_implemented" not in codes, [i.format() for i in report.issues]
+
+
+def test_implemented_shaping_engines_subset_of_model_literal() -> None:
+    """The runtime-implemented set must stay a subset of the model's accepted set.
+
+    Spec-vs-runtime catalog parity guard, mirroring
+    ``test_registered_degradation_kinds_subset_of_spec``: the recipe
+    model (``Rendering.shaping_engine``'s ``Literal``) is the spec
+    surface; ``_IMPLEMENTED_SHAPING_ENGINES`` is what the renderer can
+    actually dispatch. The implemented set must be a (possibly proper)
+    subset — implementing a brand-new engine should require widening
+    both, not just the runtime set.
+
+    If this assertion fails, either:
+
+    - a new engine landed without being added to the model literal
+      (extend ``Rendering.shaping_engine`` first), OR
+    - the model literal was narrowed (drop the orphan from
+      ``_IMPLEMENTED_SHAPING_ENGINES``).
+    """
+
+    from typing import get_args
+
+    from pd_ocr_synth.recipe.models import Rendering
+    from pd_ocr_synth.validation import _IMPLEMENTED_SHAPING_ENGINES
+
+    model_literal = frozenset(get_args(Rendering.model_fields["shaping_engine"].annotation))
+    assert _IMPLEMENTED_SHAPING_ENGINES <= model_literal, (
+        f"implemented engines {sorted(_IMPLEMENTED_SHAPING_ENGINES - model_literal)} "
+        "are missing from Rendering.shaping_engine literal"
+    )
+
+
 def test_unresolved_env_var_in_destination_is_error(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.delenv("DEFINITELY_UNSET_VAR", raising=False)
     yaml_text = _minimal_yaml(

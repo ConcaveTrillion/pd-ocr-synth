@@ -152,6 +152,7 @@ def validate_recipe(recipe: Recipe, *, offline: bool = False) -> ValidationRepor
     issues.extend(_check_fonts(recipe))
     issues.extend(_check_corpus(recipe))
     issues.extend(_check_text_transforms(recipe))
+    issues.extend(_check_rendering(recipe))
     issues.extend(_check_layout(recipe))
     issues.extend(_check_output_layout_pairing(recipe))
     issues.extend(_check_degradation(recipe))
@@ -378,6 +379,43 @@ def _check_text_transforms(recipe: Recipe) -> list[ValidationIssue]:
                     "(Antique-conventions built-ins / python: inline loader)."
                 ),
                 location=f"text_transforms[{i}].name",
+            )
+        )
+    return out
+
+
+# Rendering shaping engines the M05 runtime can actually dispatch.
+# The recipe model (``Rendering.shaping_engine``) accepts both
+# ``harfbuzz`` and ``pillow`` per docs/specs/06-rendering.md "Shaping
+# engine", but the renderer code in ``pd_ocr_synth.render.*`` calls
+# ``uharfbuzz`` unconditionally — no dispatch on the engine literal
+# exists. ``docs/roadmap/05-rendering.md`` deliverable
+# "Pillow-only fallback engine" is marked deferred. Until the fallback
+# lands, ``shaping_engine: pillow`` would silently render via harfbuzz,
+# which is worse than a crash: a recipe targeting a non-shaping script
+# would get ligatures applied without any signal. Surface it at
+# validate time so the user discovers the gap before render — same
+# precedent as iter-65 ``degradation_kind_not_implemented`` /
+# iter-73 ``corpus_provider_not_implemented`` / iter-74
+# ``text_transform_not_implemented``.
+_IMPLEMENTED_SHAPING_ENGINES: frozenset[str] = frozenset({"harfbuzz"})
+
+
+def _check_rendering(recipe: Recipe) -> list[ValidationIssue]:
+    out: list[ValidationIssue] = []
+    if recipe.rendering.shaping_engine not in _IMPLEMENTED_SHAPING_ENGINES:
+        out.append(
+            ValidationIssue(
+                severity="error",
+                code="shaping_engine_not_implemented",
+                message=(
+                    f"shaping_engine '{recipe.rendering.shaping_engine}' is in the "
+                    "recipe schema but not yet implemented by the M05 runtime; "
+                    "render would silently fall back to harfbuzz. "
+                    f"Implemented engines: {', '.join(sorted(_IMPLEMENTED_SHAPING_ENGINES))}. "
+                    "See docs/roadmap/05-rendering.md (Pillow-only fallback engine)."
+                ),
+                location="rendering.shaping_engine",
             )
         )
     return out
