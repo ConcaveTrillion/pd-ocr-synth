@@ -54,7 +54,13 @@ if they start mattering:
   font is declared with ``weight=0.0`` (silently never sampled);
   `lint_all_optional_fonts` warns when every declared font is marked
   ``optional=True`` (a fetch failure leaves the recipe with zero
-  fonts at render time). Future chunks: corpus-language detection
+  fonts at render time). _Strict-gate chunk landed:_ ``--strict``
+  flips the exit code from 0 to 1 when any warning (validate-side
+  _or_ lint-side) is present, suitable for use as a CI / pre-commit
+  gate. Validation errors still take precedence (exit 3 — strict
+  never _downgrades_ a stricter code), and the body of the output
+  is identical between strict and lenient runs (text or ``--json``).
+  Future chunks: corpus-language detection
   (modern-spelling heuristic), per-stage option sanity checks,
   cross-stage interaction warnings (e.g. `binarize` after `noise`).
 - **Visual regression tests.** A "golden" sample set for the Gaelic

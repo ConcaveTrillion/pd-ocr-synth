@@ -95,13 +95,18 @@ pd-ocr-synth publish gaelic --dry-run                  # preview only
 | Code | Meaning |
 |------|---------|
 | 0 | Success |
-| 1 | Generic error |
+| 1 | Generic error (also: `lint --strict` with warnings present) |
 | 2 | CLI usage error (bad flags, unknown subcommand) |
 | 3 | Recipe validation failed |
 | 4 | Corpus fetch failed |
 | 5 | Render failed (partial output may exist) |
 | 6 | Output destination invalid or unwritable |
 | 7 | Publish failed (auth, network, or repo-state error) |
+
+`lint --strict` upgrades a clean run with warnings (validate or lint)
+from 0 to 1 so it can be used as a CI / pre-commit gate. Validation
+errors keep their stricter code 3 either way — strict never
+_downgrades_ a stricter exit code.
 
 ## Logging
 

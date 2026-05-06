@@ -421,6 +421,173 @@ degradation:
     assert captured.err == ""
 
 
+# ---------------------------------------------------------------------------
+# --strict gate
+# ---------------------------------------------------------------------------
+
+
+def _write_single_font_recipe(tmp_path: Path, font_bytes: bytes) -> Path:
+    """Single-font recipe — triggers ``lint_single_font`` warning but
+    is otherwise schema-valid (validate_recipe.is_ok is True)."""
+
+    f1 = tmp_path / "primary.otf"
+    f1.write_bytes(font_bytes)
+    corpus = tmp_path / "seed.txt"
+    corpus.write_text("hi\n", encoding="utf-8")
+    yaml_text = f"""\
+schema_version: 1
+name: cli-lint-strict-single-font
+seed: 7
+output:
+  format: pd-ocr-trainer/v1
+  mode: recognition
+  destination: {tmp_path / "out"}
+  count: 5000
+corpus:
+  - type: local
+    path: {corpus}
+fonts:
+  - path: {f1}
+text_transforms:
+  - normalize_whitespace
+rendering:
+  font_size_pt: 14
+  dpi: 300
+  ink_color: {{r: 0, g: 0, b: 0}}
+  background_color: {{r: 255, g: 255, b: 255}}
+layout:
+  mode: word_crops
+  padding_px: 4
+degradation:
+  - kind: blur
+    probability: 0.3
+"""
+    rp = tmp_path / "recipe.yaml"
+    rp.write_text(yaml_text, encoding="utf-8")
+    return rp
+
+
+def test_lint_strict_clean_recipe_exits_zero(
+    tmp_path: Path,
+    writable_font_bytes: bytes,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--strict`` on a clean recipe still exits 0 — strict only
+    upgrades warning-bearing runs, not warning-free ones."""
+
+    rp = _write_clean(tmp_path, writable_font_bytes)
+    rc = main(["lint", str(rp), "--strict"])
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+    assert "no warnings" in captured.out
+
+
+def test_lint_strict_warning_exits_one(
+    tmp_path: Path,
+    writable_font_bytes: bytes,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A lint warning under ``--strict`` flips the return code from
+    0 to 1. Body still lists the warning on stdout; failure summary
+    lands on stderr."""
+
+    rp = _write_single_font_recipe(tmp_path, writable_font_bytes)
+    rc = main(["lint", str(rp), "--strict"])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "lint_single_font" in captured.out
+    assert "FAIL" in captured.err
+    assert "--strict" in captured.err
+    # The lenient "OK:" summary must not appear under strict.
+    assert "OK:" not in captured.out
+
+
+def test_lint_warning_without_strict_exits_zero(
+    tmp_path: Path,
+    writable_font_bytes: bytes,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Sanity sibling: same recipe without ``--strict`` exits 0 —
+    confirms the gate is opt-in, not a behaviour change for plain
+    ``lint``."""
+
+    rp = _write_single_font_recipe(tmp_path, writable_font_bytes)
+    rc = main(["lint", str(rp)])
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+    assert "lint_single_font" in captured.out
+    assert "OK:" in captured.out
+
+
+def test_lint_strict_validation_error_still_exits_three(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Validation errors take precedence over strict-warnings —
+    ``--strict`` must not *downgrade* code 3 to 1. The original
+    ``font_missing`` error path keeps exit 3 either way."""
+
+    corpus = tmp_path / "seed.txt"
+    corpus.write_text("hi\n", encoding="utf-8")
+    yaml_text = f"""\
+schema_version: 1
+name: cli-lint-strict-missing-fonts
+seed: 7
+output:
+  format: pd-ocr-trainer/v1
+  mode: recognition
+  destination: {tmp_path / "out"}
+  count: 5000
+corpus:
+  - type: local
+    path: {corpus}
+fonts:
+  - path: {tmp_path / "ghost1.otf"}
+  - path: {tmp_path / "ghost2.otf"}
+text_transforms:
+  - normalize_whitespace
+rendering:
+  font_size_pt: 14
+  dpi: 300
+  ink_color: {{r: 0, g: 0, b: 0}}
+  background_color: {{r: 255, g: 255, b: 255}}
+layout:
+  mode: word_crops
+  padding_px: 4
+degradation:
+  - kind: blur
+    probability: 0.3
+"""
+    rp = tmp_path / "recipe.yaml"
+    rp.write_text(yaml_text, encoding="utf-8")
+    rc = main(["lint", str(rp), "--strict"])
+    captured = capsys.readouterr()
+    assert rc == 3
+    assert "font_missing" in captured.err
+
+
+def test_lint_strict_with_json_emits_payload_and_exits_one(
+    tmp_path: Path,
+    writable_font_bytes: bytes,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--strict --json`` must still emit the full JSON document on
+    stdout — only the exit code differs from a lenient ``--json`` run.
+    Strict failure does not silently swallow the body."""
+
+    rp = _write_single_font_recipe(tmp_path, writable_font_bytes)
+    rc = main(["lint", str(rp), "--json", "--strict"])
+    captured = capsys.readouterr()
+    assert rc == 1
+    payload = json.loads(captured.out)
+    assert payload["ok"] is True
+    assert payload["summary"]["lint_warnings"] == 1
+    assert payload["lint"][0]["code"] == "lint_single_font"
+    # No stray text-mode failure summary on stderr in JSON mode —
+    # the JSON body itself is the machine-readable signal.
+    assert captured.err == ""
+
+
 def test_lint_json_pydantic_structural_failure_still_text_error(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

@@ -111,6 +111,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="emit a JSON object of validation + lint issues (machine-readable)",
     )
+    p_lint.add_argument(
+        "--strict",
+        action="store_true",
+        help=(
+            "treat lint warnings as failures: exit 1 if any warning is "
+            "present (validation errors still take precedence with exit 3); "
+            "use as a CI / pre-commit gate"
+        ),
+    )
 
     p_describe = subparsers.add_parser(
         "describe", help="print resolved config + corpus stats for a recipe"
@@ -285,13 +294,23 @@ def _cmd_validate(recipe_arg: str, *, offline: bool) -> int:
     return VALIDATION_EXIT
 
 
-def _cmd_lint(recipe_arg: str, *, offline: bool, as_json: bool = False) -> int:
+def _cmd_lint(
+    recipe_arg: str,
+    *,
+    offline: bool,
+    as_json: bool = False,
+    strict: bool = False,
+) -> int:
     """Run schema validation followed by heuristic lint checks.
 
     Exit-code matrix:
 
     - ``0`` — clean recipe with no warnings (validate + lint both empty).
-    - ``0`` — warnings only; lint warnings never fail the command.
+    - ``0`` — warnings only; lint warnings never fail the command by
+      default.
+    - ``1`` — warnings present and ``strict=True``. Validation errors
+      still take precedence (so ``--strict`` never *downgrades* the
+      stricter code 3 to 1 — it only *upgrades* the lenient 0 to 1).
     - ``2`` — pydantic structural load failure (missing required keys
       or wrong types). Lint can't usefully run on a recipe that won't
       even load, so we surface this as a usage-style failure.
@@ -304,6 +323,12 @@ def _cmd_lint(recipe_arg: str, *, offline: bool, as_json: bool = False) -> int:
     and lint warnings appear with ``lint_*`` codes (see
     :mod:`pd_ocr_synth.lint`). Both go to stdout; only true errors
     go to stderr.
+
+    The ``strict`` flag makes ``lint`` usable as a CI / pre-commit
+    gate: any warning (validate-side _or_ lint-side) flips a clean
+    run from 0 to 1. The body of the output is unchanged — only the
+    exit code differs — so ``--strict --json`` still emits the same
+    JSON document the lenient invocation would.
 
     Output modes:
 
@@ -350,6 +375,8 @@ def _cmd_lint(recipe_arg: str, *, offline: bool, as_json: bool = False) -> int:
     validation = validate_recipe(recipe, offline=offline)
     lint = lint_recipe(recipe)
 
+    n_warnings = len(validation.warnings) + len(lint.warnings)
+
     if as_json:
         payload = {
             "recipe": recipe.name,
@@ -364,7 +391,11 @@ def _cmd_lint(recipe_arg: str, *, offline: bool, as_json: bool = False) -> int:
             },
         }
         print(json.dumps(payload, indent=2, ensure_ascii=False))
-        return 0 if validation.is_ok else VALIDATION_EXIT
+        if not validation.is_ok:
+            return VALIDATION_EXIT
+        if strict and n_warnings > 0:
+            return NOT_IMPLEMENTED_EXIT  # exit 1 — generic "lint gate failed"
+        return 0
 
     # Print warnings first (stdout), then errors (stderr). The
     # ordering means a downstream pipe like ``| grep ERROR`` is
@@ -379,11 +410,22 @@ def _cmd_lint(recipe_arg: str, *, offline: bool, as_json: bool = False) -> int:
     if not validation.is_ok:
         return VALIDATION_EXIT
 
-    n_warnings = len(validation.warnings) + len(lint.warnings)
     if n_warnings == 0:
         print(f"OK: {recipe.name} ({path}) — no warnings")
-    else:
-        print(f"OK: {recipe.name} ({path}) — {n_warnings} warning(s); see output above")
+        return 0
+
+    if strict:
+        # The body listing the warnings has already gone to stdout;
+        # the trailing summary line goes to stderr so a CI consumer
+        # piping stdout to a file still sees a clear failure signal.
+        print(
+            f"FAIL: {recipe.name} ({path}) — "
+            f"{n_warnings} warning(s) under --strict; see output above",
+            file=sys.stderr,
+        )
+        return NOT_IMPLEMENTED_EXIT  # exit 1 — generic "lint gate failed"
+
+    print(f"OK: {recipe.name} ({path}) — {n_warnings} warning(s); see output above")
     return 0
 
 
@@ -1242,7 +1284,12 @@ def _cmd_schema(output: str | None) -> int:
 _IMPLEMENTED_DISPATCH = {
     "list": lambda args: _cmd_list(),
     "validate": lambda args: _cmd_validate(args.recipe, offline=args.offline),
-    "lint": lambda args: _cmd_lint(args.recipe, offline=args.offline, as_json=args.json),
+    "lint": lambda args: _cmd_lint(
+        args.recipe,
+        offline=args.offline,
+        as_json=args.json,
+        strict=args.strict,
+    ),
     "describe": lambda args: _cmd_describe(args.recipe, output_format=args.format),
     "init": lambda args: _cmd_init(args.name, dir_=args.dir, force=args.force),
     "schema": lambda args: _cmd_schema(args.output),
