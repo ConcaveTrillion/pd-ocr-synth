@@ -77,8 +77,10 @@ from pd_ocr_synth.audit import (
     AuditEntry,
     append_audit_entry,
     compute_recipe_sha,
+    default_global_audit_path,
     now_timestamp,
     should_emit_audit,
+    should_emit_global_audit,
 )
 from pd_ocr_synth.corpus import CacheStore, ProviderContext, default_cache_root
 from pd_ocr_synth.corpus.runner import collect_corpus_text
@@ -360,6 +362,26 @@ def run_recipe(
                 f"warning: audit log write failed ({exc}); render output unaffected",
                 file=sys.stderr,
             )
+
+        # Global aggregate mirror: append the same entry to the
+        # cross-recipe timeline at ``<cache_root>/audit.jsonl``. Best-
+        # effort like the per-output-dir write — a slow / read-only
+        # cache root must not fail a successful render. Suppressed
+        # when ``--no-audit`` / ``PD_OCR_SYNTH_NO_AUDIT`` is set, OR
+        # when only the global mirror is suppressed via
+        # ``PD_OCR_SYNTH_NO_GLOBAL_AUDIT`` (e.g. a test that doesn't
+        # want to touch the user's cache dir; the test suite sets the
+        # env var via the ``isolated_global_audit`` fixture in
+        # ``conftest.py``).
+        if should_emit_global_audit(audit=audit):
+            try:
+                append_audit_entry(default_global_audit_path(), entry)
+            except OSError as exc:  # pragma: no cover - exceptional path
+                print(
+                    f"warning: global audit log write failed ({exc}); "
+                    f"per-output audit and render output unaffected",
+                    file=sys.stderr,
+                )
 
     return RunResult(
         output_dir=str(output_dir),

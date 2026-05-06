@@ -29,6 +29,8 @@ subcommand), `96bbc99` (lint `--json`), `9e1e876`
 regression sha-digest pins), `27f4bd1` (audit timezone normalization
 fix), `07dccd1` (audit `schema_version` forward-compat skip),
 `a087054` (FD-leak regression test + Pillow version pin doc).
+Subsequent QoL chunks: audit global aggregate cache + `audit
+--global` reader.
 
 Test count: 890 passed / 4 skipped under default `make ci`.
 
@@ -156,11 +158,17 @@ shipping or M11 from starting.
   remain unpinned because they carry machine-dependent (absolute
   font paths) or time-dependent (`wall_time_seconds`) fields; a
   portability shim to pin them too remains a candidate follow-up.
-- **Audit — global aggregate cache.** A
-  `~/.cache/pd-ocr-synth/audit.jsonl` aggregate so cross-recipe runs
-  share one timeline. Today the audit log is per-output-dir;
-  cross-output-dir queries require pointing the `audit` subcommand
-  at each location separately.
+- **Audit — global aggregate cache.** [x] Shipped: `run_recipe`
+  mirrors every audit row to `<cache_root>/audit.jsonl` (default
+  `~/.cache/pd-ocr-synth/audit.jsonl`) so cross-recipe runs share one
+  timeline. `pd-ocr-synth audit --global` reads the aggregate without
+  needing a per-output-dir positional. Mutually exclusive with
+  `--audit-file`; composes with all existing filters (`--since`,
+  `--until`, `--recipe-sha`, `--limit`, `--summary`, `--json`).
+  Mirror suppressed by either `PD_OCR_SYNTH_NO_AUDIT=1` (broad off)
+  or `PD_OCR_SYNTH_NO_GLOBAL_AUDIT=1` (mirror-only off; per-output
+  audit still emits). Tests: `tests/test_audit_global.py`,
+  `tests/test_cli_audit.py::test_audit_global_*`.
 - **Per-recipe `Makefile.local`.** Expose recipe-specific dev targets
   (e.g., `make gaelic-publish`) without bloating the main Makefile.
 

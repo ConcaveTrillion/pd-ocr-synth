@@ -190,7 +190,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_audit.add_argument(
         "output_dir",
-        help="render output directory containing _audit.jsonl",
+        nargs="?",
+        help=(
+            "render output directory containing _audit.jsonl; required "
+            "unless --global or --audit-file is passed"
+        ),
     )
     p_audit.add_argument(
         "--audit-file",
@@ -198,8 +202,19 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "read audit entries from this JSONL path instead of "
             "<output_dir>/_audit.jsonl; useful for archived or aggregated "
-            "audit logs. <output_dir> is still required as context but is "
-            "not opened when this flag is set"
+            "audit logs. <output_dir> is optional when this flag is set"
+        ),
+    )
+    p_audit.add_argument(
+        "--global",
+        dest="global_audit",
+        action="store_true",
+        help=(
+            "read entries from the global aggregate at "
+            "<cache_root>/audit.jsonl (default ~/.cache/pd-ocr-synth/) "
+            "which mirrors every render across all output dirs. "
+            "<output_dir> is not required in this mode; mutually "
+            "exclusive with --audit-file"
         ),
     )
     p_audit.add_argument(
@@ -1108,7 +1123,7 @@ def _print_audit_summary(stats: dict[str, Any]) -> None:
 
 
 def _cmd_audit(
-    output_dir_arg: str,
+    output_dir_arg: str | None,
     *,
     as_json: bool,
     limit: int | None,
@@ -1117,6 +1132,7 @@ def _cmd_audit(
     recipe_sha: str | None = None,
     summary: bool = False,
     audit_file: str | None = None,
+    global_audit: bool = False,
 ) -> int:
     """Read back the per-render audit log written by ``render``.
 
@@ -1181,14 +1197,29 @@ def _cmd_audit(
     ``<output_dir>/_audit.jsonl`` lookup; pass any JSONL file (e.g. an
     archived staging-dir audit log, or an aggregate file built by
     concatenating per-output-dir logs). The positional ``output_dir``
-    is still required as a contextual argument for error messages, but
-    it is **not** opened when ``--audit-file`` is set — only the file
-    pointed at by the flag is read. Missing flag-pointed files still
-    map to exit 6 (destination-family) because the consumer pointed us
-    at something that isn't there.
+    is *optional* when ``--audit-file`` is set — only the file pointed
+    at by the flag is read. Missing flag-pointed files still map to
+    exit 6 (destination-family) because the consumer pointed us at
+    something that isn't there.
+
+    ``--global`` reads the cross-recipe aggregate at
+    ``<cache_root>/audit.jsonl`` (default
+    ``~/.cache/pd-ocr-synth/audit.jsonl``) which the renderer mirrors
+    every audit row into. The positional ``output_dir`` is also
+    optional in this mode — the aggregate has its own canonical path.
+    Mutually exclusive with ``--audit-file`` (passing both raises a
+    usage error). When the aggregate file does not yet exist (e.g.
+    first run on a fresh machine), exit 0 with an empty result set
+    rather than 6 — "global" is a query against a known-shape file
+    that is allowed to be empty, unlike a user-supplied ``--audit-file``
+    path that the consumer asserted exists.
     """
 
-    from pd_ocr_synth.audit import AUDIT_FILENAME, read_audit_entries
+    from pd_ocr_synth.audit import (
+        AUDIT_FILENAME,
+        default_global_audit_path,
+        read_audit_entries,
+    )
 
     if limit is not None and limit <= 0:
         print(f"error: --limit must be positive (got {limit})", file=sys.stderr)
@@ -1224,10 +1255,50 @@ def _cmd_audit(
             )
             return USAGE_EXIT
 
-    output_dir = Path(output_dir_arg).expanduser()
-    if audit_file is None:
-        # Default: read from <output_dir>/_audit.jsonl. The output dir
-        # has to exist and the canonical filename has to be present.
+    if global_audit and audit_file is not None:
+        print(
+            "error: --global and --audit-file are mutually exclusive",
+            file=sys.stderr,
+        )
+        return USAGE_EXIT
+
+    if global_audit:
+        # Cross-recipe aggregate. The file is allowed to not exist
+        # yet (a fresh machine that has run zero renders); we report
+        # that as an empty result set rather than exit 6 because the
+        # canonical path is well-defined and queryable as "what runs
+        # have I done so far?" — the answer "none" is a valid answer.
+        audit_path = default_global_audit_path()
+        if not audit_path.is_file():
+            entries: list[dict] = []
+        else:
+            entries = read_audit_entries(audit_path)
+    elif audit_file is not None:
+        # ``--audit-file`` override: read from the explicit path.
+        # ``output_dir`` is no longer required — the override stands
+        # alone as a complete file pointer. Missing override file
+        # maps to exit 6 (same family as a missing default file: the
+        # consumer pointed us at something that isn't there).
+        audit_path = Path(audit_file).expanduser()
+        if not audit_path.is_file():
+            print(
+                f"error: --audit-file does not exist: {audit_path}",
+                file=sys.stderr,
+            )
+            return DESTINATION_EXIT
+        entries = read_audit_entries(audit_path)
+    else:
+        # Default: read from <output_dir>/_audit.jsonl. The output
+        # dir is required in this mode; missing positional becomes a
+        # usage error so the user gets a clear "you forgot to point
+        # me at something".
+        if output_dir_arg is None:
+            print(
+                "error: output_dir is required (or pass --global / --audit-file)",
+                file=sys.stderr,
+            )
+            return USAGE_EXIT
+        output_dir = Path(output_dir_arg).expanduser()
         if not output_dir.exists():
             print(f"error: output dir does not exist: {output_dir}", file=sys.stderr)
             return DESTINATION_EXIT
@@ -1239,21 +1310,7 @@ def _cmd_audit(
                 file=sys.stderr,
             )
             return DESTINATION_EXIT
-    else:
-        # ``--audit-file`` override: read from the explicit path. The
-        # ``output_dir`` is purely positional context here — we don't
-        # touch it. Missing override file maps to exit 6 (same family
-        # as a missing default file: the consumer pointed us at
-        # something that isn't there).
-        audit_path = Path(audit_file).expanduser()
-        if not audit_path.is_file():
-            print(
-                f"error: --audit-file does not exist: {audit_path}",
-                file=sys.stderr,
-            )
-            return DESTINATION_EXIT
-
-    entries = read_audit_entries(audit_path)
+        entries = read_audit_entries(audit_path)
 
     # Apply filters before the tail-limit so "last N entries matching
     # the filter" composes correctly. Each filter is independent — the
@@ -1397,6 +1454,7 @@ _IMPLEMENTED_DISPATCH = {
         recipe_sha=args.recipe_sha,
         summary=args.summary,
         audit_file=args.audit_file,
+        global_audit=args.global_audit,
     ),
 }
 

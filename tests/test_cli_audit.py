@@ -1197,3 +1197,256 @@ def test_audit_audit_file_with_summary_aggregates_override_only(
     assert payload["total_count"] == 30
     assert payload["total_rendered"] == 28
     assert payload["total_skipped"] == 2
+
+
+# ---------------------------------------------------------------------------
+# --global flag (M10 stretch QoL): read from the cross-recipe aggregate
+# ---------------------------------------------------------------------------
+#
+# The render pipeline mirrors every audit row to a global aggregate at
+# ``<cache_root>/audit.jsonl`` so cross-recipe forensics are a one-liner
+# rather than "point the audit subcommand at each output dir separately".
+# ``--global`` is the read-side companion: it short-circuits the
+# positional ``output_dir`` (no per-output-dir context needed) and reads
+# from the aggregate path.
+#
+# Contract under test:
+#
+# - ``--global`` reads from ``$PD_OCR_SYNTH_CACHE/audit.jsonl``.
+# - ``output_dir`` is optional in ``--global`` mode.
+# - ``--global`` and ``--audit-file`` are mutually exclusive (exit 2).
+# - A missing global path is exit 0 with empty result (the canonical
+#   path is allowed to be absent on a fresh machine — that's a valid
+#   "I have run zero renders" answer).
+# - ``--global`` composes with --json, --since, --recipe-sha, --limit,
+#   --summary.
+
+
+def test_audit_global_flag_reads_aggregate_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--global`` reads from ``<cache_root>/audit.jsonl``.
+
+    Seeds the global aggregate with a couple of rows under an
+    isolated cache root, then asserts ``audit --global --json``
+    surfaces them. ``output_dir`` is intentionally omitted to lock
+    that the flag short-circuits the positional.
+    """
+
+    from pd_ocr_synth.audit import GLOBAL_AUDIT_FILENAME
+
+    cache_root = tmp_path / "cache"
+    cache_root.mkdir()
+    monkeypatch.setenv("PD_OCR_SYNTH_CACHE", str(cache_root))
+
+    aggregate = cache_root / GLOBAL_AUDIT_FILENAME
+    append_audit_entry(aggregate, _make_entry(seed=1, recipe_name="recipe-a"))
+    append_audit_entry(aggregate, _make_entry(seed=2, recipe_name="recipe-b"))
+
+    rc = main(["audit", "--global", "--json"])
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+
+    payload = json.loads(captured.out)
+    assert [r["seed"] for r in payload] == [1, 2]
+    assert {r["recipe_name"] for r in payload} == {"recipe-a", "recipe-b"}
+
+
+def test_audit_global_flag_does_not_require_output_dir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Positional ``output_dir`` is optional under ``--global``.
+
+    The aggregate has its own canonical path; per-output-dir context
+    is meaningless. ``argparse``'s ``nargs="?"`` makes the positional
+    optional at the parse layer; this test asserts the runtime
+    handler accepts the missing positional in ``--global`` mode.
+    """
+
+    from pd_ocr_synth.audit import GLOBAL_AUDIT_FILENAME
+
+    cache_root = tmp_path / "cache"
+    cache_root.mkdir()
+    monkeypatch.setenv("PD_OCR_SYNTH_CACHE", str(cache_root))
+
+    aggregate = cache_root / GLOBAL_AUDIT_FILENAME
+    append_audit_entry(aggregate, _make_entry(seed=99))
+
+    rc = main(["audit", "--global"])
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+    # Table mode header + one data row.
+    assert "timestamp" in captured.out  # header
+    # No "no audit entries" line when there is one row.
+    assert "(no audit entries)" not in captured.out
+
+
+def test_audit_global_with_missing_aggregate_returns_empty_set(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """No aggregate file yet → exit 0 with an empty result set.
+
+    Distinct from ``--audit-file <missing>`` (which is exit 6: the
+    consumer asserted the file exists). The global path is canonical
+    and may legitimately be absent on a fresh machine — "no runs
+    yet" is a valid answer to "show me my audit history".
+    """
+
+    cache_root = tmp_path / "cache-empty"
+    monkeypatch.setenv("PD_OCR_SYNTH_CACHE", str(cache_root))
+    # Note: cache_root not created; the aggregate is absent.
+
+    # JSON mode for an unambiguous empty signal.
+    rc = main(["audit", "--global", "--json"])
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+    assert json.loads(captured.out) == []
+
+
+def test_audit_global_with_missing_aggregate_table_mode_renders_empty(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Table mode on a missing aggregate prints header + the empty marker.
+
+    Same shape as the empty-default-file case (exit 0 with header +
+    ``(no audit entries)``); locks that ``--global`` reuses the
+    same renderer and doesn't introduce a different empty-set
+    output path.
+    """
+
+    cache_root = tmp_path / "cache-empty"
+    monkeypatch.setenv("PD_OCR_SYNTH_CACHE", str(cache_root))
+
+    rc = main(["audit", "--global"])
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+    assert "timestamp" in captured.out  # header
+    assert "(no audit entries)" in captured.out
+
+
+def test_audit_global_and_audit_file_are_mutually_exclusive(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Passing both ``--global`` and ``--audit-file`` is a usage error.
+
+    The two flags select competing input sources; rejecting the
+    combination at exit 2 prevents the implementation from having to
+    pick a precedence rule (and prevents the user from being
+    confused about which file got read).
+    """
+
+    monkeypatch.setenv("PD_OCR_SYNTH_CACHE", str(tmp_path / "cache"))
+    archive = tmp_path / "elsewhere.jsonl"
+    append_audit_entry(archive, _make_entry(seed=1))
+
+    rc = main(["audit", "--global", "--audit-file", str(archive)])
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "mutually exclusive" in captured.err
+
+
+def test_audit_global_composes_with_filters(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--global`` + ``--since`` + ``--recipe-sha`` + ``--limit`` compose.
+
+    Same composition contract as ``--audit-file``: one smoke test
+    end-to-end is enough since the filter pipeline is shared.
+    """
+
+    from pd_ocr_synth.audit import GLOBAL_AUDIT_FILENAME
+
+    cache_root = tmp_path / "cache"
+    cache_root.mkdir()
+    monkeypatch.setenv("PD_OCR_SYNTH_CACHE", str(cache_root))
+    aggregate = cache_root / GLOBAL_AUDIT_FILENAME
+    sha_a = "a" * 64
+    sha_b = "b" * 64
+    for entry in [
+        _make_entry(timestamp=_ts(1), seed=1, recipe_sha=sha_a),
+        _make_entry(timestamp=_ts(2), seed=2, recipe_sha=sha_b),
+        _make_entry(timestamp=_ts(3), seed=3, recipe_sha=sha_a),
+        _make_entry(timestamp=_ts(4), seed=4, recipe_sha=sha_a),
+    ]:
+        append_audit_entry(aggregate, entry)
+
+    rc = main(
+        [
+            "audit",
+            "--global",
+            "--json",
+            "--since",
+            _ts(2),
+            "--recipe-sha",
+            "a" * 8,
+            "--limit",
+            "1",
+        ],
+    )
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+
+    payload = json.loads(captured.out)
+    # ``--since 2`` keeps rows 2, 3, 4. ``--recipe-sha aaaa...`` drops row 2.
+    # ``--limit 1`` tails to seed=4.
+    assert [entry["seed"] for entry in payload] == [4]
+
+
+def test_audit_global_with_summary_aggregates_aggregate_only(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--global`` + ``--summary`` aggregates the aggregate file's rows.
+
+    Locks that the global path doesn't accidentally pull in any
+    per-output-dir audit files — the aggregate stands alone.
+    """
+
+    from pd_ocr_synth.audit import GLOBAL_AUDIT_FILENAME
+
+    cache_root = tmp_path / "cache"
+    cache_root.mkdir()
+    monkeypatch.setenv("PD_OCR_SYNTH_CACHE", str(cache_root))
+    aggregate = cache_root / GLOBAL_AUDIT_FILENAME
+    append_audit_entry(aggregate, _make_entry(count=10, rendered=10, skipped=0))
+    append_audit_entry(aggregate, _make_entry(count=20, rendered=18, skipped=2))
+
+    rc = main(["audit", "--global", "--summary", "--json"])
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+
+    payload = json.loads(captured.out)
+    assert payload["entry_count"] == 2
+    assert payload["total_count"] == 30
+    assert payload["total_rendered"] == 28
+    assert payload["total_skipped"] == 2
+
+
+def test_audit_without_args_is_usage_error(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """No positional + no ``--global`` + no ``--audit-file`` → exit 2.
+
+    Pins the help-text message: the user gets a single line naming
+    the alternatives, not a stack trace.
+    """
+
+    rc = main(["audit"])
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "output_dir is required" in captured.err
+    assert "--global" in captured.err
+    assert "--audit-file" in captured.err

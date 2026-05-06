@@ -71,10 +71,28 @@ from pathlib import Path
 # trainer's loader.
 AUDIT_FILENAME = "_audit.jsonl"
 
+# Per-cache-root aggregate filename. Lives under
+# ``$PD_OCR_SYNTH_CACHE`` (default ``~/.cache/pd-ocr-synth``) and
+# carries one mirrored line per render across *all* output dirs the
+# user has rendered into. The lack of an underscore prefix here is
+# deliberate: this file is not a writer-internal sidecar — it is a
+# user-facing aggregate index, queryable via ``audit --global``. See
+# :func:`default_global_audit_path`.
+GLOBAL_AUDIT_FILENAME = "audit.jsonl"
+
 # Env var that globally disables audit emission. Honored by
 # :func:`should_emit_audit`. Set to any truthy value (``1``, ``true``,
 # ``yes``) to suppress.
 AUDIT_DISABLE_ENV = "PD_OCR_SYNTH_NO_AUDIT"
+
+# Env var that disables *only* the global aggregate mirror (the per-
+# output-dir audit log is still emitted). Useful when the cache root
+# is on a slow / read-only filesystem, or when an operator wants to
+# keep per-render forensics local without building a cross-recipe
+# timeline. Honored by :func:`should_emit_global_audit`. Note that
+# :data:`AUDIT_DISABLE_ENV` (the broader switch) also disables the
+# global mirror — turning audit off entirely turns off both files.
+GLOBAL_AUDIT_DISABLE_ENV = "PD_OCR_SYNTH_NO_GLOBAL_AUDIT"
 
 # Schema-version constant for the JSONL row. Bump when the on-disk
 # shape changes; readers should round-trip an unknown version into a
@@ -141,6 +159,72 @@ def should_emit_audit(*, audit: bool, env: dict[str, str] | None = None) -> bool
     if raw in {"1", "true", "yes", "on"}:
         return False
     return True
+
+
+def should_emit_global_audit(*, audit: bool, env: dict[str, str] | None = None) -> bool:
+    """Resolve whether to mirror an audit entry to the global aggregate.
+
+    The decision composes two switches:
+
+    1. :func:`should_emit_audit` — if the per-render audit is off (CLI
+       ``--no-audit`` or :data:`AUDIT_DISABLE_ENV`), the global mirror
+       is also off. This keeps the user's mental model simple: "audit
+       off" means "no audit anywhere".
+    2. :data:`GLOBAL_AUDIT_DISABLE_ENV` — opt-out for *just* the global
+       mirror. The per-output-dir audit still emits; the cross-recipe
+       timeline does not. Useful when the cache root is on a slow /
+       read-only filesystem and the per-render audit is sufficient.
+
+    ``env`` defaults to ``os.environ``; tests can pass a dict for
+    isolation. Returns ``True`` when both gates are open.
+    """
+
+    if not should_emit_audit(audit=audit, env=env):
+        return False
+    environ = os.environ if env is None else env
+    raw = environ.get(GLOBAL_AUDIT_DISABLE_ENV, "").strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return False
+    return True
+
+
+def default_global_audit_path(env: dict[str, str] | None = None) -> Path:
+    """Path to the global aggregate audit log.
+
+    Lives at ``<cache_root>/audit.jsonl`` where ``cache_root`` is the
+    same root used by the corpus cache (see
+    :func:`pd_ocr_synth.corpus.cache.default_cache_root`):
+    ``$PD_OCR_SYNTH_CACHE`` if set, else ``~/.cache/pd-ocr-synth``.
+
+    Sharing the cache root with the corpus cache is deliberate: a user
+    who has already configured ``$PD_OCR_SYNTH_CACHE`` to point at a
+    persistent volume gets the cross-recipe audit timeline on the same
+    volume "for free", and a user who wipes the cache root resets both
+    in one step. The file itself is not a cache entry — it's an
+    append-only forensic log that grows over time — so we don't
+    delegate to ``CacheStore``.
+
+    The cache root is *not* created here; the writer creates the
+    directory lazily on first append (see ``append_audit_entry``). This
+    matches ``default_cache_root``'s "resolve, don't materialize"
+    semantics so callers can ask "where would the global audit live?"
+    without side-effects.
+
+    ``env`` defaults to ``os.environ``; tests can pass a dict for
+    isolation (matching :func:`should_emit_audit`).
+    """
+
+    # Inline the env lookup rather than importing
+    # ``pd_ocr_synth.corpus.cache.default_cache_root`` to keep the
+    # audit module dependency-free of the corpus stack — the audit
+    # log is conceptually upstream of corpora.
+    environ = os.environ if env is None else env
+    raw = environ.get("PD_OCR_SYNTH_CACHE")
+    if raw:
+        cache_root = Path(raw).expanduser()
+    else:
+        cache_root = Path.home() / ".cache" / "pd-ocr-synth"
+    return cache_root / GLOBAL_AUDIT_FILENAME
 
 
 def compute_recipe_sha(recipe_source_path: Path | None) -> str | None:
