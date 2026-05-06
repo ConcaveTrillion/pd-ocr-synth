@@ -432,6 +432,22 @@
           ],
           "default": null,
           "title": "Paragraph Indent Px"
+        },
+        "paragraph_alignment": {
+          "anyOf": [
+            {
+              "enum": [
+                "left",
+                "center"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Paragraph Alignment"
         }
       },
       "required": [

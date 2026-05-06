@@ -524,3 +524,256 @@ def test_render_paragraph_negative_first_line_indent_raises(tmp_path: Path) -> N
             ctx=ctx,
             first_line_indent_px=-1,
         )
+
+
+# ---------------------------------------------------------------------------
+# Paragraph alignment (left + center)
+# ---------------------------------------------------------------------------
+
+
+def _make_aligned_recipe(tmp_path: Path, alignment: str | None) -> object:
+    """Build a paragraphs-mode recipe with the given ``paragraph_alignment``.
+
+    ``alignment=None`` omits the field entirely (preserving the
+    historical un-aligned output bytes); a string writes
+    ``paragraph_alignment: <value>`` into the layout block.
+    """
+    font = _require_font()
+    rp = tmp_path / f"recipe-align-{alignment}.yaml"
+    words = tmp_path / f"words-align-{alignment}.txt"
+    words.write_text("ḃeaḋ\n", encoding="utf-8")
+    align_line = "" if alignment is None else f"  paragraph_alignment: {alignment}\n"
+    rp.write_text(
+        "schema_version: 1\n"
+        f"name: para-align-{alignment}\n"
+        "seed: 42\n"
+        "output:\n"
+        "  format: pd-ocr-trainer/v1\n"
+        "  mode: detection\n"
+        "  destination: ./out\n"
+        "  count: 1\n"
+        "corpus:\n"
+        f"  - type: local\n    path: {words}\n"
+        "fonts:\n"
+        f"  - path: {font}\n    weight: 1.0\n"
+        "rendering:\n"
+        "  font_size_pt: 18\n"
+        "  dpi: 300\n"
+        "  ink_color: { r: 10, g: 10, b: 10 }\n"
+        "  background_color: { r: 240, g: 235, b: 220 }\n"
+        "layout:\n"
+        "  mode: paragraphs\n"
+        "  padding_px: 6\n"
+        "  line_spacing: 1.0\n"
+        f"{align_line}",
+        encoding="utf-8",
+    )
+    return load_recipe(rp)
+
+
+def test_render_paragraph_alignment_none_is_bit_identical_to_left(tmp_path: Path) -> None:
+    """``paragraph_alignment = None`` and ``= "left"`` produce identical PNG bytes."""
+
+    paragraphs = ["alpha beta", "gamma delta", "x"]
+
+    recipe_none = _make_aligned_recipe(tmp_path, None)
+    recipe_left = _make_aligned_recipe(tmp_path, "left")
+
+    def _png(recipe) -> bytes:
+        ctx = RenderContext.for_seed(recipe.seed)
+        ctx.reseed_for_sample(0)
+        sample = render_paragraph(paragraphs, recipe=recipe, ctx=ctx)
+        buf = io.BytesIO()
+        sample.image.save(buf, format="PNG")
+        return buf.getvalue()
+
+    assert _png(recipe_none) == _png(recipe_left)
+
+
+def test_render_paragraph_alignment_left_matches_default_layout(tmp_path: Path) -> None:
+    """Left alignment leaves all bbox coordinates identical to the un-aligned default."""
+
+    paragraphs = ["alpha beta", "gamma delta", "x"]
+
+    recipe_none = _make_aligned_recipe(tmp_path, None)
+    recipe_left = _make_aligned_recipe(tmp_path, "left")
+
+    ctx_no = RenderContext.for_seed(recipe_none.seed)
+    ctx_no.reseed_for_sample(0)
+    sample_no = render_paragraph(paragraphs, recipe=recipe_none, ctx=ctx_no)
+
+    ctx_left = RenderContext.for_seed(recipe_left.seed)
+    ctx_left.reseed_for_sample(0)
+    sample_left = render_paragraph(paragraphs, recipe=recipe_left, ctx=ctx_left)
+
+    assert sample_left.size == sample_no.size
+    assert sample_left.bbox == sample_no.bbox
+    assert [lb.bbox for lb in sample_left.line_boxes] == [lb.bbox for lb in sample_no.line_boxes]
+    assert [wb.bbox for wb in sample_left.word_boxes] == [wb.bbox for wb in sample_no.word_boxes]
+
+
+def test_render_paragraph_alignment_center_centers_short_lines(tmp_path: Path) -> None:
+    """``paragraph_alignment = "center"`` centers each line within ``paragraph_width``.
+
+    For a paragraph whose lines have different widths, the centering
+    offset for line *i* equals ``(paragraph_width - line_i_width) // 2``,
+    where ``paragraph_width`` is the width of the longest line. The
+    longest line gets offset 0; shorter lines slide right.
+    """
+
+    # First line is the long one; second line is short — so the
+    # second line should be shifted right while the first line sits
+    # at the natural left edge.
+    paragraphs = ["alpha beta gamma delta", "x"]
+
+    recipe_left = _make_aligned_recipe(tmp_path, "left")
+    recipe_center = _make_aligned_recipe(tmp_path, "center")
+
+    ctx_left = RenderContext.for_seed(recipe_left.seed)
+    ctx_left.reseed_for_sample(0)
+    sample_left = render_paragraph(paragraphs, recipe=recipe_left, ctx=ctx_left)
+
+    ctx_center = RenderContext.for_seed(recipe_center.seed)
+    ctx_center.reseed_for_sample(0)
+    sample_center = render_paragraph(paragraphs, recipe=recipe_center, ctx=ctx_center)
+
+    # Canvas size matches: alignment is purely a per-line horizontal
+    # offset within the same paragraph width, no canvas growth.
+    assert sample_center.size == sample_left.size
+
+    # Long line (line 0) sits at the same left edge in both samples.
+    assert sample_center.line_boxes[0].bbox[0] == sample_left.line_boxes[0].bbox[0]
+
+    # Short line (line 1) moves right by a positive offset.
+    delta = sample_center.line_boxes[1].bbox[0] - sample_left.line_boxes[1].bbox[0]
+    assert delta > 0, (
+        f"short line did not shift right under center alignment: "
+        f"left.x0={sample_left.line_boxes[1].bbox[0]}, "
+        f"center.x0={sample_center.line_boxes[1].bbox[0]}"
+    )
+
+
+def test_render_paragraph_alignment_center_word_boxes_track_line(tmp_path: Path) -> None:
+    """Word boxes shift by the same per-line offset as their line."""
+
+    paragraphs = ["alpha beta gamma delta", "x y"]
+
+    recipe_left = _make_aligned_recipe(tmp_path, "left")
+    recipe_center = _make_aligned_recipe(tmp_path, "center")
+
+    ctx_left = RenderContext.for_seed(recipe_left.seed)
+    ctx_left.reseed_for_sample(0)
+    sample_left = render_paragraph(paragraphs, recipe=recipe_left, ctx=ctx_left)
+
+    ctx_center = RenderContext.for_seed(recipe_center.seed)
+    ctx_center.reseed_for_sample(0)
+    sample_center = render_paragraph(paragraphs, recipe=recipe_center, ctx=ctx_center)
+
+    # Match words by text + line index. ``alpha`` is on line 0
+    # (longest line, zero offset); ``x`` and ``y`` are on line 1
+    # (short, gets the centering offset). The line-1 words must shift
+    # by the same delta as the line-1 bbox.
+    line1_delta = sample_center.line_boxes[1].bbox[0] - sample_left.line_boxes[1].bbox[0]
+    assert line1_delta > 0
+
+    def _word(sample, text: str) -> WordBox:
+        return next(wb for wb in sample.word_boxes if wb.text == text)
+
+    # Line-0 words: zero offset.
+    for word in ("alpha", "beta", "gamma", "delta"):
+        assert _word(sample_center, word).bbox[0] == _word(sample_left, word).bbox[0], (
+            f"line-0 word {word!r} shifted unexpectedly under center"
+        )
+
+    # Line-1 words: shift by the same delta as the line.
+    for word in ("x", "y"):
+        delta = _word(sample_center, word).bbox[0] - _word(sample_left, word).bbox[0]
+        assert delta == line1_delta, (
+            f"line-1 word {word!r} delta {delta} != line delta {line1_delta}"
+        )
+
+
+def test_render_paragraph_alignment_center_glyph_runs_track_line(tmp_path: Path) -> None:
+    """Per-cluster glyph_runs shift by the same per-line offset as their line."""
+
+    paragraphs = ["alpha beta gamma delta", "x"]
+
+    recipe_left = _make_aligned_recipe(tmp_path, "left")
+    recipe_center = _make_aligned_recipe(tmp_path, "center")
+
+    ctx_left = RenderContext.for_seed(recipe_left.seed)
+    ctx_left.reseed_for_sample(0)
+    sample_left = render_paragraph(paragraphs, recipe=recipe_left, ctx=ctx_left)
+
+    ctx_center = RenderContext.for_seed(recipe_center.seed)
+    ctx_center.reseed_for_sample(0)
+    sample_center = render_paragraph(paragraphs, recipe=recipe_center, ctx=ctx_center)
+
+    line1_left = sample_left.line_boxes[1]
+    line1_center = sample_center.line_boxes[1]
+    line1_delta = line1_center.bbox[0] - line1_left.bbox[0]
+    assert line1_delta > 0
+
+    # Filter glyph_runs to line 1 by y-range (line 0 is fully above
+    # line 1 in both renders).
+    def _line1_runs(sample) -> list:
+        ly0, ly1 = (
+            sample.line_boxes[1].bbox[1],
+            sample.line_boxes[1].bbox[3],
+        )
+        return sorted(
+            (r for r in sample.glyph_runs if ly0 <= r.bbox[1] and r.bbox[3] <= ly1),
+            key=lambda r: r.bbox[0],
+        )
+
+    runs_left = _line1_runs(sample_left)
+    runs_center = _line1_runs(sample_center)
+    assert len(runs_left) == len(runs_center) > 0
+    for r_left, r_center in zip(runs_left, runs_center, strict=True):
+        assert r_center.bbox[0] - r_left.bbox[0] == line1_delta
+        assert r_center.bbox[2] - r_left.bbox[2] == line1_delta
+        # y unchanged
+        assert r_center.bbox[1] == r_left.bbox[1]
+        assert r_center.bbox[3] == r_left.bbox[3]
+
+
+def test_render_paragraph_alignment_center_longest_line_unchanged(tmp_path: Path) -> None:
+    """The longest line gets offset 0 — its bbox matches the left-aligned render."""
+
+    # Make line 1 the longest so we exercise "longest is not line 0".
+    paragraphs = ["x", "alpha beta gamma delta", "y"]
+
+    recipe_left = _make_aligned_recipe(tmp_path, "left")
+    recipe_center = _make_aligned_recipe(tmp_path, "center")
+
+    ctx_left = RenderContext.for_seed(recipe_left.seed)
+    ctx_left.reseed_for_sample(0)
+    sample_left = render_paragraph(paragraphs, recipe=recipe_left, ctx=ctx_left)
+
+    ctx_center = RenderContext.for_seed(recipe_center.seed)
+    ctx_center.reseed_for_sample(0)
+    sample_center = render_paragraph(paragraphs, recipe=recipe_center, ctx=ctx_center)
+
+    # Long line (line 1) bbox left edge unchanged.
+    assert sample_center.line_boxes[1].bbox[0] == sample_left.line_boxes[1].bbox[0]
+    # Short lines (lines 0 + 2) shift right.
+    assert sample_center.line_boxes[0].bbox[0] > sample_left.line_boxes[0].bbox[0]
+    assert sample_center.line_boxes[2].bbox[0] > sample_left.line_boxes[2].bbox[0]
+
+
+def test_render_paragraph_alignment_unsupported_value_raises(tmp_path: Path) -> None:
+    """An out-of-band alignment value (bypassing pydantic) raises RenderError.
+
+    The recipe ``Layout`` model's ``Literal["left", "center"]`` rejects
+    unknown values at load time. This test pokes the validation layer
+    directly by mutating an already-loaded recipe via
+    ``model_copy(update=...)`` — the renderer's own defensive check
+    must still fire.
+    """
+    recipe = _make_aligned_recipe(tmp_path, "left")
+    bad_layout = recipe.layout.model_copy(update={"paragraph_alignment": "justify"})
+    bad_recipe = recipe.model_copy(update={"layout": bad_layout})
+    ctx = RenderContext.for_seed(bad_recipe.seed)
+    ctx.reseed_for_sample(0)
+    with pytest.raises(RenderError, match="paragraph_alignment"):
+        render_paragraph(["alpha"], recipe=bad_recipe, ctx=ctx)

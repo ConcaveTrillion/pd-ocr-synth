@@ -238,6 +238,17 @@ class Layout(_Frozen):
     # preserves the existing un-indented output bit-for-bit. See
     # docs/roadmap/09-detection-mode.md § First-line indent.
     paragraph_indent_px: int | None = None
+    # Horizontal alignment of each line within the paragraph's bounding
+    # box. ``None`` (default) and ``"left"`` both preserve the existing
+    # left-aligned output bit-for-bit. ``"center"`` centers each line
+    # within ``paragraph_width`` (the width of the longest line, plus
+    # any first-line indent contribution). Only meaningful for
+    # ``mode in {paragraphs, pages}`` — recognition-mode samples are
+    # tight crops where alignment is undefined. ``"right"`` and
+    # ``"justify"`` are advertised by spec 06 but not yet implemented;
+    # they are rejected at validation time. See
+    # docs/roadmap/09-detection-mode.md § Paragraph alignment.
+    paragraph_alignment: Literal["left", "center"] | None = None
 
 
 # ---------------------------------------------------------------------------

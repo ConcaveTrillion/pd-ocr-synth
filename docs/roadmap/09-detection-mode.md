@@ -141,19 +141,31 @@ future small chunk.
 
 ### Paragraph alignment
 
-- [ ] Spec 06 § `paragraphs` advertises
+- [~] Spec 06 § `paragraphs` advertises
       `alignment: justify | left | right | center` and spec 06
       § Ground truth captured per sample documents `lines` /
-      `words` GT regardless of alignment. Today `render_paragraph`
-      lays each shaped line at the left edge of the per-paragraph
-      canvas (no `alignment` field on `Layout` / `ParagraphStyle`),
-      which is `left` by default. Add a layout key
-      `paragraph_alignment: "left" | "center" | "right" | "justify"`,
-      default `"left"` (preserves current output bytes). Implement
-      `"left"` + `"center"` first as a single chunk; `"right"` is
-      mostly symmetric with `"center"`; `"justify"` is a separate
+      `words` GT regardless of alignment. `"left"` and `"center"`
+      land as a layout key
+      `paragraph_alignment: Literal["left", "center"] | None = None`
+      (`None` and `"left"` both preserve the historical un-aligned
+      output bit-for-bit). The validator permits the field on
+      `paragraphs` and `pages` modes and warns `layout_key_unused`
+      on `word_crops` / `lines`
+      (`tests/test_validation.py::test_paragraph_alignment_*`).
+      `render_paragraph` applies a per-line offset
+      `(paragraph_width - line_natural_width) // 2` to image paste,
+      glyph runs, word boxes, and line bbox under `"center"`; the
+      longest line gets offset 0 so canvas size is unchanged
+      (`tests/test_render_paragraph.py::*alignment_center*`).
+      `render_page` inherits alignment via the recipe (no extra
+      wiring); per-paragraph centering happens against each
+      paragraph's own max line width, not the page's
+      (`tests/test_render_page.py::*alignment_center*`). `"right"`
+      is mostly symmetric with `"center"`; `"justify"` is a separate
       chunk because it needs inter-word stretching (and the spec is
-      silent on whether the last line of a paragraph stretches).
+      silent on whether the last line of a paragraph stretches) —
+      both rejected at recipe-load time today by the pydantic
+      `Literal["left", "center"]`.
 
 ### First-line indent for paragraphs
 

@@ -70,7 +70,14 @@ _LAYOUT_KEYS_BY_MODE: dict[str, frozenset[str]] = {
     # ``paragraph_spacing`` is the vertical gap between *paragraphs* on a
     # page, so it's only meaningful for ``pages`` mode — a
     # ``paragraphs`` sample renders a single paragraph by construction.
-    "paragraphs": frozenset({"padding_px", "max_width_px", "line_spacing"}),
+    "paragraphs": frozenset(
+        {
+            "padding_px",
+            "max_width_px",
+            "line_spacing",
+            "paragraph_alignment",
+        }
+    ),
     "pages": frozenset(
         {
             "padding_px",
@@ -78,6 +85,7 @@ _LAYOUT_KEYS_BY_MODE: dict[str, frozenset[str]] = {
             "line_spacing",
             "paragraph_spacing",
             "paragraph_indent_px",
+            "paragraph_alignment",
         }
     ),
 }
@@ -271,6 +279,7 @@ def _check_layout(recipe: Recipe) -> list[ValidationIssue]:
         "line_spacing": recipe.layout.line_spacing,
         "paragraph_spacing": recipe.layout.paragraph_spacing,
         "paragraph_indent_px": recipe.layout.paragraph_indent_px,
+        "paragraph_alignment": recipe.layout.paragraph_alignment,
     }
     out: list[ValidationIssue] = []
     for key, value in set_keys.items():

@@ -749,3 +749,132 @@ def test_render_page_missing_glyph_anywhere_raises(tmp_path: Path) -> None:
             ctx=ctx,
         )
     assert 0x1F600 in exc_info.value.missing
+
+
+# ---------------------------------------------------------------------------
+# Paragraph alignment (left + center) threaded through pages mode
+# ---------------------------------------------------------------------------
+
+
+def _build_aligned_recipe(tmp_path: Path, alignment: str | None) -> object:
+    """Build a pages-mode recipe with the given ``paragraph_alignment``.
+
+    ``alignment=None`` omits the field entirely (preserving the
+    historical un-aligned output bytes); a string writes
+    ``paragraph_alignment: <value>`` into the layout block.
+    """
+    font = _require_font()
+    rp = tmp_path / f"recipe-pagealign-{alignment}.yaml"
+    words = tmp_path / f"words-pagealign-{alignment}.txt"
+    words.write_text("ḃeaḋ\n", encoding="utf-8")
+    align_line = "" if alignment is None else f"  paragraph_alignment: {alignment}\n"
+    rp.write_text(
+        "schema_version: 1\n"
+        f"name: page-align-{alignment}\n"
+        "seed: 42\n"
+        "output:\n"
+        "  format: pd-ocr-trainer/v1\n"
+        "  mode: detection\n"
+        "  destination: ./out\n"
+        "  count: 1\n"
+        "corpus:\n"
+        f"  - type: local\n    path: {words}\n"
+        "fonts:\n"
+        f"  - path: {font}\n    weight: 1.0\n"
+        "rendering:\n"
+        "  font_size_pt: 18\n"
+        "  dpi: 300\n"
+        "  ink_color: { r: 10, g: 10, b: 10 }\n"
+        "  background_color: { r: 240, g: 235, b: 220 }\n"
+        "layout:\n"
+        "  mode: pages\n"
+        "  padding_px: 6\n"
+        "  line_spacing: 1.0\n"
+        "  paragraph_spacing: 1.0\n"
+        f"{align_line}",
+        encoding="utf-8",
+    )
+    return load_recipe(rp)
+
+
+def test_render_page_alignment_none_is_bit_identical_to_left(tmp_path: Path) -> None:
+    """``paragraph_alignment = None`` and ``= "left"`` produce identical PNG bytes."""
+
+    paragraphs = [["alpha beta gamma", "x"], ["delta epsilon", "y z"]]
+
+    recipe_none = _build_aligned_recipe(tmp_path, None)
+    recipe_left = _build_aligned_recipe(tmp_path, "left")
+
+    def _png(recipe) -> bytes:
+        ctx = RenderContext.for_seed(recipe.seed)
+        ctx.reseed_for_sample(0)
+        sample = render_page(paragraphs, recipe=recipe, ctx=ctx)
+        buf = io.BytesIO()
+        sample.image.save(buf, format="PNG")
+        return buf.getvalue()
+
+    assert _png(recipe_none) == _png(recipe_left)
+
+
+def test_render_page_alignment_center_centers_short_lines_per_paragraph(
+    tmp_path: Path,
+) -> None:
+    """Center alignment shifts short lines right within each paragraph independently.
+
+    Each paragraph carries its own ``paragraph_width`` (= the longest
+    line in *that* paragraph). Centering happens per-paragraph: the
+    short line in paragraph A is centered against paragraph A's max
+    line width, not the page's max line width.
+    """
+
+    paragraphs = [["alpha beta gamma delta", "x"], ["mu nu", "y"]]
+
+    recipe_left = _build_aligned_recipe(tmp_path, "left")
+    recipe_center = _build_aligned_recipe(tmp_path, "center")
+
+    ctx_left = RenderContext.for_seed(recipe_left.seed)
+    ctx_left.reseed_for_sample(0)
+    sample_left = render_page(paragraphs, recipe=recipe_left, ctx=ctx_left)
+
+    ctx_center = RenderContext.for_seed(recipe_center.seed)
+    ctx_center.reseed_for_sample(0)
+    sample_center = render_page(paragraphs, recipe=recipe_center, ctx=ctx_center)
+
+    # Paragraphs are stacked top-to-bottom; lines within each are
+    # ordered top-to-bottom too. So `line_boxes[0]` is paragraph 0
+    # line 0 (long), `line_boxes[1]` is paragraph 0 line 1 (short),
+    # `line_boxes[2]` is paragraph 1 line 0 (long-of-its-paragraph),
+    # `line_boxes[3]` is paragraph 1 line 1 (short).
+    assert len(sample_left.line_boxes) == len(sample_center.line_boxes) == 4
+
+    # Paragraph 0 long line: unchanged.
+    assert sample_center.line_boxes[0].bbox[0] == sample_left.line_boxes[0].bbox[0]
+    # Paragraph 0 short line: shifts right.
+    delta_p0 = sample_center.line_boxes[1].bbox[0] - sample_left.line_boxes[1].bbox[0]
+    assert delta_p0 > 0
+
+    # Paragraph 1 long line: unchanged.
+    assert sample_center.line_boxes[2].bbox[0] == sample_left.line_boxes[2].bbox[0]
+    # Paragraph 1 short line: shifts right by paragraph 1's own delta
+    # (which differs from paragraph 0's because the paragraph widths
+    # differ).
+    delta_p1 = sample_center.line_boxes[3].bbox[0] - sample_left.line_boxes[3].bbox[0]
+    assert delta_p1 > 0
+
+
+def test_render_page_alignment_center_word_boxes_stay_inside_canvas(
+    tmp_path: Path,
+) -> None:
+    """Centered word boxes still sit inside the page canvas."""
+
+    paragraphs = [["alpha beta gamma", "x y"], ["delta epsilon", "z"]]
+    recipe = _build_aligned_recipe(tmp_path, "center")
+    ctx = RenderContext.for_seed(recipe.seed)
+    ctx.reseed_for_sample(0)
+    sample = render_page(paragraphs, recipe=recipe, ctx=ctx)
+
+    w, h = sample.size
+    for wb in sample.word_boxes:
+        x0, y0, x1, y1 = wb.bbox
+        assert 0 <= x0 < x1 <= w, f"word {wb.text!r} bbox out of canvas: {wb.bbox}, canvas={w}x{h}"
+        assert 0 <= y0 < y1 <= h, f"word {wb.text!r} bbox out of canvas: {wb.bbox}, canvas={w}x{h}"

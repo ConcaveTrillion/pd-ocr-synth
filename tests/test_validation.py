@@ -345,6 +345,100 @@ def test_known_degradation_set_includes_canonical_kinds() -> None:
 
 
 # ---------------------------------------------------------------------------
+# paragraph_alignment (M09 paragraph alignment)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("layout_mode", ["paragraphs", "pages"])
+def test_paragraph_alignment_accepted_on_paragraph_modes(
+    tmp_path: Path,
+    writable_font_bytes: bytes,
+    layout_mode: str,
+) -> None:
+    """``paragraph_alignment`` is permitted on ``paragraphs`` + ``pages`` without warning."""
+    font = tmp_path / "fake.otf"
+    font.write_bytes(writable_font_bytes)
+    seed = _make_file(tmp_path / "seed.txt", "hello\n")
+    yaml_text = _minimal_yaml(font=str(font), dest=str(tmp_path / "out"), corpus=str(seed))
+    yaml_text = yaml_text.replace(
+        "layout:\n  mode: word_crops\n  padding_px: 8\n",
+        (
+            f"layout:\n"
+            f"  mode: {layout_mode}\n"
+            f"  padding_px: 8\n"
+            f"  max_width_px: 800\n"
+            f"  paragraph_alignment: center\n"
+        ),
+    )
+    yaml_text = yaml_text.replace("mode: recognition", "mode: detection")
+    recipe = load_recipe(_write(tmp_path, yaml_text))
+    report = validate_recipe(recipe)
+    align_warnings = [i for i in report.warnings if i.location == "layout.paragraph_alignment"]
+    assert align_warnings == [], [i.format() for i in align_warnings]
+    assert report.is_ok, [i.format() for i in report.issues]
+
+
+@pytest.mark.parametrize("layout_mode", ["word_crops", "lines"])
+def test_paragraph_alignment_warns_on_recognition_modes(
+    tmp_path: Path,
+    writable_font_bytes: bytes,
+    layout_mode: str,
+) -> None:
+    """``paragraph_alignment`` is not meaningful for recognition-mode layouts.
+
+    Setting it on ``word_crops`` / ``lines`` emits ``layout_key_unused``
+    so the user knows the value will be ignored.
+    """
+    font = tmp_path / "fake.otf"
+    font.write_bytes(writable_font_bytes)
+    seed = _make_file(tmp_path / "seed.txt", "hello\n")
+    yaml_text = _minimal_yaml(font=str(font), dest=str(tmp_path / "out"), corpus=str(seed))
+    if layout_mode == "word_crops":
+        new_layout = "layout:\n  mode: word_crops\n  padding_px: 8\n  paragraph_alignment: center\n"
+    else:
+        new_layout = (
+            f"layout:\n"
+            f"  mode: {layout_mode}\n"
+            f"  padding_px: 8\n"
+            f"  max_width_px: 800\n"
+            f"  paragraph_alignment: center\n"
+        )
+    yaml_text = yaml_text.replace(
+        "layout:\n  mode: word_crops\n  padding_px: 8\n",
+        new_layout,
+    )
+    recipe = load_recipe(_write(tmp_path, yaml_text))
+    report = validate_recipe(recipe)
+    align_warning_codes = [
+        i.code for i in report.warnings if i.location == "layout.paragraph_alignment"
+    ]
+    assert "layout_key_unused" in align_warning_codes, [i.format() for i in report.issues]
+
+
+def test_paragraph_alignment_unknown_value_rejected_at_load(
+    tmp_path: Path, writable_font_bytes: bytes
+) -> None:
+    """Pydantic's ``Literal["left", "center"]`` rejects unknown values at load time."""
+    font = tmp_path / "fake.otf"
+    font.write_bytes(writable_font_bytes)
+    seed = _make_file(tmp_path / "seed.txt", "hello\n")
+    yaml_text = _minimal_yaml(font=str(font), dest=str(tmp_path / "out"), corpus=str(seed))
+    yaml_text = yaml_text.replace(
+        "layout:\n  mode: word_crops\n  padding_px: 8\n",
+        (
+            "layout:\n"
+            "  mode: paragraphs\n"
+            "  padding_px: 8\n"
+            "  max_width_px: 800\n"
+            "  paragraph_alignment: justify\n"
+        ),
+    )
+    yaml_text = yaml_text.replace("mode: recognition", "mode: detection")
+    with pytest.raises(Exception, match="paragraph_alignment"):
+        load_recipe(_write(tmp_path, yaml_text))
+
+
+# ---------------------------------------------------------------------------
 # output.mode / layout.mode pairing (spec 08, §Modes)
 # ---------------------------------------------------------------------------
 
