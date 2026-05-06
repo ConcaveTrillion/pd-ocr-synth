@@ -106,12 +106,16 @@ following gaps remain — pick any of them as a future small chunk.
 
 ### CLI flags accepted but not wired through
 
-- `--license <LICENSE>` is accepted by the argparse layer in `cli.py`
-  but is not forwarded to `cmd_publish`. The dataset-card generator
-  already reads `recipe.publish.hf_dataset.license`, so the override
-  needs threading through `publish.cli_runner` and into
-  `dataset_card.write_dataset_card` (or applied to the front matter
-  post-build before the content-SHA is computed).
+- [x] `--license <LICENSE>` is wired end-to-end: argparse → `_cmd_publish`
+      → `cmd_publish(license_override=...)` → `build_recognition_staging`
+      → `load_card_inputs` → `DatasetCardInputs.license_override` →
+      front-matter `license:` key. The flag wins over
+      `recipe.publish.hf_dataset.license` per spec 10 § Recipe
+      `publish:` block; a missing flag falls back to the recipe value
+      (or omits the key entirely). Both dry-run and real-upload paths
+      are covered by tests in `test_cli_publish.py` and
+      `test_cli_publish_upload.py`; unit-level coverage in
+      `test_publish_dataset_card.py`.
 - `--render-first` is accepted by argparse but ignored by
   `_cmd_publish`. Spec 10 § When to publish: "Pass `--render-first` to
   chain them." Implementation: when set, run the render step

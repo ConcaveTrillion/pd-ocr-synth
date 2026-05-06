@@ -587,6 +587,7 @@ def _cmd_publish(
     no_create: bool,
     tag: str | None,
     message: str | None,
+    license_override: str | None,
 ) -> int:
     """Dispatch ``publish`` (M08).
 
@@ -613,6 +614,7 @@ def _cmd_publish(
         no_create=no_create,
         tag=tag,
         message=message,
+        license_override=license_override,
     )
 
 
@@ -741,6 +743,7 @@ _IMPLEMENTED_DISPATCH = {
         no_create=args.no_create,
         tag=args.tag,
         message=args.message,
+        license_override=args.license,
     ),
     "clean": lambda args: _cmd_clean(args.recipe, cache_dir=args.cache_dir),
 }

@@ -602,3 +602,55 @@ def test_real_upload_transport_error_during_upload_exits_seven(
     err = capsys.readouterr().err
     assert rc == 7
     assert "raise_on_upload" in err
+
+
+# ---------------------------------------------------------------------------
+# --license override (spec 10 § Recipe ``publish:`` block)
+# ---------------------------------------------------------------------------
+
+
+def test_real_upload_license_override_lands_in_uploaded_readme(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--license <LICENSE>`` must end up in the staged README that
+    actually gets uploaded. We assert against the bytes the fake
+    transport snapshotted from ``upload_folder`` so this test catches
+    a regression where the flag is accepted but silently dropped."""
+
+    monkeypatch.setenv("HF_TOKEN", "hf_test_token_license_" + "h" * 12)
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf-home"))
+
+    out = tmp_path / "trainer-out"
+    rp = _setup_recipe(tmp_path, dest=out)
+    _do_render(rp, out)
+    capsys.readouterr()
+
+    transport = FakeTransport()
+    rc = cmd_publish(
+        recipe_arg=str(rp),
+        repo_flag="alice/x",
+        private=False,
+        public=False,
+        token_flag=None,
+        output_override=None,
+        dry_run=False,
+        no_create=False,
+        tag=None,
+        message=None,
+        license_override="mit",
+        transport_factory=_factory_for(transport),
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+
+    # The fake parses the uploaded README's front matter into
+    # card_data on every upload — that's what HF does too.
+    card = transport.repos["alice/x"].card_data
+    assert card.get("license") == "mit"
+
+    # And the raw README bytes carry the same line in the YAML block.
+    readme_bytes = transport.repos["alice/x"].files["README.md"]
+    assert b"license: mit" in readme_bytes

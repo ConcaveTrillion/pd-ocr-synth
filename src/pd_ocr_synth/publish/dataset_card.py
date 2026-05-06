@@ -89,12 +89,19 @@ class DatasetCardInputs:
     Plain dataclass rather than recipe / pydantic models so the
     renderer is decoupled from the recipe schema's evolution. The
     staging builder loads + adapts; this layer just shapes text.
+
+    ``license_override`` is the spec-10 ``--license`` CLI flag value:
+    when set it wins over ``recipe.publish.hf_dataset.license`` per
+    spec 10 § Recipe ``publish:`` block ("CLI flags override recipe
+    values when both are present"). ``None`` falls back to the recipe
+    value (or omits the key entirely if neither is set).
     """
 
     snapshot: dict[str, Any]
     snapshot_bytes: bytes
     stats: dict[str, Any] | None = None
     description_override: str | None = None
+    license_override: str | None = None
 
 
 def render_dataset_card(inputs: DatasetCardInputs) -> str:
@@ -129,7 +136,11 @@ def write_dataset_card(staging_dir: Path, inputs: DatasetCardInputs) -> Path:
     return target
 
 
-def load_card_inputs(local_output_dir: Path) -> DatasetCardInputs:
+def load_card_inputs(
+    local_output_dir: Path,
+    *,
+    license_override: str | None = None,
+) -> DatasetCardInputs:
     """Read snapshot + stats from a local recognition output.
 
     Convenience for the staging builder; tests typically construct
@@ -137,6 +148,13 @@ def load_card_inputs(local_output_dir: Path) -> DatasetCardInputs:
     exercised without writing a snapshot file. Returns an "empty-ish"
     inputs object if the snapshot is missing — the caller decides
     whether to skip card generation in that case.
+
+    Parameters
+    ----------
+    license_override:
+        Forwarded to :class:`DatasetCardInputs.license_override`. The
+        staging builder threads ``--license`` through here so the flag
+        wins over the recipe-declared license per spec 10.
     """
 
     snapshot_path = local_output_dir / SNAPSHOT_FILENAME
@@ -169,6 +187,7 @@ def load_card_inputs(local_output_dir: Path) -> DatasetCardInputs:
         snapshot_bytes=snapshot_bytes,
         stats=stats,
         description_override=description_override,
+        license_override=license_override,
     )
 
 
@@ -192,7 +211,16 @@ def _front_matter(inputs: DatasetCardInputs) -> dict[str, Any]:
 
     fm: dict[str, Any] = {}
 
-    license_value = publish.get("license")
+    # ``--license`` flag (carried as ``license_override``) wins over
+    # ``recipe.publish.hf_dataset.license``. Falsy overrides ("" or
+    # whitespace-only) fall through to the recipe value rather than
+    # writing a blank ``license:`` to the front matter.
+    override = (inputs.license_override or "").strip()
+    license_value: Any
+    if override:
+        license_value = override
+    else:
+        license_value = publish.get("license")
     if license_value:
         fm["license"] = str(license_value)
 

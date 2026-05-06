@@ -115,6 +115,7 @@ def build_recognition_staging(
     staging_dir: Path,
     *,
     overwrite: bool = False,
+    license_override: str | None = None,
 ) -> StagingResult:
     """Convert a local recognition layout into an HF staging dir.
 
@@ -133,6 +134,11 @@ def build_recognition_staging(
         When true, an existing ``staging_dir`` is wiped before the
         new build. Default ``False`` so an accidental re-run doesn't
         silently clobber a previously-uploaded staging dir.
+    license_override:
+        Spec 10's ``--license`` CLI flag value. When set, lands as the
+        dataset card's ``license:`` front-matter key, overriding any
+        ``recipe.publish.hf_dataset.license``. ``None`` falls back to
+        the recipe value (or omits the key when neither is set).
 
     Returns
     -------
@@ -207,7 +213,7 @@ def build_recognition_staging(
     # block, the tool version, and the recipe-SHA front-matter key, so
     # an empty README would mislead consumers more than its absence.
     if result.snapshot_copied:
-        card_inputs = load_card_inputs(local)
+        card_inputs = load_card_inputs(local, license_override=license_override)
         write_dataset_card(staging, card_inputs)
         result.readme_written = True
 

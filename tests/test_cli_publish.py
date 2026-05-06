@@ -501,3 +501,67 @@ def test_publish_dry_run_lists_content_sha_and_summary(
     # Manifest summary present with the rows count from the render.
     assert "Manifest summary:" in captured.out
     assert f"Rows: {len(labels)}" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# --license override (spec 10 § Recipe ``publish:`` block)
+# ---------------------------------------------------------------------------
+
+
+def test_publish_dry_run_license_override_appears_in_card_preview(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Spec 10: ``--license`` overrides the recipe's
+    ``publish.hf_dataset.license`` and must land in the dry-run's
+    "Dataset card preview" block — what the user sees here is what
+    the real upload would stamp."""
+
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf-home"))
+
+    out = tmp_path / "trainer-out"
+    # Recipe declares ``cc-by-4.0``; we override with ``mit``.
+    rp = _setup_recipe(tmp_path, with_publish=True, dest=out)
+    _do_render(rp, out)
+    capsys.readouterr()
+
+    rc = main(
+        [
+            "publish",
+            str(rp),
+            "--license",
+            "mit",
+            "--dry-run",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+
+    # The flag wins over the recipe value.
+    assert "license: mit" in captured.out
+    assert "license: cc-by-4.0" not in captured.out
+
+
+def test_publish_dry_run_without_license_flag_uses_recipe_value(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """No ``--license`` → the recipe's declared license still appears
+    in the dry-run preview. Locks the "no flag, recipe wins" half of
+    the spec-10 precedence rule."""
+
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf-home"))
+
+    out = tmp_path / "trainer-out"
+    rp = _setup_recipe(tmp_path, with_publish=True, dest=out)
+    _do_render(rp, out)
+    capsys.readouterr()
+
+    rc = main(["publish", str(rp), "--dry-run"])
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+    assert "license: cc-by-4.0" in captured.out

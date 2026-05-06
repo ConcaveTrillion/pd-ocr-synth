@@ -104,6 +104,7 @@ def _inputs(
     snapshot_bytes: bytes | None = None,
     stats: dict[str, Any] | None = None,
     description_override: str | None = None,
+    license_override: str | None = None,
 ) -> DatasetCardInputs:
     snap = snapshot if snapshot is not None else _snapshot()
     if snapshot_bytes is None:
@@ -113,6 +114,7 @@ def _inputs(
         snapshot_bytes=snapshot_bytes,
         stats=stats,
         description_override=description_override,
+        license_override=license_override,
     )
 
 
@@ -167,6 +169,48 @@ def test_front_matter_omits_keys_when_recipe_has_no_publish_block() -> None:
     # task_categories is fixed so it's always set.
     assert fm["task_categories"] == ["text-recognition"]
     assert fm["pd-ocr-shape"] == "recognition/v1"
+
+
+def test_license_override_wins_over_recipe_publish_block() -> None:
+    """Spec 10 § Recipe ``publish:`` block: ``--license`` overrides
+    ``recipe.publish.hf_dataset.license`` when both are present."""
+
+    snapshot = _snapshot(
+        publish={
+            "repo": "ntw8532/pd-ocr-synth-gaelic",
+            "license": "cc-by-4.0",
+        },
+    )
+    card = render_dataset_card(_inputs(snapshot, license_override="mit"))
+    fm, _ = _split_card(card)
+    assert fm["license"] == "mit"
+
+
+def test_license_override_sets_license_when_recipe_has_none() -> None:
+    """The override is the *only* source of a license when the recipe
+    has no publish block at all (the spec mandates flag wins; absence
+    in the recipe just means the flag is the sole source)."""
+
+    snapshot = _snapshot(publish=None)
+    card = render_dataset_card(_inputs(snapshot, license_override="apache-2.0"))
+    fm, _ = _split_card(card)
+    assert fm["license"] == "apache-2.0"
+
+
+def test_license_override_blank_falls_through_to_recipe_value() -> None:
+    """An empty / whitespace-only override is treated as "no flag": we
+    must not write a blank ``license:`` to the front matter; the recipe
+    value (if any) wins instead."""
+
+    snapshot = _snapshot(
+        publish={
+            "repo": "ntw8532/pd-ocr-synth-gaelic",
+            "license": "cc-by-4.0",
+        },
+    )
+    card = render_dataset_card(_inputs(snapshot, license_override="   "))
+    fm, _ = _split_card(card)
+    assert fm["license"] == "cc-by-4.0"
 
 
 def test_size_categories_buckets_by_sample_count() -> None:
@@ -481,6 +525,23 @@ def test_build_recognition_staging_writes_readme(tmp_path: Path) -> None:
     assert fm["license"] == "cc-by-4.0"
     assert fm["pd-ocr-shape"] == "recognition/v1"
     assert "# pd-ocr-synth — integration" in body
+
+
+def test_build_recognition_staging_threads_license_override(tmp_path: Path) -> None:
+    """``--license <LICENSE>`` (carried as ``license_override`` here)
+    must end up in the staged README's front matter, beating the
+    recipe-declared license. This locks the M08 wiring from CLI →
+    runner → ``build_recognition_staging`` → ``load_card_inputs`` →
+    ``DatasetCardInputs`` → front matter."""
+
+    local = _write_local_for_integration(tmp_path)
+    staging = tmp_path / "staging"
+
+    build_recognition_staging(local, staging, license_override="mit")
+
+    readme = staging / README_FILENAME
+    fm, _ = _split_card(readme.read_text(encoding="utf-8"))
+    assert fm["license"] == "mit"
 
 
 def test_build_recognition_staging_skips_readme_without_snapshot(tmp_path: Path) -> None:

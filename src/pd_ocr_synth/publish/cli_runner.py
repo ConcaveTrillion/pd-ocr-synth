@@ -130,6 +130,7 @@ def run_publish_dry_run(
     repo: str,
     private: bool | None,
     flag_token: str | None,
+    license_override: str | None = None,
 ) -> DryRunPlan:
     """Execute the dry-run pipeline and return a structured plan.
 
@@ -153,6 +154,10 @@ def run_publish_dry_run(
         Value of the ``--token`` CLI flag, or ``None``. Passed to the
         resolver so dry-run can report the resolution source
         ("flag" / "env" / "cache") without echoing the secret.
+    license_override:
+        Value of the ``--license`` CLI flag, or ``None``. Forwarded
+        to :func:`build_recognition_staging` so the front-matter
+        preview reflects the same license the real upload will stamp.
 
     Raises
     ------
@@ -172,7 +177,9 @@ def run_publish_dry_run(
     with tempfile.TemporaryDirectory(prefix="pd-ocr-synth-publish-") as tmp:
         staging = Path(tmp) / "staging"
 
-        result = build_recognition_staging(local_output_dir, staging)
+        result = build_recognition_staging(
+            local_output_dir, staging, license_override=license_override
+        )
 
         # Run the same preflight the upload step will run. A failure
         # here is the spec's "local output corrupt" case — exit 6.
@@ -261,6 +268,7 @@ def cmd_publish(
     no_create: bool = False,
     tag: str | None = None,
     message: str | None = None,
+    license_override: str | None = None,
     transport_factory: TransportFactory | None = None,
 ) -> int:
     """Top-level dispatch for ``pd-ocr-synth publish``.
@@ -286,6 +294,11 @@ def cmd_publish(
         Spec 10 § Versioning: ``--message <MSG>`` overrides the
         auto-generated commit message. ``None`` falls back to the
         ``pd-ocr-synth render @<recipe-sha>`` default.
+    license_override:
+        Spec 10 § Recipe ``publish:`` block: ``--license <LICENSE>``
+        overrides ``recipe.publish.hf_dataset.license`` in the staged
+        dataset card's front matter. ``None`` falls back to the
+        recipe value (or omits the key entirely).
     transport_factory:
         Production callers leave this ``None`` to get the default
         :func:`make_default_transport` (which currently raises
@@ -366,6 +379,7 @@ def cmd_publish(
             repo=repo,
             resolved_private=resolved_private,
             token_flag=token_flag,
+            license_override=license_override,
         )
 
     return _run_upload(
@@ -376,6 +390,7 @@ def cmd_publish(
         no_create=no_create,
         tag=tag,
         message=message,
+        license_override=license_override,
         transport_factory=transport_factory or make_default_transport,
     )
 
@@ -386,6 +401,7 @@ def _run_dry_run(
     repo: str,
     resolved_private: bool,
     token_flag: str | None,
+    license_override: str | None = None,
 ) -> int:
     """Execute the dry-run path and map its errors to exit codes.
 
@@ -400,6 +416,7 @@ def _run_dry_run(
             repo=repo,
             private=resolved_private,
             flag_token=token_flag,
+            license_override=license_override,
         )
     except StagingError as exc:
         # Local output is structurally incomplete. Spec 10 maps
@@ -426,6 +443,7 @@ def _run_upload(
     no_create: bool,
     tag: str | None,
     message: str | None,
+    license_override: str | None,
     transport_factory: TransportFactory,
 ) -> int:
     """Execute the real upload path: build staging, resolve auth, dispatch.
@@ -444,7 +462,7 @@ def _run_upload(
     with tempfile.TemporaryDirectory(prefix="pd-ocr-synth-publish-") as tmp:
         staging = Path(tmp) / "staging"
         try:
-            build_recognition_staging(local_output, staging)
+            build_recognition_staging(local_output, staging, license_override=license_override)
         except StagingError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return PUBLISH_DESTINATION_EXIT
