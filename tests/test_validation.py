@@ -9,6 +9,7 @@ import pytest
 from pd_ocr_synth.recipe import load_recipe
 from pd_ocr_synth.validation import (
     KNOWN_DEGRADATION_KINDS,
+    VALIDATION_CODES,
     ValidationReport,
     validate_recipe,
 )
@@ -1759,6 +1760,87 @@ def test_permitted_layout_keys_table_modes_match_layout_mode_literal() -> None:
         f"_LAYOUT_KEYS_BY_MODE lists modes not in Layout.mode: "
         f"{sorted(extra)}. Drop them from "
         "src/pd_ocr_synth/validation.py:_LAYOUT_KEYS_BY_MODE."
+    )
+
+
+# ---------------------------------------------------------------------------
+# VALIDATION_CODES catalog drift guard (runtime side)
+#
+# Mirrors the ``LINT_CODES`` runtime guard in ``test_lint.py``:
+# ``VALIDATION_CODES`` is the source-of-truth set the spec doc compares
+# against (see ``test_spec_docs.test_spec_01_validation_codes_match_VALIDATION_CODES``).
+# This test locks the runtime half of the contract — every code emitted
+# by ``validate_recipe`` must appear in ``VALIDATION_CODES``, so a new
+# ``ValidationIssue(code=...)`` site can't ship undocumented.
+#
+# Strategy: static scan over ``src/pd_ocr_synth/validation.py``. We do
+# not require every catalog entry to be reachable by an in-module
+# fixture — the lint-side equivalent works because ``test_lint.py``
+# already exercises all 7 codes in <300 LOC; validation has 24 codes
+# and ~1800 LOC of fixtures, and several codes (``schema_version_unsupported``
+# is defensive — pydantic rejects it on load; ``font_empty`` /
+# ``font_unreadable`` need carefully-crafted broken-font bytes) need
+# bespoke fixtures that are out of scope for the catalog drop. The
+# runtime ⊆ catalog half is the contract that matters; the
+# coverage-of-catalog half is a follow-up.
+# ---------------------------------------------------------------------------
+
+
+def test_VALIDATION_CODES_covers_every_emission_site() -> None:
+    """Every ``code="..."`` in validation.py must appear in VALIDATION_CODES.
+
+    Static scan of the source: walks every ``code="..."`` assignment
+    site in ``src/pd_ocr_synth/validation.py`` and asserts the literal
+    is in ``VALIDATION_CODES``. Any new emission site that lands
+    without registering its code surfaces here, before users discover
+    it via ``validate --json`` and grep'd CI logs.
+
+    The static-scan approach is identical to what the spec-doc test
+    does for the Markdown table; both directions of the catalog ↔
+    runtime contract end up enforced cheaply.
+    """
+
+    import re as _re
+
+    src = (
+        Path(__file__).resolve().parent.parent / "src" / "pd_ocr_synth" / "validation.py"
+    ).read_text(encoding="utf-8")
+    emitted = set(_re.findall(r'code="([a-z_]+)"', src))
+    leaked = emitted - VALIDATION_CODES
+    assert not leaked, (
+        f"validation.py emits code(s) not in VALIDATION_CODES: {sorted(leaked)}. "
+        "Add them to src/pd_ocr_synth/validation.py:VALIDATION_CODES and "
+        "document them in docs/specs/01-cli.md's 'Validation codes' table."
+    )
+
+
+def test_VALIDATION_CODES_no_stale_entries() -> None:
+    """Every code in ``VALIDATION_CODES`` must have an emission site.
+
+    Inverse of the previous test: walks ``src/pd_ocr_synth/validation.py``
+    for every ``code="..."`` literal and confirms ``VALIDATION_CODES``
+    contains no extras. A stale catalog entry left behind after a
+    helper was removed (or after a code was renamed) surfaces here,
+    keeping the docs honest.
+
+    This is the no-dead-catalog-entry half of the contract; the
+    runtime ⊆ catalog test above is the no-undocumented-emission half.
+    Together they pin both directions, even though we don't (yet)
+    require an in-module fixture per code — the static-scan pair is
+    sufficient to prevent silent drift.
+    """
+
+    import re as _re
+
+    src = (
+        Path(__file__).resolve().parent.parent / "src" / "pd_ocr_synth" / "validation.py"
+    ).read_text(encoding="utf-8")
+    emitted = set(_re.findall(r'code="([a-z_]+)"', src))
+    stale = sorted(VALIDATION_CODES - emitted)
+    assert not stale, (
+        f"VALIDATION_CODES contains code(s) not emitted by validation.py: {stale}. "
+        "Drop them from src/pd_ocr_synth/validation.py:VALIDATION_CODES and "
+        "from the 'Validation codes' table in docs/specs/01-cli.md."
     )
 
 

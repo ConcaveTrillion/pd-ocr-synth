@@ -216,6 +216,50 @@ All lint issues use `severity="warning"`. A recipe that flunks every
 lint check still renders correctly; lint alone never exits non-zero
 unless `--strict` is passed (see exit codes below).
 
+## Validation codes
+
+Every issue surfaced by `validate <recipe>` (and the validation phase
+of `lint <recipe>`, `render`, `preview`, `fetch`, `publish`) carries a
+stable `code` field in addition to `severity` and a free-form
+`message`. The codes appear verbatim in the human-readable
+`[severity] [code] location: message` output, the `--json` payload,
+and structured logs, so they're safe to grep / filter on.
+
+A meta-test in `tests/test_spec_docs.py` enforces that this table and
+the `VALIDATION_CODES` constant in `src/pd_ocr_synth/validation.py`
+stay in sync: adding a new emission site without listing it here (or
+vice-versa) is a hard test failure. A second test in
+`tests/test_validation.py` asserts every code emitted by
+`validate_recipe` belongs to `VALIDATION_CODES`, so a new code can't
+ship undocumented.
+
+| Code | Severity | Trigger |
+|------|----------|---------|
+| `schema_version_unsupported` | error | `schema_version` is not in `SUPPORTED_SCHEMA_VERSIONS`. Defensive — pydantic normally rejects this on load. |
+| `output_destination_unresolved` | error | `output.destination` still contains `${VAR}` or starts with `~`; the env var isn't set, or the recipe was passed unresolved. |
+| `output_destination_unwritable` | error | No writable ancestor exists for `output.destination` — typically a permission problem or a path under a non-existent mount. |
+| `output_layout_mode_mismatch` | error | `output.mode` and `layout.mode` aren't a valid pairing (recognition needs `word_crops`/`lines`; detection needs `paragraphs`/`pages`). See [spec 08](08-output-format.md). |
+| `optional_font_missing` | warning | A font marked `optional: true` doesn't exist on disk; it will be skipped at render time. |
+| `font_missing` | error | A required (non-optional) font path doesn't exist. |
+| `font_unreadable` | error | The font file exists but `open_font` couldn't parse it (corrupt header, unsupported format). |
+| `font_empty` | error | The font opened but reports zero glyphs or an empty cmap; almost always a placeholder or stub file. |
+| `local_corpus_missing` | error | A `type: local` corpus references a `path:` that doesn't exist on disk. |
+| `corpus_provider_not_implemented` | error | A `corpus[].type` is structurally valid but no runtime provider is registered for it (typically a future provider type listed in spec 04 that hasn't shipped yet). |
+| `corpus_max_chars_not_implemented` | error | A corpus entry sets `max_chars` to a value other than the schema default; the option is reserved by spec 04 but not yet honored. |
+| `corpus_min_word_length_not_implemented` | error | A corpus entry sets `min_word_length` to a value > 1; reserved by spec 04, not yet honored. |
+| `text_transform_not_implemented` | error | A `text_transforms[].kind` is structurally valid but isn't yet implemented by `pd_ocr_synth.text_transforms` (e.g., a future kind from spec 05). |
+| `shaping_engine_not_implemented` | error | `rendering.shaping_engine` is set to a value other than the implemented engine; reserved for future engines per spec 06. |
+| `antialiasing_disable_not_implemented` | error | `rendering.antialiasing` is `false`; the renderer doesn't yet support disabling AA per spec 06. |
+| `layout_key_unused` | warning | A layout key is set but doesn't apply to the active `layout.mode` (e.g., `paragraph_spacing` under `paragraphs`). It will be ignored. |
+| `degradation_kind_unknown` | error | A `degradation[].kind` isn't in `KNOWN_DEGRADATION_KINDS` — typically a typo or a kind from a future spec bump. |
+| `degradation_kind_not_implemented` | error | The `kind` is in the spec catalog but no runtime stage class is registered; the recipe declares a stage the renderer can't apply. |
+| `degradation_stage_unknown_option` | error | A degradation stage carries an option key the registered stage class doesn't accept (typo or stale field name). |
+| `paper_texture_missing_directory` | error | A `kind: paper_texture` stage doesn't set `directory:`; required by spec 07. |
+| `paper_texture_directory_missing` | error | The configured `paper_texture` directory doesn't exist on disk. |
+| `paper_texture_directory_not_dir` | error | The configured `paper_texture` directory path exists but isn't a directory. |
+| `publish_description_file_missing` | warning | `publish.hf_dataset.description_file` is set but the file doesn't exist; publish will skip it. |
+| `publish_repo_placeholder` | warning | `publish.hf_dataset.repo` looks like the scaffold placeholder (`CHANGE-ME/...` or no `/`); edit it before publishing or pass `--repo`. |
+
 ## Recipe resolution
 
 A recipe argument may be:

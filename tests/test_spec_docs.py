@@ -36,6 +36,7 @@ from pd_ocr_synth.cli import build_parser
 from pd_ocr_synth.lint import LINT_CODES
 from pd_ocr_synth.output.detection import LABELS_FILENAME as DETECTION_LABELS_FILENAME
 from pd_ocr_synth.output.recognition import LABELS_FILENAME as RECOGNITION_LABELS_FILENAME
+from pd_ocr_synth.validation import VALIDATION_CODES
 
 SPECS_DIR = Path(__file__).resolve().parent.parent / "docs" / "specs"
 
@@ -536,6 +537,84 @@ def test_spec_01_lint_codes_match_LINT_CODES() -> None:
         failures.append(
             "pd_ocr_synth.lint.LINT_CODES has codes missing from the spec 01 "
             f"'Lint codes' table: {code_only}"
+        )
+    assert not failures, "\n".join(failures)
+
+
+# ---------------------------------------------------------------------------
+# Spec 01 "Validation codes" table ↔ ``validation.VALIDATION_CODES`` (this iter)
+#
+# Mirrors the ``LINT_CODES`` drift guard above. Validation codes are
+# user-visible (they appear verbatim in ``--json`` payloads, the
+# ``[code]`` prefix on human output, structured logs) so the catalog
+# is part of the public CLI contract. Source-of-truth is
+# ``pd_ocr_synth.validation.VALIDATION_CODES``; the spec doc table
+# must match it exactly.
+#
+# A new ``ValidationIssue(code=...)`` site that lands without updating
+# spec 01 fails here; a stale doc row referring to a code no longer
+# emitted also fails.
+# ---------------------------------------------------------------------------
+
+
+def _spec_validation_codes(spec_text: str) -> set[str]:
+    """Codes parsed from the ``## Validation codes`` table in spec 01.
+
+    Walks each row in the table and extracts the first backticked span
+    as the code. The validation codes table has a ``Code | Severity |
+    Trigger`` shape (vs. the lint table's ``Code | Trigger``); only
+    the leading code cell is needed here, so the parser is identical
+    to ``_spec_lint_codes`` modulo the section heading.
+    """
+
+    codes: set[str] = set()
+    in_section = False
+    for raw_line in spec_text.splitlines():
+        line = raw_line.rstrip()
+        stripped = line.strip()
+        if stripped.startswith("## Validation codes"):
+            in_section = True
+            continue
+        # Any other ``## `` heading closes the section.
+        if (
+            in_section
+            and stripped.startswith("## ")
+            and not stripped.startswith("## Validation codes")
+        ):
+            break
+        if not in_section:
+            continue
+        if not stripped.startswith("| `"):
+            continue
+        match = re.match(r"\|\s*`([a-z_]+)`", stripped)
+        if match:
+            codes.add(match.group(1))
+    return codes
+
+
+def test_spec_01_validation_codes_match_VALIDATION_CODES() -> None:
+    """The Validation codes table in spec 01 must equal ``VALIDATION_CODES``.
+
+    Both directions checked in one assertion:
+      - ``spec_only`` — codes documented but not registered (stale doc).
+      - ``code_only`` — codes registered but not documented (silent ship).
+
+    Either case is a contract drift between user-visible documentation
+    and what ``validate_recipe`` actually emits.
+    """
+
+    spec_codes = _spec_validation_codes(_spec_text("01-cli.md"))
+    spec_only = sorted(spec_codes - VALIDATION_CODES)
+    code_only = sorted(VALIDATION_CODES - spec_codes)
+    failures: list[str] = []
+    if spec_only:
+        failures.append(
+            f"spec 01 documents codes not in pd_ocr_synth.validation.VALIDATION_CODES: {spec_only}"
+        )
+    if code_only:
+        failures.append(
+            "pd_ocr_synth.validation.VALIDATION_CODES has codes missing from "
+            f"the spec 01 'Validation codes' table: {code_only}"
         )
     assert not failures, "\n".join(failures)
 

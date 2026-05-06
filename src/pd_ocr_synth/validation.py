@@ -62,6 +62,61 @@ KNOWN_DEGRADATION_KINDS: frozenset[str] = frozenset(
 )
 
 
+# Catalog of every ``code`` ``validate_recipe`` can emit. Each code is
+# user-visible (it appears verbatim in ``--json`` payloads, the
+# human-readable ``[code]`` prefix, and structured logs), so the set is
+# part of the public CLI contract — adding or removing a code is a
+# spec-affecting change.
+#
+# Source-of-truth pairing mirrors ``LINT_CODES`` in ``lint.py``:
+#
+#   1. A drift-guard meta-test in ``tests/test_spec_docs.py`` enforces
+#      that the "Validation codes" table in ``docs/specs/01-cli.md``
+#      lists exactly these codes — no more, no fewer.
+#   2. A behavioural test in ``tests/test_validation.py`` asserts every
+#      code emitted by ``validate_recipe`` belongs to this set, so a
+#      new emission site can't ship undocumented.
+#
+# Add a new code here whenever a new ``ValidationIssue(code=...)`` is
+# introduced, and document it in spec 01's "Validation codes" section.
+VALIDATION_CODES: frozenset[str] = frozenset(
+    {
+        # schema / output destination
+        "schema_version_unsupported",
+        "output_destination_unresolved",
+        "output_destination_unwritable",
+        "output_layout_mode_mismatch",
+        # fonts
+        "optional_font_missing",
+        "font_missing",
+        "font_unreadable",
+        "font_empty",
+        # corpus
+        "local_corpus_missing",
+        "corpus_provider_not_implemented",
+        "corpus_max_chars_not_implemented",
+        "corpus_min_word_length_not_implemented",
+        # text transforms
+        "text_transform_not_implemented",
+        # rendering
+        "shaping_engine_not_implemented",
+        "antialiasing_disable_not_implemented",
+        # layout
+        "layout_key_unused",
+        # degradation
+        "degradation_kind_unknown",
+        "degradation_kind_not_implemented",
+        "degradation_stage_unknown_option",
+        "paper_texture_missing_directory",
+        "paper_texture_directory_missing",
+        "paper_texture_directory_not_dir",
+        # publish
+        "publish_description_file_missing",
+        "publish_repo_placeholder",
+    }
+)
+
+
 # Layout keys that are only meaningful for certain modes. Keys not
 # listed are accepted in every mode.
 _LAYOUT_KEYS_BY_MODE: dict[str, frozenset[str]] = {
