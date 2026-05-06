@@ -29,19 +29,19 @@ emits one HF dataset repo containing:
 |------|--------|-------|
 | `data/*.png` | `<destination>/images/` | Recognition mode |
 | `data/*.parquet` | Built from local images + `pages.json` | Detection mode |
-| `metadata.jsonl` | Built from local `labels.csv` + `manifest.jsonl` | Recognition only |
+| `metadata.jsonl` | Built from local `labels.json` + `manifest.jsonl` | Recognition only |
 | `recipe.snapshot.yaml` | Copied from local output | Provenance |
 | `README.md` | Generated; see "Dataset card" | Auto-generated |
 
 Local-only files NOT uploaded: `manifest.jsonl` (rolled into
-`metadata.jsonl`), `labels.csv` (same), `stats.json` (rolled into the
+`metadata.jsonl`), `labels.json` (same), `stats.json` (rolled into the
 README).
 
 ## Format conversion — recognition
 
 Local layout:
 ```
-images/0000000.png + labels.csv row "0000000.png,Séadna" + manifest.jsonl record
+images/0000000.png + labels.json entry {"0000000.png": "Séadna"} + manifest.jsonl record
 ```
 becomes one row in HF `metadata.jsonl`:
 ```json

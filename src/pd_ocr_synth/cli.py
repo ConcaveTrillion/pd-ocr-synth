@@ -5,8 +5,9 @@ Subcommands wired to date:
 - M02: ``list``, ``validate``, ``describe``, ``init``, ``schema``.
 - M03: ``fetch``, ``clean`` (corpus cache management).
 - M05: ``preview`` (render N samples to a preview directory).
+- M07: ``render`` (full dataset → ``pd-ocr-trainer/v1`` recognition).
 
-``render`` and ``publish`` remain stubs until M07/M10 land.
+``publish`` remains a stub until M08 lands.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from pd_ocr_synth import __version__
 NOT_IMPLEMENTED_EXIT = 1
 USAGE_EXIT = 2
 VALIDATION_EXIT = 3
+RENDER_EXIT = 5
 DESTINATION_EXIT = 6
 
 
@@ -434,6 +436,140 @@ def _cmd_preview(
     return 0
 
 
+def _cmd_render(
+    recipe_arg: str,
+    *,
+    count: int | None,
+    output: str | None,
+    seed: int | None,
+    cache_dir: str | None,
+    workers: int | None,
+    force: bool,
+    resume: bool,
+    dry_run: bool,
+) -> int:
+    """Render the full recipe dataset into the ``pd-ocr-trainer/v1`` layout.
+
+    Default output: ``recipe.output.destination`` from the YAML.
+    Pass ``-o`` to override (handy for smoke runs into ``/tmp``).
+
+    ``--force`` and ``--resume`` are mutually exclusive. Default
+    behavior on a non-empty destination is to refuse and exit 6.
+    Snapshot mismatch on ``--resume`` exits 6 too — same family of
+    "destination is in a state I won't silently clobber."
+    """
+
+    from pd_ocr_synth.output import RecognitionWriter
+    from pd_ocr_synth.output.recognition import DestinationNotEmptyError
+    from pd_ocr_synth.output.snapshot import SnapshotMismatchError
+    from pd_ocr_synth.recipe import RecipeLoadError, load_recipe
+    from pd_ocr_synth.recipe_search import RecipeNotFoundError, resolve_recipe
+    from pd_ocr_synth.render import RenderError, plan_recipe, run_recipe
+    from pd_ocr_synth.render.preview import resolve_workers
+
+    _ = RecognitionWriter  # imported for re-use; quiets the linter
+
+    if force and resume:
+        print("error: --force and --resume are mutually exclusive", file=sys.stderr)
+        return USAGE_EXIT
+
+    try:
+        path = resolve_recipe(recipe_arg)
+    except RecipeNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return VALIDATION_EXIT
+
+    try:
+        recipe = load_recipe(path)
+    except RecipeLoadError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return VALIDATION_EXIT
+    except Exception as exc:
+        print(f"error: schema validation failed for {path}:", file=sys.stderr)
+        print(str(exc), file=sys.stderr)
+        return VALIDATION_EXIT
+
+    sample_count = count if count is not None else recipe.output.count
+    if sample_count <= 0:
+        print(f"error: --count must be positive (got {sample_count})", file=sys.stderr)
+        return USAGE_EXIT
+
+    if workers is not None and workers <= 0:
+        print(f"error: --workers must be positive (got {workers})", file=sys.stderr)
+        return USAGE_EXIT
+    worker_count = resolve_workers(workers)
+
+    output_dir = Path(output).expanduser() if output else Path(recipe.output.destination)
+    cache_root = Path(cache_dir).expanduser() if cache_dir else None
+
+    if dry_run:
+        try:
+            plan = plan_recipe(
+                recipe,
+                output_dir=output_dir,
+                count=sample_count,
+                seed=seed,
+                workers=worker_count,
+                cache_dir=cache_root,
+            )
+        except RenderError as exc:
+            print(f"error: dry-run failed: {exc}", file=sys.stderr)
+            return RENDER_EXIT
+        print(f"recipe:           {plan.recipe_name}")
+        print(f"output:           {plan.output_dir}")
+        print(f"count:            {plan.count}")
+        print(f"seed:             {plan.seed}")
+        print(f"workers:          {plan.workers}")
+        print(f"layout.mode:      {plan.layout_mode}")
+        print(
+            f"fonts present:    {plan.fonts_present} (optional missing: {plan.fonts_missing_optional})"
+        )
+        print(f"transforms:       {', '.join(plan.transforms) or '-'}")
+        print(f"degradation:      {', '.join(plan.degradation_stages) or '-'}")
+        print(f"corpus entries:   {plan.corpus_entries}")
+        print(f"corpus chars:     {plan.corpus_total_chars:,}")
+        return 0
+
+    print(f"recipe:  {recipe.name} ({path})")
+    print(f"output:  {output_dir}")
+    print(f"count:   {sample_count}")
+    print(f"workers: {worker_count}")
+    if force:
+        print("mode:    --force (destination will be cleared)")
+    elif resume:
+        print("mode:    --resume (continuing from existing snapshot)")
+
+    try:
+        result = run_recipe(
+            recipe,
+            output_dir=output_dir,
+            count=sample_count,
+            seed=seed,
+            workers=worker_count,
+            cache_dir=cache_root,
+            force=force,
+            resume=resume,
+        )
+    except DestinationNotEmptyError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return DESTINATION_EXIT
+    except SnapshotMismatchError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return DESTINATION_EXIT
+    except RenderError as exc:
+        print(f"error: render failed: {exc}", file=sys.stderr)
+        return RENDER_EXIT
+
+    print()
+    print(f"rendered: {result.rendered}/{sample_count}")
+    if result.skipped:
+        print(f"skipped:  {result.skipped}")
+        for reason, n in sorted(result.skip_reasons.items()):
+            print(f"  {reason}: {n}")
+    print(f"wall:     {result.wall_time_seconds:.1f}s")
+    return 0
+
+
 def _cmd_clean(recipe_arg: str, *, cache_dir: str | None) -> int:
     """Remove cache entries owned by the given recipe.
 
@@ -536,6 +672,17 @@ _IMPLEMENTED_DISPATCH = {
         cache_dir=args.cache_dir,
         workers=args.workers,
         no_degrade=args.no_degrade,
+    ),
+    "render": lambda args: _cmd_render(
+        args.recipe,
+        count=args.count,
+        output=args.output,
+        seed=args.seed,
+        cache_dir=args.cache_dir,
+        workers=args.workers,
+        force=args.force,
+        resume=args.resume,
+        dry_run=args.dry_run,
     ),
     "clean": lambda args: _cmd_clean(args.recipe, cache_dir=args.cache_dir),
 }

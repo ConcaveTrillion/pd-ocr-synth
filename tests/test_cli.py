@@ -2,8 +2,8 @@
 
 M01 shipped argument parsing only. M02 implements ``list``, ``validate``,
 ``describe``, ``init``, ``schema``; M03 added ``fetch``/``clean``; M05
-adds ``preview``. ``render`` and ``publish`` remain stubs until their
-milestones land.
+adds ``preview``; M07 adds ``render``. ``publish`` remains a stub until
+M08 lands.
 """
 
 from __future__ import annotations
@@ -32,10 +32,10 @@ ALL_SUBCOMMANDS = [
     "clean",
 ]
 
-# Subcommands still stubbed after M05. ``render`` waits on M07 (output
-# adapter); ``publish`` waits on M10. ``fetch`` + ``clean`` landed in
-# M03; ``preview`` landed in M05.
-STILL_STUBBED = ["render"]
+# Subcommands still stubbed after M07. ``publish`` waits on M08;
+# everything else is wired. ``fetch`` + ``clean`` landed in M03,
+# ``preview`` landed in M05, ``render`` landed in M07.
+STILL_STUBBED: list[str] = []
 
 
 # ---------------------------------------------------------------------------
@@ -73,11 +73,12 @@ def test_subcommand_help(subcommand: str, capsys: pytest.CaptureFixture[str]) ->
 
 
 # ---------------------------------------------------------------------------
-# Stubs (still not implemented in M02)
+# Stubs (subcommands waiting for their milestone)
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("subcommand", STILL_STUBBED)
+@pytest.mark.skipif(not STILL_STUBBED, reason="no stubbed subcommands left")
+@pytest.mark.parametrize("subcommand", STILL_STUBBED or ["__placeholder__"])
 def test_subcommand_stub_returns_not_implemented(subcommand: str) -> None:
     rc = main([subcommand, "dummy-recipe"])
     assert rc == 1

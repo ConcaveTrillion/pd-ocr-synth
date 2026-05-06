@@ -1,20 +1,21 @@
 """Render layer — turns text + recipe knobs into images + ground truth.
 
-Public surface (M05 first cut):
+Public surface:
 
 - ``RenderContext`` — opened font cache + per-run RNG.
 - ``RenderedSample`` — image + ground-truth metadata produced per call.
 - ``render_word_crop`` — render one ``word_crops``-mode sample.
 - ``sample_value`` — draw a value from a recipe scalar / range /
   weighted-choice field.
-
-Lines / paragraphs / pages renderers and the dataset loop arrive in
-later commits this milestone.
+- ``run_recipe`` (M07) — full dataset loop into the
+  ``pd-ocr-trainer/v1`` recognition layout.
+- ``plan_recipe`` — dry-run summary of what ``run_recipe`` would do.
 """
 
 from __future__ import annotations
 
 from pd_ocr_synth.render.context import RenderContext, branched_seed
+from pd_ocr_synth.render.run import RunPlan, RunResult, plan_recipe, run_recipe
 from pd_ocr_synth.render.sample import GlyphRun, RenderedSample
 from pd_ocr_synth.render.sampling import sample_color, sample_value, weighted_choice
 from pd_ocr_synth.render.word_crop import (
@@ -29,8 +30,12 @@ __all__ = [
     "RenderContext",
     "RenderError",
     "RenderedSample",
+    "RunPlan",
+    "RunResult",
     "branched_seed",
+    "plan_recipe",
     "render_word_crop",
+    "run_recipe",
     "sample_color",
     "sample_value",
     "weighted_choice",

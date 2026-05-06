@@ -22,20 +22,32 @@ Recognition-mode rendering requires `layout.mode` ∈ {`word_crops`, `lines`}.
 │   ├── 0000000.png
 │   ├── 0000001.png
 │   └── ...
-├── labels.csv          # one line per image
-├── manifest.jsonl      # one record per image (provenance)
+├── labels.json         # JSON map: {image_name: text, ...}
+├── manifest.jsonl      # one record per attempted sample (provenance)
 ├── recipe.snapshot.yaml  # the resolved, validated recipe
 └── stats.json
 ```
 
-`labels.csv` is two columns, no header:
+`labels.json` is a single JSON object whose keys are the image
+filenames (no path components) and whose values are the plain-text
+labels:
 
-```
-0000000.png,Séadna
-0000001.png,⁊ ḋuḃairt sé
+```json
+{
+  "0000000.png": "Séadna",
+  "0000001.png": "⁊ ḋuḃairt sé"
+}
 ```
 
-Filenames are zero-padded to enough digits for the configured `count`.
+This format is what `pd-ocr-trainer/src/pd_ocr_trainer/dataset_store.py`
+consumes via `RecognitionDataset(img_folder=..., labels_path=...)`.
+(An earlier draft of this spec specified `labels.csv`; the trainer's
+existing reader is the canonical contract, so we matched it during
+M07.)
+
+Filenames are zero-padded to enough digits for the configured `count`,
+with a minimum of seven digits so a smoke run and a full run produce
+the same naming convention.
 
 ## Detection mode layout
 

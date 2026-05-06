@@ -11,7 +11,7 @@ Spec: [`10-publishing.md`](../specs/10-publishing.md).
 
 ### `pd_ocr_synth.publish.recognition`
 
-- [ ] Read local recognition output: `images/`, `labels.csv`,
+- [ ] Read local recognition output: `images/`, `labels.json`,
       `manifest.jsonl`, `recipe.snapshot.yaml`, `stats.json`.
 - [ ] Build HF imagefolder layout in a staging dir:
   - `data/*.png` — copied (or symlinked then materialized).
