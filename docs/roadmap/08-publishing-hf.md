@@ -29,33 +29,53 @@ Spec: [`10-publishing.md`](../specs/10-publishing.md).
 
 ### Auth resolution
 
-- [ ] Order: `--token` flag → `HF_TOKEN` env → `~/.cache/huggingface/token`.
-- [ ] Clear error message naming the resolution chain on failure.
+- [x] Order: `--token` flag → `HF_TOKEN` env → `~/.cache/huggingface/token`.
+      (`pd_ocr_synth.publish.auth.resolve_hf_token`; honors `HF_HOME`
+      override.)
+- [x] Clear error message naming the resolution chain on failure.
+      (`AuthError` carries `format_resolution_chain` output.)
 
 ### Idempotency
 
-- [ ] Compute a content SHA over the staging directory (sorted file list
+- [x] Compute a content SHA over the staging directory (sorted file list
       + per-file SHA-256). Persist it as `pd-ocr-content-sha` in the
-      dataset card front matter.
-- [ ] Before uploading: read the latest commit's `card_data` from HF.
+      dataset card front matter. (`pd_ocr_synth.publish.content_sha` +
+      `apply_content_sha_to_readme`; staging builder embeds it before
+      upload.)
+- [x] Before uploading: read the latest commit's `card_data` from HF.
       If `pd-ocr-content-sha` matches → exit 0 with "no changes".
+      (`pd_ocr_synth.publish.idempotency.check_idempotency`; orchestrator
+      short-circuits on `IdempotencyState.UP_TO_DATE`.)
 
 ### Upload
 
-- [ ] Use `huggingface_hub.HfApi.upload_large_folder` for recognition.
-- [ ] Auto-`create_repo` unless `--no-create`; honor `--private`.
-- [ ] Optional `--tag <version>` calls `HfApi.create_tag` after upload.
-- [ ] `--message` overrides the auto-generated commit message.
+- [x] Use `huggingface_hub.HfApi.upload_large_folder` for recognition.
+      (`HfHubTransport.upload_folder` in `hf_hub_transport.py`; SDK
+      pulled in via the `[publish]` optional-extra group.)
+- [x] Auto-`create_repo` unless `--no-create`; honor `--private`.
+      (`publish_recognition` orchestrator + CLI `--no-create` /
+      `--private` flags.)
+- [x] Optional `--tag <version>` calls `HfApi.create_tag` after upload.
+      (Orchestrator runs the tag step only after a successful upload;
+      `HfHubTransport.create_tag` uses `exist_ok=True`.)
+- [x] `--message` overrides the auto-generated commit message.
+      (`pd_ocr_synth.publish.commit_message.resolve_commit_message`;
+      default falls back to `pd-ocr-synth render @<recipe-sha>` derived
+      from the staging README's `pd-ocr-recipe-sha`. Note: the
+      `upload_large_folder` SDK call does not honor `commit_message`
+      directly — see "Residual M08 work" below.)
 
 ### CLI surface
 
-- [ ] `pd-ocr-synth publish <recipe>` (defaults from recipe
-      `publish:` block).
-- [ ] `--repo`, `--private`, `--public`, `--license`, `--tag`,
-      `--message`, `--token`, `--render-first`, `--no-create`,
-      `--dry-run`.
-- [ ] `--dry-run` shows: target repo, file count, total size, dataset
+- [x] `pd-ocr-synth publish <recipe>` (defaults from recipe
+      `publish:` block). (`cli.py` + `publish.cli_runner.cmd_publish`;
+      missing `--repo` falls back to `recipe.publish.hf_dataset.repo`.)
+- [x] `--repo`, `--private`, `--public`, `--token`, `--tag`,
+      `--message`, `--no-create`, `--dry-run` accepted and threaded
+      through to the runner.
+- [x] `--dry-run` shows: target repo, file count, total size, dataset
       card preview, content SHA — no network calls.
+      (`run_publish_dry_run` + `format_dry_run_plan`.)
 
 ### Tests
 
@@ -63,14 +83,79 @@ Spec: [`10-publishing.md`](../specs/10-publishing.md).
       samples, produce a valid imagefolder structure with
       `metadata.jsonl` matching expected content. Round-trip test
       against the real `RecognitionWriter` locks the M07/M08
-      manifest contract.
-- [ ] Idempotency: second publish without local changes is a no-op.
-- [ ] `--dry-run`: no network, exits 0, prints the plan.
-- [ ] Auth error path: missing token → exit 7 with the resolution
-      chain printed.
+      manifest contract. (`tests/test_publish_recognition.py`.)
+- [x] Idempotency: second publish without local changes is a no-op.
+      (`tests/test_publish_orchestrator.py::test_round_trip_second_publish_is_no_op`,
+      `tests/test_cli_publish_upload.py::test_real_upload_round_trip_first_then_no_op`.)
+- [x] `--dry-run`: no network, exits 0, prints the plan.
+      (`tests/test_cli_publish.py` covers the parser and end-to-end
+      dry-run dispatch; `tests/test_publish_cli_runner.py` covers the
+      structured `DryRunPlan` formatter.)
+- [x] Auth error path: missing token → exit 7 with the resolution
+      chain printed. (`tests/test_cli_publish.py::test_publish_real_upload_without_token_exits_seven`
+      asserts `--token` and `HF_TOKEN` appear in stderr at exit 7.)
 
 End-to-end test against a private "scratch" repo on HF (gated by an
-`HF_TOKEN` env var; skipped on CI without secrets).
+`HF_TOKEN` env var; skipped on CI without secrets) — **not yet
+implemented**; tracked under "Residual M08 work" below.
+
+## Residual M08 work
+
+The leaf primitives and end-to-end CLI dispatch are in place. The
+following gaps remain — pick any of them as a future small chunk.
+
+### CLI flags accepted but not wired through
+
+- `--license <LICENSE>` is accepted by the argparse layer in `cli.py`
+  but is not forwarded to `cmd_publish`. The dataset-card generator
+  already reads `recipe.publish.hf_dataset.license`, so the override
+  needs threading through `publish.cli_runner` and into
+  `dataset_card.write_dataset_card` (or applied to the front matter
+  post-build before the content-SHA is computed).
+- `--render-first` is accepted by argparse but ignored by
+  `_cmd_publish`. Spec 10 § When to publish: "Pass `--render-first` to
+  chain them." Implementation: when set, run the render step
+  (equivalent to invoking `_cmd_render` against the same recipe) before
+  building the staging dir. Must respect the recipe's count / output
+  unless explicitly overridden.
+
+### Commit-message limitation
+
+- `huggingface_hub.HfApi.upload_large_folder` ignores its caller's
+  `commit_message` argument (the chunked API auto-generates per-chunk
+  messages). The current `HfHubTransport.upload_folder` accepts the
+  parameter to satisfy the Protocol but cannot stamp it on the
+  on-HF commit. Spec 10 § Versioning describes
+  `--message "..."` overriding the auto-generated commit message.
+  Either: (a) document this as a known limitation in spec 10, (b)
+  fall back to `upload_folder` for small uploads, or (c) post a
+  separate metadata-only commit carrying the message.
+
+### Content-SHA scope
+
+- Spec 10 § Idempotency says the SHA should cover "image bytes +
+  metadata + recipe snapshot". The current `compute_content_sha`
+  hashes every regular file under the staging dir *except* the
+  README's `pd-ocr-content-sha` line (which it strips before
+  hashing). That matches the spec in practice. Worth a confirming
+  test that hand-edits a staged image byte and observes a digest
+  change end-to-end.
+
+### End-to-end live HF test
+
+- Spec 10 closes with "End-to-end test against a private 'scratch'
+  repo on HF (gated by an `HF_TOKEN` env var; skipped on CI without
+  secrets)." Not yet implemented. Should live under
+  `tests/integration/` with a `pytest.mark.skipif(not os.getenv(
+  'PD_OCR_SYNTH_HF_E2E'), ...)` guard so it never runs in normal CI.
+
+### Repo-id / branch validation
+
+- Spec 10 is silent on the allowed character set for `OWNER/NAME` and
+  `--tag`. The orchestrator currently forwards the values verbatim to
+  the SDK and lets HF reject malformed ones via `TransportError`.
+  Tighten this only after the spec gains explicit rules — out of
+  scope until then.
 
 ## Validation criteria
 
