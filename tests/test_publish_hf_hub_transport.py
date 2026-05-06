@@ -483,3 +483,83 @@ def test_constructor_builds_hf_api_with_token_when_api_omitted(
 
     assert captured["token"] == "hf_constructor_test"
     assert captured["library_name"] == "pd-ocr-synth"
+
+
+# ---------------------------------------------------------------------------
+# Token-redaction wiring
+# ---------------------------------------------------------------------------
+#
+# Audit invariant from ``docs/specs/10-publishing.md`` § Authentication +
+# the round-trip test in ``test_cli_publish_upload.py``: the resolved
+# HF token must never reach stdout/stderr. The transport adapter's
+# error wrappers run the message body through
+# :func:`pd_ocr_synth.publish.redaction.redact_token` before raising —
+# these tests lock that wiring, on each error branch, against
+# regression. If a future refactor of the wrappers drops the
+# redaction step, the tests below catch it without needing to wait for
+# an end-to-end CLI run.
+
+
+def _http_error_echoing_token(status: int = 401) -> HfHubHTTPError:
+    """Build an ``HfHubHTTPError`` whose message echoes a fake HF
+    token, simulating what the SDK can produce on a 401 response that
+    surfaces the offending ``Authorization`` header.
+    """
+
+    return _http_error(
+        "401 Unauthorized: Bearer hf_LEAKEDLEAKEDLEAKEDLEAKED rejected",
+        status=status,
+    )
+
+
+def test_repo_exists_redacts_tokens_in_wrapped_error() -> None:
+    """A 5xx (or any non-404) probe error that includes a token in its
+    body must not surface that token through ``TransportError``."""
+
+    api = _make_api_mock()
+    api.repo_exists.side_effect = _http_error_echoing_token(status=500)
+    transport = _make_transport(api)
+
+    with pytest.raises(TransportError) as exc_info:
+        transport.repo_exists("alice/x")
+    msg = str(exc_info.value)
+    assert "hf_LEAKEDLEAKEDLEAKEDLEAKED" not in msg
+    assert "[redacted-hf-token]" in msg
+
+
+def test_create_repo_redacts_tokens_in_wrapped_error() -> None:
+    api = _make_api_mock()
+    api.create_repo.side_effect = _http_error_echoing_token(status=403)
+    transport = _make_transport(api)
+
+    with pytest.raises(TransportError) as exc_info:
+        transport.create_repo("alice/x", private=False)
+    msg = str(exc_info.value)
+    assert "hf_LEAKEDLEAKEDLEAKEDLEAKED" not in msg
+    assert "[redacted-hf-token]" in msg
+
+
+def test_upload_folder_redacts_tokens_in_wrapped_error(tmp_path: Path) -> None:
+    api = _make_api_mock()
+    api.upload_large_folder.side_effect = _http_error_echoing_token(status=500)
+    transport = _make_transport(api)
+
+    folder = tmp_path / "staging"
+    folder.mkdir()
+    with pytest.raises(TransportError) as exc_info:
+        transport.upload_folder("alice/x", folder_path=folder, commit_message="")
+    msg = str(exc_info.value)
+    assert "hf_LEAKEDLEAKEDLEAKEDLEAKED" not in msg
+    assert "[redacted-hf-token]" in msg
+
+
+def test_create_tag_redacts_tokens_in_wrapped_error() -> None:
+    api = _make_api_mock()
+    api.create_tag.side_effect = _http_error_echoing_token(status=409)
+    transport = _make_transport(api)
+
+    with pytest.raises(TransportError) as exc_info:
+        transport.create_tag("alice/x", tag="v1")
+    msg = str(exc_info.value)
+    assert "hf_LEAKEDLEAKEDLEAKEDLEAKED" not in msg
+    assert "[redacted-hf-token]" in msg

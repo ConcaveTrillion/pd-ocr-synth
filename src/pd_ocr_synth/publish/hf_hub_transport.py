@@ -54,6 +54,7 @@ from typing import Any
 from huggingface_hub import HfApi
 from huggingface_hub.errors import HfHubHTTPError, RepositoryNotFoundError
 
+from pd_ocr_synth.publish.redaction import redact_token
 from pd_ocr_synth.publish.transport import CommitInfo, TransportError
 
 # Repo type stays "dataset" for every call we make. The synth tool only
@@ -125,7 +126,7 @@ class HfHubTransport:
         try:
             return bool(self._api.repo_exists(repo_id, repo_type=_REPO_TYPE))
         except HfHubHTTPError as exc:  # pragma: no cover — network-shaped
-            raise TransportError(f"failed to probe repo {repo_id}: {exc}") from exc
+            raise TransportError(redact_token(f"failed to probe repo {repo_id}: {exc}")) from exc
 
     def create_repo(
         self,
@@ -151,7 +152,7 @@ class HfHubTransport:
                 exist_ok=exist_ok,
             )
         except HfHubHTTPError as exc:
-            raise TransportError(f"failed to create repo {repo_id}: {exc}") from exc
+            raise TransportError(redact_token(f"failed to create repo {repo_id}: {exc}")) from exc
 
     def read_remote_card_data(
         self,
@@ -177,9 +178,13 @@ class HfHubTransport:
         try:
             info = self._api.dataset_info(repo_id, revision=revision)
         except RepositoryNotFoundError as exc:
-            raise TransportError(f"repo {repo_id} not found while reading card data") from exc
+            raise TransportError(
+                redact_token(f"repo {repo_id} not found while reading card data")
+            ) from exc
         except HfHubHTTPError as exc:  # pragma: no cover — network-shaped
-            raise TransportError(f"failed to read card data for {repo_id}: {exc}") from exc
+            raise TransportError(
+                redact_token(f"failed to read card data for {repo_id}: {exc}")
+            ) from exc
 
         card = getattr(info, "card_data", None)
         if card is None:
@@ -227,7 +232,7 @@ class HfHubTransport:
             )
         except HfHubHTTPError as exc:
             raise TransportError(
-                f"upload_large_folder failed for {repo_id} ({folder_path}): {exc}"
+                redact_token(f"upload_large_folder failed for {repo_id} ({folder_path}): {exc}")
             ) from exc
 
         # Best-effort: fetch the latest commit SHA so callers get the
@@ -283,7 +288,9 @@ class HfHubTransport:
                 exist_ok=True,
             )
         except HfHubHTTPError as exc:
-            raise TransportError(f"failed to tag {repo_id} as {tag!r}: {exc}") from exc
+            raise TransportError(
+                redact_token(f"failed to tag {repo_id} as {tag!r}: {exc}")
+            ) from exc
 
 
 __all__ = ["HfHubTransport"]

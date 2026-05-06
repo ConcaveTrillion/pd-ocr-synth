@@ -65,6 +65,10 @@ from pd_ocr_synth.publish.recognition import (
     StagingResult,
     build_recognition_staging,
 )
+from pd_ocr_synth.publish.redaction import (
+    REDACTED_SENTINEL,
+    redact_token,
+)
 from pd_ocr_synth.publish.sdk_transport import (
     SdkUnavailableError,
     make_default_transport,
@@ -142,6 +146,7 @@ __all__ = [
     "PublishError",
     "PublishResult",
     "PublishState",
+    "REDACTED_SENTINEL",
     "ResolvedToken",
     "SdkUnavailableError",
     "StagingResult",
@@ -159,6 +164,7 @@ __all__ = [
     "load_card_inputs",
     "make_default_transport",
     "publish_recognition",
+    "redact_token",
     "render_dataset_card",
     "resolve_commit_message",
     "resolve_hf_token",
