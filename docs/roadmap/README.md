@@ -22,6 +22,7 @@ milestone benefits from them.
 | [09](09-detection-mode.md) | Output: detection mode | Layouts: paragraphs, pages; bbox-aware degradations | Trainer detection profile fed |
 | [10](10-stretch.md) | Stretch | Extra recipes, cloud render, polish | Opt-in follow-ups |
 | [11](11-preview-ui.md) | Preview UI | NiceGUI for visual recipe tuning | `pd-ocr-synth-preview --recipe gaelic` works |
+| [12](12-glyph-annotations.md) | Glyph-level annotations | Per-word ligature / long-s / swash side channel | Synth emits `glyph_annotations.json` alongside `labels.json` |
 
 ## NiceGUI surface — preview only, not edit
 
@@ -93,6 +94,7 @@ not commitments.
 | 09 | two sessions |
 | 10 | open-ended |
 | 11 | two sessions (depends on M07; can run in parallel with M08/M09) |
+| 12 | one to two sessions (depends on M07 + M09 + pd-book-tools data model) |
 
 Total: ~12–15 focused sessions to a usable v0.1.0 (engine + publish);
 add ~2 sessions for the preview UI.
