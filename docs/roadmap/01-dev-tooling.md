@@ -21,6 +21,14 @@ Adopt the same target catalog, with the same emoji + help-text style:
       `uv tool uninstall pd-ocr-synth` (puts the CLI on PATH for
       end-users, separate from dev setup)
 - [ ] `remove-venv`, `reset`, `reset-full`, `upgrade-deps`
+- [ ] `upgrade-deps` MUST honor the dev-local detection contract in
+      [13 — Dev-local mode and dependency upgrades](../specs/13-dev-local-mode-and-deps.md):
+      probe `uv pip show pd-book-tools` for `Editable project location`,
+      fall back to a `.venv/pd-dev-local` marker, last-resort
+      `PD_DEV_LOCAL=1` env var; refuse-with-message when dev-local is
+      detected, leave canonical-mode behavior unchanged, and ship a
+      sibling `upgrade-deps-local` target. Deferred until the
+      Makefile / `dev-local` recipe lands; this milestone owns it.
 - [ ] `test`, `test-verbose`, `test-single` (parameterized)
 - [ ] `lint`, `lint-fix`, `format`, `pre-commit-check`
 - [ ] `ci` — what GitHub Actions runs (lint + test)
