@@ -132,6 +132,16 @@ pd-ocr-synth fetch gaelic    # second run
   response is well documented).
 - **Cache invalidation when source changes upstream** — out of scope
   for v1; user can `rm -rf` the cache or set `cache: false`.
+- **`local.py` computes a `cache_key` but never reads/writes the
+  cache.** It re-reads files every time. Either implement local-file
+  caching (consistent with `web` / `wikisource`) OR rename / drop the
+  runner's `was_cached` reporting for that provider so the surfaced
+  metric stops lying. Surfaced in iter 95–97 deep review.
+- **`_fetch_title` in `wikisource.py` assumes `payload["error"]` is
+  dict-shaped.** A malformed Wikisource API response with
+  `error: "<string>"` would `KeyError` on `.get(...)` chained off it.
+  One-line `isinstance(..., dict)` check would harden the path.
+  Surfaced in iter 95–97 deep review.
 
 ## Closeout notes
 

@@ -86,6 +86,15 @@ Looking at the resulting samples:
 - **`opencv-python` size.** Adds ~80MB to the venv. Acceptable but
   confirm peer projects already pull it; otherwise consider Pillow-only
   for v1.
+- **Post-M06 cv2 retrofit question (still open as of 2026-05-07).** M06
+  shipped four geometric/optical stages (`blur`, `skew`, `jpeg`, `webp`)
+  in Pillow + NumPy. The user raised whether to retrofit those to cv2
+  now (other pd-* repos depend on cv2) or fold the switch into M07+ as
+  new geometric stages get added, and whether to use
+  `opencv-python-headless` (lighter) vs full `opencv-python` (matches
+  siblings). No retrofit shipped during M07–M10; revisit before adding
+  any geometric stage with strong cv2 affinity (e.g. `perspective`,
+  `scale`, `fold_line`).
 - **Order matters.** Document the canonical order in the spec (already
   done): geometric → optical → paper → noise → JPEG. Tests should
   catch reorderings that produce wrong-looking output.
