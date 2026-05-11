@@ -22,20 +22,32 @@ Recognition-mode rendering requires `layout.mode` ∈ {`word_crops`, `lines`}.
 │   ├── 0000000.png
 │   ├── 0000001.png
 │   └── ...
-├── labels.csv          # one line per image
-├── manifest.jsonl      # one record per image (provenance)
+├── labels.json         # JSON map: {image_name: text, ...}
+├── manifest.jsonl      # one record per attempted sample (provenance)
 ├── recipe.snapshot.yaml  # the resolved, validated recipe
 └── stats.json
 ```
 
-`labels.csv` is two columns, no header:
+`labels.json` is a single JSON object whose keys are the image
+filenames (no path components) and whose values are the plain-text
+labels:
 
-```
-0000000.png,Séadna
-0000001.png,⁊ ḋuḃairt sé
+```json
+{
+  "0000000.png": "Séadna",
+  "0000001.png": "⁊ ḋuḃairt sé"
+}
 ```
 
-Filenames are zero-padded to enough digits for the configured `count`.
+This format is what `pd-ocr-trainer/src/pd_ocr_trainer/dataset_store.py`
+consumes via `RecognitionDataset(img_folder=..., labels_path=...)`.
+(An earlier draft of this spec specified `labels.csv`; the trainer's
+existing reader is the canonical contract, so we matched it during
+M07.)
+
+Filenames are zero-padded to enough digits for the configured `count`,
+with a minimum of seven digits so a smoke run and a full run produce
+the same naming convention.
 
 ## Detection mode layout
 
@@ -44,39 +56,60 @@ Filenames are zero-padded to enough digits for the configured `count`.
 ├── images/
 │   ├── page_0000000.png
 │   └── ...
-├── pages.json          # all-pages annotation file
+├── labels.json         # per-image annotation map
 ├── manifest.jsonl
 ├── recipe.snapshot.yaml
 └── stats.json
 ```
 
-`pages.json` matches the `pd-ocr-trainer` detection schema:
+`labels.json` is what `doctr.datasets.DetectionDataset` (used by
+`pd-ocr-trainer/train_detect.py`) actually reads. Its top-level keys
+are page filenames; each value is an annotation object that carries
+both the doctr-required fields and our richer ground truth:
 
 ```json
 {
-  "version": 1,
-  "pages": [
-    {
-      "image": "images/page_0000000.png",
-      "size": [1200, 1800],
-      "lines": [
-        {
-          "bbox": [120, 200, 1080, 240],
-          "text": "Cuiḋ ḋ'á aimsir...",
-          "words": [
-            { "bbox": [120, 205, 220, 235], "text": "Cuiḋ" },
-            ...
-          ]
-        }
-      ]
-    }
-  ]
+  "page_0000000.png": {
+    "img_dimensions": [1200, 1800],
+    "img_hash": "<sha256 hex>",
+    "polygons": [
+      [[120, 200], [1080, 200], [1080, 240], [120, 240]],
+      ...
+    ],
+    "lines": [
+      {
+        "bbox": [120, 200, 1080, 240],
+        "polygon": [[120, 200], [1080, 200], [1080, 240], [120, 240]],
+        "text": "Cuiḋ ḋ'á aimsir...",
+        "words": [
+          { "bbox": [120, 205, 220, 235], "text": "Cuiḋ" }
+        ]
+      }
+    ],
+    "paragraphs": [
+      {
+        "bbox": [120, 200, 1080, 520],
+        "polygon": [[120, 200], [1080, 200], [1080, 520], [120, 520]],
+        "text": "Cuiḋ ḋ'á aimsir..."
+      }
+    ]
+  }
 }
 ```
 
-(The exact shape is whatever `pd-ocr-trainer/dataset_store.py` reads.
-The integration spec keeps the schema centralized there; this project
-imports the writer rather than duplicating the format.)
+`polygons` is the flat list (one 4-corner polygon per detected line)
+that doctr's detection head consumes; `lines` is the rich GT we use
+ourselves and emit so the labeler / parquet publish path can recover
+the full annotation without re-rendering. `paragraphs` (only present
+when the renderer attached `paragraph_boxes` to the sample — i.e. for
+`paragraphs` and `pages` layout modes) carries per-paragraph GT for
+the same downstream tooling. Doctr ignores fields it doesn't
+recognize, so the extra payload is free.
+
+(An earlier draft of this spec specified `pages.json`; the trainer's
+existing reader is the canonical contract, so we matched its
+`labels.json` filename during M09 — same precedent as recognition mode
+matching `labels.json` over the original `labels.csv` draft.)
 
 ## `manifest.jsonl`
 

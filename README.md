@@ -53,6 +53,8 @@ Read the specs in order:
 | 09 | [Extending](docs/specs/09-extending.md) | Adding providers / transforms / degradations |
 | 10 | [Publishing](docs/specs/10-publishing.md) | Push rendered datasets to Hugging Face |
 | 11 | [Preview UI](docs/specs/11-preview-ui.md) | NiceGUI for visual recipe tuning (read-only on recipes) |
+| 12 | [Glyph annotations emission](docs/specs/12-glyph-annotations-emission.md) | Per-word ligature / long-s side channel |
+| 13 | [Dev-local mode and deps](docs/specs/13-dev-local-mode-and-deps.md) | `upgrade-deps` must not silently revert dev-local venvs |
 
 A full worked recipe lives at [`recipes/gaelic.yaml`](recipes/gaelic.yaml).
 

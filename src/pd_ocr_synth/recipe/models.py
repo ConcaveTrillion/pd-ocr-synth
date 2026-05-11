@@ -97,6 +97,13 @@ class CorpusFilterConfig(_Frozen):
 
 class _CorpusBase(_Frozen):
     cache: bool = True
+    # Override the cache key for this entry — spec 04 "Common keys"
+    # documents this as an "advanced" knob recipe authors can use to
+    # split or merge cache slots across runs without changing the
+    # underlying provider options. ``None`` falls through to the
+    # provider's ``cache_key(options)`` derivation. Tracked in the
+    # iter-N (this commit) per-provider parity audit.
+    cache_key: str | None = None
     max_chars: int | None = None
     min_word_length: int = 1
     language: str | None = None
@@ -107,11 +114,43 @@ class WebCorpus(_CorpusBase):
     type: Literal["web"]
     url: str
     parser: str | None = None
+    # JSONPath-lite selector applied when ``parser == "json"`` (see spec
+    # 04 "Parsers" table). ``None`` returns the whole decoded body. The
+    # field is part of the web provider's cache key, so two recipes
+    # pulling different sub-trees from the same URL each get their own
+    # cache slot.
+    field_path: str | None = None
+    # HTTP transport options documented in spec 04's ``web`` example.
+    # ``user_agent`` overrides the default ``pd-ocr-synth/<version>``
+    # UA string set in :mod:`pd_ocr_synth.corpus.http`. ``retries`` and
+    # ``timeout_seconds`` plumb the polite-defaults knobs from spec 04
+    # ("Polite defaults: 1 req/sec per host, 30s timeout, 3 retries
+    # with backoff"). ``respect_robots`` toggles the documented
+    # robots.txt honoring (default ``true``). All four were missing
+    # from the model pre-iter-N — pydantic's ``extra='forbid'`` was
+    # rejecting them at YAML load even though spec 04 advertises them
+    # as the canonical surface, so a recipe that copy-pasted the spec
+    # example crashed with ValidationError. The runtime side already
+    # reads ``retries`` (web.py:_http_get); the other three are
+    # forward-looking fields that the model accepts today and the
+    # runtime can wire through in follow-up commits without another
+    # spec/model drift round.
+    user_agent: str | None = None
+    retries: int | None = None
+    timeout_seconds: float | None = None
+    respect_robots: bool | None = None
 
 
 class LocalCorpus(_CorpusBase):
     type: Literal["local"]
     path: Path
+    # Explicit parser override; spec 04 ``local`` block documents that
+    # parsers are inferred from extension *or* set explicitly via
+    # ``parser:``. The local provider already reads
+    # ``options.get("parser")`` (local.py:43), but the model used to
+    # reject the key — meaning the documented escape-hatch was
+    # unreachable from any recipe.
+    parser: str | None = None
 
 
 class HFDatasetCorpus(_CorpusBase):
@@ -119,12 +158,45 @@ class HFDatasetCorpus(_CorpusBase):
     name: str
     split: str = "train"
     field: str = "text"
+    # Per-recipe row cap; spec 04 ``hf_dataset`` block advertises this
+    # as the streaming-truncate knob. ``None`` means "stream all
+    # available rows", matching the spec's "unlimited" default.
+    max_rows: int | None = None
 
 
 class WikisourceCorpus(_CorpusBase):
     type: Literal["wikisource"]
     language: str
-    titles: list[str]
+    # Spec 04 ``wikisource`` block documents two YAML examples: one
+    # with ``titles:``, one with ``category:``. The pre-iter-N model
+    # required ``titles`` even when ``category:`` was the supplied
+    # selector, which contradicted the spec. Default to an empty list
+    # so the category-only example loads cleanly; the wikisource
+    # provider already raises ``ProviderError`` if neither is set
+    # (wikisource.py:_fetch_title pre-check).
+    titles: list[str] = Field(default_factory=list)
+    # Category-based selector + page cap. The provider reads
+    # ``options.get("category")`` today (and raises a deferred-feature
+    # ``ProviderError``); accepting the field on the model is the
+    # forward-looking move so a recipe author following the spec gets
+    # the deferred-feature error from the runtime rather than a
+    # confusing ``extra_forbidden`` ValidationError at load.
+    category: str | None = None
+    max_pages: int | None = None
+
+    @model_validator(mode="after")
+    def _titles_or_category(self) -> WikisourceCorpus:
+        # Spec 04 ``wikisource`` block presents ``titles:`` and
+        # ``category:`` as alternative selectors; one of them must be
+        # set or there's nothing to fetch. Enforce at load so the
+        # error message points at the recipe, not at a runtime
+        # ``ProviderError`` deeper in the pipeline.
+        if not self.titles and not self.category:
+            raise ValueError(
+                "wikisource corpus entry must declare at least one of "
+                "'titles' or 'category' (spec 04 §wikisource)"
+            )
+        return self
 
 
 CorpusEntry = Annotated[
@@ -222,6 +294,64 @@ class Layout(_Frozen):
     baseline_jitter_px: IntRangeOrChoice | None = None
     max_width_px: int | None = None
     line_spacing: FloatRangeOrChoice | None = None
+    # Vertical gap *between* paragraphs on a page, expressed as a
+    # multiplier of the rendered line height (same units as
+    # ``line_spacing``). Only meaningful for ``mode='pages'`` — a
+    # ``paragraphs``-mode sample is a single paragraph by construction.
+    # See docs/specs/06-rendering.md §pages and the M09 roadmap.
+    paragraph_spacing: FloatRangeOrChoice | None = None
+    # First-line indent (in pixels) applied to the first line of every
+    # paragraph on a page. Only meaningful for ``mode='pages'`` —
+    # ``paragraphs`` mode is a single paragraph and an indent there
+    # would just shift the whole sample's first line, which is what
+    # padding is for. Spec 06 § paragraphs advertises an em-based
+    # ``paragraph_indent_em``; we expose px directly to keep the layout
+    # field deterministic (no font-size dependence). Default ``None``
+    # preserves the existing un-indented output bit-for-bit. See
+    # docs/roadmap/09-detection-mode.md § First-line indent.
+    paragraph_indent_px: int | None = None
+    # Horizontal alignment of each line within the paragraph's bounding
+    # box. ``None`` (default) and ``"left"`` both preserve the existing
+    # left-aligned output bit-for-bit. ``"center"`` centers each line
+    # within ``paragraph_width`` (the width of the longest line, plus
+    # any first-line indent contribution); ``"right"`` flushes each
+    # line to the right edge of ``paragraph_width``. ``"justify"``
+    # distributes the per-line slack (``paragraph_width -
+    # line_natural_width``) across the inter-word gaps in that line so
+    # the line's right edge sits flush with ``paragraph_width``. Per
+    # standard book-typesetting practice, the **last line** of a
+    # paragraph and **single-word** lines fall back to left alignment
+    # (a justified single-word line would be a stretched glyph run, not
+    # a justified line; a justified last line typically looks
+    # awkwardly stretched). Only meaningful for ``mode in {paragraphs,
+    # pages}`` — recognition-mode samples are tight crops where
+    # alignment is undefined. See docs/roadmap/09-detection-mode.md §
+    # Paragraph alignment.
+    paragraph_alignment: Literal["left", "center", "right", "justify"] | None = None
+    # Explicit fixed page canvas size in pixels (width, height). When
+    # set, ``render_page`` produces output of *exactly* this size by
+    # rendering content at its natural extent and then padding the
+    # remaining canvas with the sampled background colour. Content is
+    # placed top-left; all bbox annotations remain inside the natural-
+    # content rectangle. If natural content exceeds ``page_size_px`` in
+    # either dimension, a :class:`RenderError` is raised — silent
+    # truncation would corrupt the per-word/per-line annotations the
+    # detection trainer consumes. ``None`` (default) preserves the
+    # historical auto-sized canvas. Only meaningful for ``mode='pages'``;
+    # ``paragraphs`` mode is by definition a tight single-paragraph crop
+    # with no notion of a "page". See docs/specs/06-rendering.md
+    # §pages and docs/roadmap/09-detection-mode.md § Explicit page_size_px.
+    page_size_px: tuple[int, int] | None = None
+
+    @field_validator("page_size_px")
+    @classmethod
+    def _check_page_size_px_positive(cls, v: tuple[int, int] | None) -> tuple[int, int] | None:
+        if v is None:
+            return v
+        w, h = v
+        if w <= 0 or h <= 0:
+            raise ValueError(f"page_size_px must be positive (width, height); got ({w}, {h})")
+        return v
 
 
 # ---------------------------------------------------------------------------
@@ -260,11 +390,6 @@ class HFDatasetPublishConfig(_Frozen):
 
 class PublishBlock(_Frozen):
     hf_dataset: HFDatasetPublishConfig | None = None
-
-
-# ---------------------------------------------------------------------------
-# Recipe (top-level)
-# ---------------------------------------------------------------------------
 
 
 class Recipe(_Frozen):

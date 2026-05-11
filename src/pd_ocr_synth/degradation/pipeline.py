@@ -146,7 +146,7 @@ def _ensure_builtins_registered() -> None:
     global _BUILTINS_REGISTERED
     if _BUILTINS_REGISTERED:
         return
-    # noqa: F401 — import for side effects.
+
     from pd_ocr_synth.degradation import builtins  # noqa: F401
 
     _BUILTINS_REGISTERED = True

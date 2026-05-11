@@ -13,7 +13,7 @@ setup: ## Set up development environment (uv sync + pre-commit hooks)
 	@echo "📦 Installing dependencies..."
 	uv sync --group all-dev
 	@echo "🪝 Setting up pre-commit hooks..."
-	uv run pre-commit install
+	@[ -f .git/hooks/pre-commit ] || uv run pre-commit install
 	@echo "✅ Setup complete!"
 
 install: ## Install pd-ocr-synth as a uv tool (puts pd-ocr-synth on PATH)

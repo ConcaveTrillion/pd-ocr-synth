@@ -88,3 +88,83 @@ def test_fetch_no_cache_flag_disables_cache(
     assert rc1 == 0
     assert rc2 == 0
     assert "fetch" in out
+
+
+# ---------------------------------------------------------------------------
+# Iter 82 regression guard: ``fetch`` is corpus-only and must not
+# accept the render-family flags (``--count``, ``--output``,
+# ``--seed``, ``--workers``, ``--dry-run``). Those flags previously
+# came along for free via ``_add_common_render_args`` and were
+# silently dropped by the dispatch — surface drift, fixed by removing
+# them. If any of them sneak back in, this test screams.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "extra_args",
+    [
+        ["--count", "5"],
+        ["-c", "5"],
+        ["--output", "/tmp/somewhere"],
+        ["-o", "/tmp/somewhere"],
+        ["--seed", "7"],
+        ["-s", "7"],
+        ["--workers", "2"],
+        ["-w", "2"],
+        ["--dry-run"],
+    ],
+)
+def test_fetch_rejects_render_family_flags(
+    tmp_path: Path, monkeypatch, capsys: pytest.CaptureFixture[str], extra_args: list[str]
+) -> None:
+    """``fetch`` is corpus-only — render-family flags must not parse.
+
+    Iter 82 removed these accidentally-inherited flags. Argparse
+    reports unknown options as a usage error (exit 2) rather than
+    silently accepting them.
+    """
+
+    rp = _setup_recipe(tmp_path)
+    monkeypatch.setenv("PD_OCR_SYNTH_CACHE", str(tmp_path / "cache"))
+    with pytest.raises(SystemExit) as exc_info:
+        main(["fetch", str(rp), *extra_args])
+    # argparse uses exit 2 for unrecognised arguments
+    assert exc_info.value.code == 2
+    err = capsys.readouterr().err.lower()
+    assert "unrecognized" in err or "error" in err
+
+
+def test_fetch_parser_flag_surface_is_minimal() -> None:
+    """Pin the ``fetch`` flag surface — only cache flags are valid.
+
+    Catches the inverse drift: someone re-adds ``_add_common_render_args``
+    on the fetch subparser and silently re-introduces the full set of
+    render-family flags. This test enumerates the exact flag set
+    fetch accepts so additions force an explicit decision.
+    """
+
+    from pd_ocr_synth.cli import build_parser
+
+    parser = build_parser()
+    fetch_subparser = None
+    import argparse as _argparse
+
+    for action in parser._actions:
+        if isinstance(action, _argparse._SubParsersAction):
+            fetch_subparser = action.choices.get("fetch")
+            break
+    assert fetch_subparser is not None, "fetch subparser missing from build_parser()"
+
+    flags: set[str] = set()
+    for action in fetch_subparser._actions:
+        for opt in action.option_strings:
+            flags.add(opt)
+
+    # Only ``--help`` plus the two cache-related flags. No
+    # ``--count`` / ``--output`` / ``--seed`` / ``--workers`` /
+    # ``--dry-run`` (those are render-only — see iter 82 cleanup).
+    assert flags == {"-h", "--help", "--cache-dir", "--no-cache"}, (
+        "fetch subparser flag surface drifted — expected exactly "
+        "{-h, --help, --cache-dir, --no-cache} (corpus-only command, "
+        "no render-family flags). Got: " + repr(sorted(flags))
+    )

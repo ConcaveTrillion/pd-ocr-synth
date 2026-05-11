@@ -109,7 +109,7 @@ layout:
     out = collect_corpus_text(recipe, ctx=ctx)
     assert "⁊" in out
     assert "ḃ" in out
-    assert "ſ" in out
+    assert "\u017f" in out  # U+017F LATIN SMALL LETTER LONG S
     assert "agus" not in out
 
 
@@ -163,3 +163,66 @@ def test_runner_marks_cache_hits(tmp_path: Path, loaded_recipe) -> None:
     # was_cached is observed before fetch: providers that don't cache
     # report False. The flag is informational.
     assert all(isinstance(r.was_cached, bool) for r in results)
+
+
+def test_runner_no_cache_sets_options_cache_false(
+    tmp_path: Path, loaded_recipe, monkeypatch
+) -> None:
+    """``run_providers(..., no_cache=True)`` must inject ``cache=False``.
+
+    Guards the CLI ``--no-cache`` flag for ``preview`` / ``render``: the
+    plumbing must reach the per-entry options dict that providers
+    inspect. Iter 80 fixed the CLI silent-ignore drift; this test
+    locks the runner-level contract.
+    """
+
+    captured: list[dict] = []
+
+    from pd_ocr_synth.corpus.providers.local import LocalProvider
+
+    real_fetch = LocalProvider.fetch
+
+    def spy_fetch(self, ctx, options):  # type: ignore[no-untyped-def]
+        # Snapshot the options dict the runner passed to the provider.
+        captured.append(dict(options))
+        yield from real_fetch(self, ctx, options)
+
+    monkeypatch.setattr(LocalProvider, "fetch", spy_fetch)
+
+    cache = CacheStore(root=tmp_path / "cache")
+    ctx = ProviderContext(recipe_dir=tmp_path, cache=cache)
+    list(run_providers(loaded_recipe, ctx=ctx, no_cache=True))
+    assert len(captured) == 2
+    assert all(opts.get("cache") is False for opts in captured), captured
+
+    # Default (no_cache=False) preserves whatever the recipe entry's
+    # own ``cache`` field carries. The pydantic CorpusEntry model
+    # defaults to ``cache=True`` so we observe True here. The
+    # invariant under test is the no_cache=True branch above, where
+    # the runner must override the recipe's own value.
+    captured.clear()
+    list(run_providers(loaded_recipe, ctx=ctx))
+    assert len(captured) == 2
+    assert all(opts.get("cache") is True for opts in captured), captured
+
+
+def test_collect_corpus_text_no_cache_threads_through(
+    tmp_path: Path, loaded_recipe, monkeypatch
+) -> None:
+    """``collect_corpus_text(..., no_cache=True)`` reaches the runner."""
+
+    from pd_ocr_synth.corpus import runner as runner_mod
+
+    seen: dict[str, object] = {}
+    real = runner_mod.run_providers
+
+    def spy(*args, **kwargs):  # type: ignore[no-untyped-def]
+        seen["no_cache"] = kwargs.get("no_cache")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(runner_mod, "run_providers", spy)
+
+    cache = CacheStore(root=tmp_path / "cache")
+    ctx = ProviderContext(recipe_dir=tmp_path, cache=cache)
+    collect_corpus_text(loaded_recipe, ctx=ctx, no_cache=True)
+    assert seen["no_cache"] is True

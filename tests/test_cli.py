@@ -2,8 +2,8 @@
 
 M01 shipped argument parsing only. M02 implements ``list``, ``validate``,
 ``describe``, ``init``, ``schema``; M03 added ``fetch``/``clean``; M05
-adds ``preview``. ``render`` and ``publish`` remain stubs until their
-milestones land.
+adds ``preview``; M07 adds ``render``; M08 adds ``publish --dry-run``
+(the real upload path lands in a later M08 chunk).
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ ALL_SUBCOMMANDS = [
     "init",
     "list",
     "validate",
+    "lint",
     "describe",
     "schema",
     "fetch",
@@ -32,10 +33,11 @@ ALL_SUBCOMMANDS = [
     "clean",
 ]
 
-# Subcommands still stubbed after M05. ``render`` waits on M07 (output
-# adapter); ``publish`` waits on M10. ``fetch`` + ``clean`` landed in
-# M03; ``preview`` landed in M05.
-STILL_STUBBED = ["render"]
+# Subcommands still fully stubbed after M08-dry-run. ``publish``
+# (without ``--dry-run``) intentionally returns NOT_IMPLEMENTED until
+# the upload chunk lands; that case is asserted directly below rather
+# than via this generic-stub fixture so we can target it precisely.
+STILL_STUBBED: list[str] = []
 
 
 # ---------------------------------------------------------------------------
@@ -73,19 +75,29 @@ def test_subcommand_help(subcommand: str, capsys: pytest.CaptureFixture[str]) ->
 
 
 # ---------------------------------------------------------------------------
-# Stubs (still not implemented in M02)
+# Stubs (subcommands waiting for their milestone)
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("subcommand", STILL_STUBBED)
+@pytest.mark.skipif(not STILL_STUBBED, reason="no stubbed subcommands left")
+@pytest.mark.parametrize("subcommand", STILL_STUBBED or ["__placeholder__"])
 def test_subcommand_stub_returns_not_implemented(subcommand: str) -> None:
     rc = main([subcommand, "dummy-recipe"])
     assert rc == 1
 
 
-def test_publish_stub_returns_not_implemented() -> None:
-    rc = main(["publish", "dummy-recipe"])
-    assert rc == 1
+def test_publish_unknown_recipe_exits_three(
+    tmp_path: Path, monkeypatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An unknown recipe is a recipe-resolution error (exit 3),
+    not a publish-specific failure — same as ``validate``/``describe``.
+    """
+
+    monkeypatch.delenv("PD_OCR_SYNTH_RECIPES", raising=False)
+    monkeypatch.chdir(tmp_path)
+    rc = main(["publish", "definitely-not-a-recipe", "--dry-run"])
+    assert rc == 3
+    assert "not found" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------
@@ -213,6 +225,191 @@ def test_describe_json_format_emits_valid_json(
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["name"] == "smoke"
+
+
+def test_describe_text_summary_covers_top_level_fields(
+    tmp_path: Path, writable_font_bytes: bytes, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Lock the headline-summary contract.
+
+    The JSON dump that follows the summary always contains the full
+    resolved recipe, but the headline lines are what most authors
+    actually read. This test pins the documented minimum: every line
+    here has historically been present (and should remain so), or has
+    been deliberately added because authors needed it before running
+    ``preview`` / ``render``. New top-level Recipe fields should join
+    this list rather than only appearing in the JSON tail.
+    """
+    rp = _make_good_recipe(tmp_path, writable_font_bytes)
+    rc = main(["describe", str(rp), "--format", "text"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    # Order is also part of the contract: identity → output → corpus
+    # → text → fonts → rendering → layout → degradation → publish.
+    expected_prefixes = [
+        "recipe:",
+        "source:",
+        "schema_version:",
+        "seed:",
+        "output.format:",
+        "output.mode:",
+        "output.destination:",
+        "output.count:",
+        "corpus:",
+        "text_transforms:",
+        "fonts:",
+        "rendering.shaping_engine:",
+        "rendering.font_size_pt:",
+        "rendering.dpi:",
+        "layout.mode:",
+        "degradation:",
+    ]
+    last_idx = -1
+    for prefix in expected_prefixes:
+        # Each prefix should appear, and in order.
+        line_starts = [i for i, line in enumerate(out.splitlines()) if line.startswith(prefix)]
+        assert line_starts, f"describe text summary missing line starting with {prefix!r}"
+        idx = line_starts[0]
+        assert idx > last_idx, (
+            f"describe summary line {prefix!r} out of order "
+            f"(found at {idx}, previous at {last_idx})"
+        )
+        last_idx = idx
+
+
+def test_describe_text_summary_omits_optional_unset_fields(
+    tmp_path: Path, writable_font_bytes: bytes, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Optional/absent blocks must not produce noisy summary lines.
+
+    The minimal smoke recipe has no description, no degradation_presets,
+    and no publish block. None of those should print headline lines —
+    otherwise authors get blank/0-valued noise that hides the live
+    fields.
+    """
+    rp = _make_good_recipe(tmp_path, writable_font_bytes)
+    rc = main(["describe", str(rp), "--format", "text"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    # Limit to the headline block (everything before the JSON dump).
+    headline = out.split("--- resolved config (json) ---", 1)[0]
+    assert "description:" not in headline
+    assert "degradation_presets:" not in headline
+    assert "publish.hf_dataset.repo:" not in headline
+
+
+def test_describe_text_summary_surfaces_optional_when_set(
+    tmp_path: Path, writable_font_bytes: bytes, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """When optional fields are populated, the summary must surface them."""
+    (tmp_path / "fake.otf").write_bytes(writable_font_bytes)
+    (tmp_path / "seed.txt").write_text("hi\n", encoding="utf-8")
+    rp = tmp_path / "recipe.yaml"
+    rp.write_text(
+        """\
+schema_version: 1
+name: rich
+description: a richly-populated recipe
+output:
+  format: pd-ocr-trainer/v1
+  mode: recognition
+  destination: ./out
+  count: 1
+corpus:
+  - type: local
+    path: ./seed.txt
+fonts:
+  - path: ./fake.otf
+rendering:
+  font_size_pt: 12
+  dpi: 300
+  ink_color: {r: 0, g: 0, b: 0}
+  background_color: {r: 255, g: 255, b: 255}
+layout:
+  mode: word_crops
+  padding_px: 4
+degradation_presets:
+  light:
+    - kind: gaussian_blur
+      probability: 0.5
+degradation:
+  - preset: light
+publish:
+  hf_dataset:
+    repo: example/rich
+""",
+        encoding="utf-8",
+    )
+    rc = main(["describe", str(rp), "--format", "text"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    headline = out.split("--- resolved config (json) ---", 1)[0]
+    assert "description: a richly-populated recipe" in headline
+    assert "degradation_presets: 1 groups" in headline
+    assert "publish.hf_dataset.repo: example/rich" in headline
+
+
+def test_describe_text_summary_field_set_matches_recipe_model(
+    tmp_path: Path, writable_font_bytes: bytes, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Meta-guard: every top-level Recipe field is reachable from describe.
+
+    This is a regression net for "we added a field to the Recipe model
+    but forgot to update describe". The text summary doesn't need to
+    name every field by line, but the *JSON tail* must — and this test
+    pins that contract: ``describe`` round-trips the resolved Recipe
+    model dump, so every model field is reachable.
+    """
+    from pd_ocr_synth.recipe.models import Recipe
+
+    rp = _make_good_recipe(tmp_path, writable_font_bytes)
+    rc = main(["describe", str(rp), "--format", "json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    # Every declared model field should appear as a key in the JSON
+    # output (Pydantic's ``model_dump`` is exhaustive by default).
+    declared = set(Recipe.model_fields.keys())
+    missing = declared - set(payload.keys())
+    assert not missing, f"describe JSON output missing top-level fields: {missing}"
+
+
+def test_describe_json_round_trips_every_top_level_field(
+    tmp_path: Path, writable_font_bytes: bytes, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """JSON describe output must include the same shape ``schema`` advertises.
+
+    This guards against describe accidentally calling ``model_dump``
+    with ``exclude=...`` or filtering keys somewhere upstream.
+    """
+    from pd_ocr_synth.recipe.models import Recipe
+
+    rp = _make_good_recipe(tmp_path, writable_font_bytes)
+    rc = main(["describe", str(rp), "--format", "json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    # ``source_path`` is loader-injected and not part of the YAML
+    # contract, but Recipe declares it — describe should expose it.
+    for required in (
+        "schema_version",
+        "name",
+        "description",
+        "seed",
+        "output",
+        "corpus",
+        "text_transforms",
+        "fonts",
+        "rendering",
+        "layout",
+        "degradation_presets",
+        "degradation",
+        "publish",
+        "source_path",
+    ):
+        assert required in payload, (
+            f"describe JSON missing {required!r}; present keys: {sorted(payload.keys())}"
+        )
+    # Sanity: model_fields and our explicit list agree.
+    assert set(Recipe.model_fields.keys()) <= set(payload.keys())
 
 
 # ---------------------------------------------------------------------------

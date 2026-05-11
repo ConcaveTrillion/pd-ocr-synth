@@ -244,7 +244,7 @@ _LONG_S_TOKEN_RE = re.compile(r"\S+", flags=re.UNICODE)
 
 
 def long_s_medial(text: str, options: dict, rng: Random) -> str:
-    """Replace ``s`` with ``ſ`` in non-final positions, never before s/h.
+    """Replace ``s`` with ``\u017f`` in non-final positions, never before s/h.
 
     Per spec: word-medial only (i.e. not the last character of a
     word) and never immediately before another ``s`` or ``h``.
@@ -271,7 +271,7 @@ def long_s_medial(text: str, options: dict, rng: Random) -> str:
                 continue
             if probability < 1.0 and rng.random() > probability:
                 continue
-            chars[i] = "ſ"
+            chars[i] = "\u017f"  # U+017F LATIN SMALL LETTER LONG S
         return "".join(chars)
 
     return _LONG_S_TOKEN_RE.sub(lambda m: replace_in_token(m.group(0)), text)

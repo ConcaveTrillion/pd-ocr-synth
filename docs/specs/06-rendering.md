@@ -40,14 +40,23 @@ For each sample, a font is drawn by weight. `features` enables / disables
 specific OpenType features for the renderer. (Defaults: `liga: true`,
 `calt: true`, others off.)
 
-The validator inspects each font and reports:
+The validator inspects each font on disk and surfaces these issues at
+`pd-ocr-synth validate` time:
 
-- The set of codepoints covered
-- Codepoints in the corpus that the font does **not** cover
-- Whether `liga`/`calt` features are present
+| Code | When |
+|------|------|
+| `font_missing` (error) | Required font file does not exist |
+| `optional_font_missing` (warning) | `optional: true` font file does not exist; will be skipped at render |
+| `font_unreadable` (error) | freetype-py can't open the file |
+| `font_empty` (error) | Font reports zero glyphs or an empty cmap |
 
-A sample whose token requires a missing glyph is skipped; the manifest
-records the skip reason.
+Glyph coverage is checked **at render time**, not at validate time:
+each sample whose token requires a codepoint the chosen font does not
+cover raises `MissingGlyphError` and the preview / render writer
+records `missing_glyph` as the manifest skip reason (with the missing
+codepoints listed). A pre-render corpus-vs-font coverage report and
+inspection of `liga`/`calt` GSUB feature presence are deferred — see
+`docs/roadmap/05-rendering.md` "Font validation" closeout.
 
 ## Size, color, DPI
 
@@ -138,6 +147,18 @@ layout:
 
 Output: page image + per-paragraph + per-line + per-word bounding boxes.
 
+`page_size_px` is optional. When unset, the page canvas is auto-sized
+to the natural extent of the composed paragraphs plus padding. When
+set to `[width, height]`, the renderer emits an image of *exactly*
+that size: content is composed at its natural extent and placed at
+the top-left, and the remainder of the canvas is padded with the
+sampled `background_color`. If the natural content is larger than the
+requested size in either dimension, the renderer raises
+`RenderError` — silent truncation would corrupt the per-word/per-line
+annotations the detection trainer consumes. Bbox annotations are
+emitted in the natural-content rectangle, never extending into the
+padded margin.
+
 ## Ground truth captured per sample
 
 Regardless of layout mode, each rendered sample emits:
@@ -154,7 +175,9 @@ Regardless of layout mode, each rendered sample emits:
 | `words` | (lines/paragraphs/pages) per-word bbox + text |
 
 This metadata flows into the manifest (spec 08). Detection-mode output
-uses `lines`/`words` to write `pages.json`-compatible records.
+uses `lines`/`words` to write `labels.json`-compatible records (an
+earlier draft of spec 08 called this file `pages.json`; the trainer's
+`DetectionDataset` reader is the canonical contract).
 
 ## Rendering pitfalls
 

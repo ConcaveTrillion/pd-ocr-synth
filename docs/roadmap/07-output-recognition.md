@@ -1,67 +1,100 @@
-# M07 — Output: recognition mode
+# M07 — Output: recognition mode (complete)
 
-**Goal:** end-to-end render: `pd-ocr-synth render gaelic` produces 50k
-samples in `pd-ocr-trainer/v1` recognition layout that the trainer can
-consume without changes.
+**Status:** ✅ landed on `main`. End-to-end `pd-ocr-synth render` writes
+the `pd-ocr-trainer/v1` recognition profile that the trainer consumes
+unchanged.
+
+**Goal:** end-to-end render: `pd-ocr-synth render gaelic` produces the
+configured `output.count` samples in the trainer's recognition layout.
 
 Spec: [`08-output-format.md`](../specs/08-output-format.md).
+
+## Closeout notes
+
+- **Spec/contract reconciliation.** The spec's earlier draft called
+  for `labels.csv`; the trainer's actual reader
+  (`pd-ocr-trainer/src/pd_ocr_trainer/dataset_store.py` →
+  `RecognitionDataset(img_folder=..., labels_path="labels.json")`)
+  consumes a JSON map. Per the roadmap principle "spec wins, but if
+  the milestone reveals the spec is wrong, fix the spec" — we updated
+  spec 08 + spec 10 + the M08 roadmap to specify `labels.json`. The
+  writer matches the trainer.
+- **Progress reporting** is a tiny stderr bar plus a final `rendered
+  N/N in T.Ts (R samples/s)` line — no tqdm dep added. The roadmap
+  noted tqdm; the homegrown reporter is enough for v1 and saves a
+  dependency. Re-evaluate if a milestone needs nested bars.
+- **Cross-project integration test deferred.** The trainer's
+  `dataset_store.py` does heavy work at *import* time (creates
+  `ml-training/`, `ml-validation/`, `pd-ml-models/` under
+  `~/.local/share/`), making it intrusive to import inside synth's
+  test suite. Instead, we lock the contract structurally: the
+  writer's `labels.json` shape (`{"<image>.png": "<text>"}`) matches
+  what the trainer's reader expects, asserted by
+  `tests/test_cli_render.py::test_render_labels_json_matches_trainer_recognition_contract`.
+  When the trainer's UI/CLI grows a "load synth dataset" path, that's
+  the right moment to add a real cross-repo integration check.
 
 ## Deliverables
 
 ### Writer
 
-- [ ] `pd_ocr_synth.output.RecognitionWriter` matching the documented
+- [x] `pd_ocr_synth.output.RecognitionWriter` matching the documented
       layout:
-  - `images/0000000.png` with zero-padded names sized for `count`.
-  - `labels.csv` (no header, two columns).
-  - `manifest.jsonl` with one record per sample (full provenance).
-  - `recipe.snapshot.yaml` — the resolved recipe, paths absolute,
-    fonts/corpora SHA-256 stamped.
+  - `images/<NNNNNNN>.png` with zero-padded names sized for `count`
+    (min 7 digits so smoke runs and full runs share the convention).
+  - `labels.json` — JSON map `{image_name: text}` matching the
+    trainer's `RecognitionDataset` reader.
+  - `manifest.jsonl` with one record per attempted sample (rendered
+    or skipped), full provenance per spec 08.
+  - `recipe.snapshot.yaml` — the resolved recipe + tool version +
+    effective seed + SHA-256 of every font and local corpus file.
   - `stats.json` — samples_planned, samples_written, samples_skipped,
-    skip reasons, fonts_used histogram, unique tokens, wall time.
+    skip_reasons, fonts_used histogram, tokens_unique, wall time.
 
 ### Render orchestration
 
-- [ ] `pd_ocr_synth.render.run_recipe(recipe, output_dir)` ties
+- [x] `pd_ocr_synth.render.run_recipe(recipe, output_dir, ...)` ties
       M03–M06 together: corpus → transforms → tokenize → render →
       degrade → write.
-- [ ] Worker pool (multiprocessing) keyed by sample index for
-      determinism.
-- [ ] Progress bar (tqdm) and rate reporting in stderr.
+- [x] Worker pool (multiprocessing) keyed by sample index for
+      determinism — same `seed + index` deterministic output bytes
+      regardless of worker count.
+- [x] Progress reporting + rate to stderr (homegrown, no tqdm).
+- [x] `pd_ocr_synth.render.plan_recipe(...)` powers `--dry-run`.
 
 ### Resume / idempotency
 
-- [ ] `--force`: clear output before render.
-- [ ] `--resume`: continue from highest existing sample index, only if
-      `recipe.snapshot.yaml` matches the current resolved recipe.
-- [ ] Default: refuse to write into a non-empty directory; clean error
-      message pointing at `--force` / `--resume`.
+- [x] `--force`: clear output before render.
+- [x] `--resume`: continue, skipping `already_rendered(idx)`. Snapshot
+      compare gates resume — drift in seed, tool version, or input
+      file hashes refuses to proceed.
+- [x] Default: refuses to write into a non-empty directory; error
+      points at `--force` / `--resume` and exits 6 (DESTINATION_EXIT).
+- [x] `--force` and `--resume` are mutually exclusive (USAGE_EXIT).
 
 ### CLI surface
 
-- [ ] `pd-ocr-synth render <recipe>` — full run.
-- [ ] `pd-ocr-synth render <recipe> -c 500 -o /tmp/X` — overrides for
+- [x] `pd-ocr-synth render <recipe>` — full run.
+- [x] `pd-ocr-synth render <recipe> -c 500 -o /tmp/X` — overrides for
       smoke tests.
-- [ ] `pd-ocr-synth render <recipe> --dry-run` — print plan (sample
-      count, output dir, fonts, transforms) without writing.
+- [x] `pd-ocr-synth render <recipe> --dry-run` — print plan (sample
+      count, output dir, fonts, transforms, corpus chars) without
+      writing.
 
 ### Trainer integration test
 
-- [ ] Render 50 samples from `gaelic.yaml` into a temp `ml-recognition/
-      gaelic/recognition` dir.
-- [ ] Use `pd-ocr-trainer`'s `dataset_store.py` to load it. The test
-      passes if the trainer reports the expected sample count and
-      doesn't raise on schema.
-
-This is the first cross-project integration; treat the trainer's
-loader as the API contract.
+- [x] Structural contract test — `labels.json` is a JSON object whose
+      keys are PNG filenames (no path components) and values are
+      non-empty plain-text labels, every key pointing at an image on
+      disk. (See closeout notes above for why a live
+      `dataset_store.py` import was skipped.)
 
 ## Validation criteria
 
 ```bash
 pd-ocr-synth render gaelic
-# → 50000 .png files + labels.csv + manifest.jsonl + recipe.snapshot.yaml + stats.json
-# → wall time printed; rate printed
+# → N PNG files + labels.json + manifest.jsonl + recipe.snapshot.yaml + stats.json
+# → wall time + rate printed
 # → exit 0
 
 pd-ocr-synth render gaelic   # re-run
@@ -69,24 +102,27 @@ pd-ocr-synth render gaelic   # re-run
 
 pd-ocr-synth render gaelic --resume
 # → skips through existing samples; renders any remaining
-```
 
-`pd-ocr-trainer` reads the resulting profile and reports:
-`profile=gaelic, samples=50000, schema=pd-ocr-trainer/v1`.
+pd-ocr-synth render gaelic --dry-run
+# → prints planned config without writing
+```
 
 ## Out of scope
 
 - HF publish (M08).
 - Detection mode (M09).
 
-## Risks / open items
+## Deferred
 
-- **Multi-process determinism.** Seed handling across workers must
-  give the same per-sample output regardless of worker count. Use
-  `seed + sample_index` for the per-sample RNG, not the worker ID.
-- **Disk usage.** 50k word crops ≈ 250MB. Confirm the trainer's
-  consumer doesn't choke on that before going to higher counts.
-- **Trainer profile shape stability.** If the trainer's
-  `dataset_store.py` shape evolves between M07 spec time and M07
-  implementation time, the writer needs to follow. Lock the contract
-  via the integration test.
+- Real cross-project integration test that imports
+  `pd-ocr-trainer/dataset_store.py` end-to-end. See closeout notes —
+  the structural test is sufficient until the trainer grows a
+  cleaner import surface.
+- Per-sample `corpus.{provider, key, offset}` provenance in the
+  manifest. Currently we record `text` plus the recipe-level transform
+  and degradation lists; per-sample source-document tracking lands when
+  M08 (publish) needs it for `metadata.jsonl` and the dataset card.
+- Per-degradation-stage *applied* telemetry (currently the manifest
+  records configured stages, not which probability rolls fired). M09
+  needs the per-stage roll outcome for bbox-aware geometric stages,
+  so the surface lands there.

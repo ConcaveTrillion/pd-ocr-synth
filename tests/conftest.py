@@ -6,6 +6,25 @@ from pathlib import Path
 
 import pytest
 
+from pd_ocr_synth.audit import GLOBAL_AUDIT_DISABLE_ENV
+
+
+@pytest.fixture(autouse=True)
+def _isolate_global_audit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Suppress the global audit mirror by default in every test.
+
+    The global aggregate audit log lives at
+    ``<cache_root>/audit.jsonl`` (default ``~/.cache/pd-ocr-synth``).
+    Without this fixture, every test that drives ``run_recipe`` would
+    silently append to the developer's real cache dir, mixing test
+    runs into the production timeline. Tests that *want* to exercise
+    the global mirror must monkeypatch ``PD_OCR_SYNTH_CACHE`` to a
+    ``tmp_path`` and explicitly ``monkeypatch.delenv`` this var so the
+    mirror is enabled inside the isolated cache root.
+    """
+
+    monkeypatch.setenv(GLOBAL_AUDIT_DISABLE_ENV, "1")
+
 
 @pytest.fixture
 def recipes_dir() -> str:

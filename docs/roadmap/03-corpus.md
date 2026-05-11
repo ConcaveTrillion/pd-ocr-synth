@@ -65,6 +65,23 @@ Gaelic uses the first three; those are the priority of M03.
 - [x] `drop_lines_matching`, `keep_only_lines_matching`,
       `min_line_chars` applied per corpus entry, post-fetch, before
       the entry's text joins the recipe-wide pool.
+- [ ] `max_chars` per-entry truncation (deferred — spec 04 documents
+      the key, the recipe model accepts it on `_CorpusBase`, but no
+      provider or post-fetch stage reads it. Validation now surfaces
+      explicit overrides as `corpus_max_chars_not_implemented` so
+      recipes don't silently lose the truncation they asked for. To
+      implement: apply at the end of `apply_filter` in
+      `corpus/filters.py`, or as a final step inside
+      `collect_corpus_text` if the truncation should be post-join).
+- [ ] `min_word_length` post-tokenization length filter (deferred —
+      same story as `max_chars`: spec 04 documents it, the recipe
+      model accepts it, but tokenization itself doesn't yet exist as
+      a corpus-stage filter — `pd_ocr_synth.tokenization` is the
+      render-time word splitter. Validation now surfaces explicit
+      overrides > 1 as `corpus_min_word_length_not_implemented`. To
+      implement: decide whether the filter runs as a corpus-stage
+      tokenize-then-rejoin pass or as a render-time word-pool filter,
+      then wire and remove the validation guard).
 
 ### CLI surface
 
@@ -115,6 +132,16 @@ pd-ocr-synth fetch gaelic    # second run
   response is well documented).
 - **Cache invalidation when source changes upstream** — out of scope
   for v1; user can `rm -rf` the cache or set `cache: false`.
+- **`local.py` computes a `cache_key` but never reads/writes the
+  cache.** It re-reads files every time. Either implement local-file
+  caching (consistent with `web` / `wikisource`) OR rename / drop the
+  runner's `was_cached` reporting for that provider so the surfaced
+  metric stops lying. Surfaced in iter 95–97 deep review.
+- **`_fetch_title` in `wikisource.py` assumes `payload["error"]` is
+  dict-shaped.** A malformed Wikisource API response with
+  `error: "<string>"` would `KeyError` on `.get(...)` chained off it.
+  One-line `isinstance(..., dict)` check would harden the path.
+  Surfaced in iter 95–97 deep review.
 
 ## Closeout notes
 

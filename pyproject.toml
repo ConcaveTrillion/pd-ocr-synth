@@ -42,6 +42,16 @@ dependencies = [
 ui = [
     "nicegui>=2.0",
 ]
+# Hugging Face publishing path. Kept optional so users who only run
+# ``pd-ocr-synth render`` (the local-only path) don't pull the SDK and
+# its transitive deps. Install with ``pip install pd-ocr-synth[publish]``
+# or ``uv sync --extra publish``. The CLI runner imports
+# ``huggingface_hub`` lazily through
+# ``pd_ocr_synth.publish.sdk_transport.make_default_transport``; ``--dry-run``
+# never imports the SDK.
+publish = [
+    "huggingface_hub>=0.26",
+]
 
 [dependency-groups]
 test = [
@@ -59,6 +69,12 @@ dev = [
 ]
 all-dev = [
     {include-group = "dev"},
+    # Tests for the publish SDK adapter import (and mock) ``huggingface_hub``;
+    # include the publish extras in the all-dev group so ``make ci`` /
+    # ``uv sync --group all-dev`` brings the SDK in. End users who only
+    # need ``pd-ocr-synth render`` still don't pay the cost — they install
+    # without ``[publish]``.
+    "huggingface_hub>=0.26",
 ]
 
 [project.scripts]
@@ -108,17 +124,44 @@ target-version = "py313"
 
 [tool.ruff.lint]
 select = [
-    "E",   # pycodestyle errors
-    "W",   # pycodestyle warnings
-    "F",   # pyflakes
-    "I",   # isort
-    "B",   # flake8-bugbear
-    "C4",  # flake8-comprehensions
-    "UP",  # pyupgrade
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "N",    # pep8-naming
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "SIM",  # flake8-simplify
+    "UP",   # pyupgrade
+    "RUF",  # ruff-specific rules
+    "ERA",  # eradicate (commented-out code)
+    "T20",  # flake8-print
 ]
 ignore = [
     "E501",  # line too long (handled by formatter)
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# CLI and render runner use print() as the primary user-facing output mechanism.
+"src/pd_ocr_synth/cli.py" = ["T201"]
+"src/pd_ocr_synth/publish/cli_runner.py" = ["T201"]
+"src/pd_ocr_synth/render/run.py" = ["T201"]
+# Utility script — print to stderr is expected.
+"scripts/generate-paper-textures.py" = ["T201"]
+# E2E visual-regression tests compare rendered output; print is intentional debug output.
+"tests/test_render_visual_regression*.py" = ["T201"]
+# Typography docs use × (MULTIPLICATION SIGN) as the standard unit notation for
+# line-height multipliers; replacing with 'x' would be less precise.
+"src/pd_ocr_synth/render/paragraph.py" = ["RUF002", "RUF003"]
+"tests/integration/test_trainer_dataset_contract.py" = ["RUF002"]
+
 [tool.ruff.lint.isort]
 known-first-party = ["pd_ocr_synth"]
+
+[tool.pyright]
+include = ["src", "tests", "scripts"]
+typeCheckingMode = "basic"
+
+[[tool.pyright.executionEnvironments]]
+root = "src"
+typeCheckingMode = "strict"

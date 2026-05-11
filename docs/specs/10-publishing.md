@@ -28,20 +28,21 @@ emits one HF dataset repo containing:
 | Path | Source | Notes |
 |------|--------|-------|
 | `data/*.png` | `<destination>/images/` | Recognition mode |
-| `data/*.parquet` | Built from local images + `pages.json` | Detection mode |
-| `metadata.jsonl` | Built from local `labels.csv` + `manifest.jsonl` | Recognition only |
+| `data/*.parquet` | Built from local images + `labels.json` | Detection mode (parquet path; future) |
+| `data/page_*.png` + `labels.json` | Copied verbatim from `<destination>/` | Detection mode (imagefolder path; current) |
+| `metadata.jsonl` | Built from local `labels.json` + `manifest.jsonl` | Recognition only |
 | `recipe.snapshot.yaml` | Copied from local output | Provenance |
 | `README.md` | Generated; see "Dataset card" | Auto-generated |
 
 Local-only files NOT uploaded: `manifest.jsonl` (rolled into
-`metadata.jsonl`), `labels.csv` (same), `stats.json` (rolled into the
+`metadata.jsonl`), `labels.json` (same), `stats.json` (rolled into the
 README).
 
 ## Format conversion — recognition
 
 Local layout:
 ```
-images/0000000.png + labels.csv row "0000000.png,Séadna" + manifest.jsonl record
+images/0000000.png + labels.json entry {"0000000.png": "Séadna"} + manifest.jsonl record
 ```
 becomes one row in HF `metadata.jsonl`:
 ```json
@@ -56,8 +57,22 @@ columns are flat strings/numbers/lists; nothing nested.
 
 ## Format conversion — detection
 
-Detection mode reads `pages.json` + the image files and writes parquet
-shards via `datasets.Dataset.from_generator(...).push_to_hub(...)`.
+Detection mode reads `labels.json` + the image files. Two upload paths
+are supported:
+
+- **Imagefolder (current).** `labels.json` is copied verbatim alongside
+  the page images under `data/`. The trainer's `DetectionDataset`
+  reader consumes the same `labels.json` schema documented in
+  [08 — Output format](08-output-format.md), so the local pull path
+  and the HF pull path are symmetrical. (An earlier draft of this
+  section specified `pages.json`; the trainer's existing reader is
+  the canonical contract — same precedent that landed `labels.json`
+  over the original `pages.json`/`labels.csv` drafts in spec 08.)
+- **Parquet (future).** `labels.json` projects into the schema below
+  and ships as parquet shards via
+  `datasets.Dataset.from_generator(...).push_to_hub(...)`. Not yet
+  implemented (see spec 09 for sequencing); the imagefolder path is
+  the contract until then.
 
 Schema:
 ```python
@@ -203,6 +218,25 @@ namespace. Read-only operations during render do not need a token.
 
 No custom upload code; all primitives come from the official libraries.
 
+### Known limitation: `--message` with `upload_large_folder`
+
+`HfApi.upload_large_folder` does **not accept** a `commit_message`
+argument — its docstring (huggingface_hub ≥ 1.13) states "you cannot
+set a custom `commit_message` and `commit_description` since multiple
+commits are created." The chunked upload auto-generates per-shard
+commit messages.
+
+We accept `--message <MSG>` for forward-compatibility (a future
+detection-mode parquet path may use `push_to_hub`, which honors it)
+and so the orchestrator's commit-message logic lives at one site, but
+the value **does not appear on the remote commit** for recognition
+uploads. The CLI prints a single-line stderr warning when `--message`
+is explicitly supplied so the gap is visible at run time. The
+auto-generated default (`pd-ocr-synth render @<recipe-sha>`) is
+likewise unstamped on the HF commit; we keep it because a future
+switch to `upload_folder` (for small datasets) would honor it
+verbatim.
+
 ## Dry run
 
 `--dry-run` shows what would be uploaded without contacting HF:
@@ -225,10 +259,11 @@ Content SHA: 2c4f8e... (no existing commit; first publish)
 | Failure | Behavior |
 |---------|----------|
 | Network error mid-upload | `upload_large_folder` resumes on retry; partial commit ok |
-| Auth error | Exit code 4; print the auth resolution chain |
+| Auth error | Exit code 7; print the auth resolution chain |
 | Repo doesn't exist | Auto-create unless `--no-create` |
 | Missing local render | Exit code 5 with "render first or use --render-first" |
 | Local output corrupt (manifest mismatch) | Exit code 6; refuse to upload partial data |
+| `--message` supplied | Stderr warning; flag accepted but `upload_large_folder` will not stamp it on the remote commit (see § Tooling used → Known limitation) |
 
 ## CLI summary
 

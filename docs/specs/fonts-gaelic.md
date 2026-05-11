@@ -143,6 +143,9 @@ After downloading and placing the fonts, run:
 pd-ocr-synth validate gaelic
 ```
 
-This opens each font, reports its glyph coverage against the transformed
-corpus, and warns about any codepoints in the corpus that no font in the
-weighted pool can render.
+This opens each font and surfaces `font_missing` / `font_unreadable` /
+`font_empty` errors (plus `optional_font_missing` warnings) — see
+`docs/specs/06-rendering.md` for the validator's font-check contract.
+Per-codepoint corpus-vs-font coverage reporting at validate time is
+deferred; today, missing glyphs are detected at *render* time and
+recorded as `missing_glyph` skip entries in the manifest.

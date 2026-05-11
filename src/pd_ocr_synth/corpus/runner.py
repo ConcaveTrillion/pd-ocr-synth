@@ -45,16 +45,28 @@ def run_providers(
     *,
     ctx: ProviderContext,
     apply_filters: bool = True,
+    no_cache: bool = False,
 ) -> Iterator[ProviderRunResult]:
     """Iterate ``recipe.corpus`` and run each entry's provider.
 
     ``apply_filters=True`` runs the per-entry filter after fetch; pass
     ``False`` for tests or callers that want raw provider output.
+
+    ``no_cache=True`` forces every provider to bypass the on-disk
+    corpus cache (mirrors the CLI ``--no-cache`` flag for the
+    ``preview`` and ``render`` subcommands; ``fetch`` already handles
+    this directly in its own loop). Providers that respect the
+    ``options["cache"]`` flag (web, wikisource, ...) will re-fetch
+    from upstream. ``ProviderRunResult.was_cached`` still reports the
+    on-disk cache state at scan time so callers can see what *would*
+    have been served from cache.
     """
 
     registry = default_registry()
     for index, entry in enumerate(recipe.corpus):
         options = _options_for(entry)
+        if no_cache:
+            options["cache"] = False
         provider = registry.get(entry.type)  # type: ignore[arg-type]
         cache_key = provider.cache_key(options)
         was_cached = ctx.cache.has(provider.type_name, cache_key)
@@ -88,6 +100,7 @@ def collect_corpus_text(
     recipe: Recipe,
     *,
     ctx: ProviderContext,
+    no_cache: bool = False,
 ) -> str:
     """Run providers, join their text, then apply ``recipe.text_transforms``.
 
@@ -95,6 +108,10 @@ def collect_corpus_text(
     joined with a blank-line separator so paragraph-aware transforms
     see distinct provider boundaries. The recipe's ``seed`` drives
     the text-transform RNG.
+
+    ``no_cache=True`` is forwarded to ``run_providers`` so the
+    ``--no-cache`` CLI flag bypasses the on-disk corpus cache for
+    every provider that honors ``options["cache"]``.
 
     This is the entry point M05 (render) will call to materialize the
     full pre-tokenization corpus.
@@ -105,7 +122,7 @@ def collect_corpus_text(
     # individual providers).
     from pd_ocr_synth.text_transforms import PipelineStep, apply_pipeline
 
-    chunks = [r.text for r in run_providers(recipe, ctx=ctx)]
+    chunks = [r.text for r in run_providers(recipe, ctx=ctx, no_cache=no_cache)]
     text = "\n\n".join(c for c in chunks if c)
 
     steps = [PipelineStep(name=t.name, options=dict(t.options)) for t in recipe.text_transforms]

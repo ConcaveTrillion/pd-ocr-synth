@@ -106,3 +106,85 @@ def test_cache_key_differs_by_parser(tmp_path: Path) -> None:
     a = p.cache_key({"url": "https://x", "parser": "plain"})
     b = p.cache_key({"url": "https://x", "parser": "html-text"})
     assert a != b
+
+
+def test_cache_key_differs_by_field_path() -> None:
+    """``field_path`` changes the parsed JSON output and so MUST shift
+    the cache key. Otherwise two recipes pulling different sub-trees
+    from the same URL would collide on disk."""
+
+    p = WebProvider()
+    base = {"url": "https://x/api.json", "parser": "json"}
+    no_path = p.cache_key(base)
+    path_a = p.cache_key({**base, "field_path": "$.entries[*].body"})
+    path_b = p.cache_key({**base, "field_path": "$.metadata.title"})
+    assert no_path != path_a
+    assert path_a != path_b
+    # Empty string and None must collapse so adding a default later
+    # doesn't silently invalidate every cached entry.
+    assert p.cache_key({**base, "field_path": ""}) == no_path
+    assert p.cache_key({**base, "field_path": None}) == no_path
+
+
+def test_cache_key_ignores_transport_options() -> None:
+    """retries / user_agent / timeout don't affect parsed content, so
+    they must not perturb the cache key."""
+
+    p = WebProvider()
+    base = {"url": "https://x/p", "parser": "plain"}
+    expected = p.cache_key(base)
+    for noise in (
+        {"retries": 7},
+        {"timeout_seconds": 99},
+        {"user_agent": "other/1.0"},
+        {"cache": False},
+    ):
+        assert p.cache_key({**base, **noise}) == expected, noise
+
+
+def test_invalid_json_response_raises_provider_error(tmp_path: Path) -> None:
+    """``parse_json`` raises ``ValueError``; the web provider must wrap
+    it so callers see a uniform ``ProviderError`` instead of a stray
+    ``json.JSONDecodeError`` leaking out of the corpus layer."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="<<not json>>")
+
+    ctx = _ctx(tmp_path, handler)
+    with pytest.raises(ProviderError, match="web parse failed"):
+        list(
+            WebProvider().fetch(
+                ctx,
+                {"url": "https://example.com/api", "parser": "json"},
+            )
+        )
+
+
+def test_field_path_round_trip_caches_separately(tmp_path: Path) -> None:
+    """End-to-end check: two fetches with different ``field_path`` on
+    the same URL must each round-trip via cache without collision."""
+
+    payload = '{"entries": [{"body": "alpha"}, {"body": "beta"}], "title": "T"}'
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=payload)
+
+    ctx = _ctx(tmp_path, handler)
+    options_a = {
+        "url": "https://example.com/api.json",
+        "parser": "json",
+        "field_path": "$.entries[*].body",
+    }
+    options_b = {
+        "url": "https://example.com/api.json",
+        "parser": "json",
+        "field_path": "$.title",
+    }
+    out_a = next(iter(WebProvider().fetch(ctx, options_a)))
+    out_b = next(iter(WebProvider().fetch(ctx, options_b)))
+    assert "alpha" in out_a and "beta" in out_a
+    assert "T" in out_b
+    # Both must be independently cached.
+    assert ctx.cache.has("web", WebProvider().cache_key(options_a))
+    assert ctx.cache.has("web", WebProvider().cache_key(options_b))
+    assert WebProvider().cache_key(options_a) != WebProvider().cache_key(options_b)
