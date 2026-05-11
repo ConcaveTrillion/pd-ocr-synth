@@ -293,5 +293,5 @@ def test_staging_builder_for_unknown_mode_raises_value_error() -> None:
     should produce an actionable error, not a silent attribute crash
     deep in the runner."""
 
-    with pytest.raises(ValueError, match="unsupported output.mode"):
+    with pytest.raises(ValueError, match=r"unsupported output\.mode"):
         _staging_builder_for("not-a-real-mode")

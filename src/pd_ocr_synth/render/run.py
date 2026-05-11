@@ -896,7 +896,7 @@ def _write_parallel_rendered(
     image = Image.open(BytesIO(payload["png_bytes"]))
     image.load()  # detach from the BytesIO
 
-    class _ParallelSample:  # noqa: N801 - one-shot data shim
+    class _ParallelSample:
         pass
 
     from pd_ocr_synth.render.sample import LineBox, ParagraphBox, WordBox

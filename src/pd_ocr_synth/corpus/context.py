@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pd_ocr_synth.corpus.cache import CacheStore
+
+
+def _default_logger() -> logging.Logger:
+    return logging.getLogger("pd_ocr_synth.corpus")
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,7 +27,7 @@ class ProviderContext:
     recipe_dir: Path
     cache: CacheStore
     offline: bool = False
-    logger: logging.Logger = logging.getLogger("pd_ocr_synth.corpus")
+    logger: logging.Logger = field(default_factory=_default_logger)
     http: object | None = None
 
     @property

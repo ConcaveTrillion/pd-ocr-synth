@@ -148,7 +148,7 @@ def sample_paragraph_style(recipe: Recipe, ctx: RenderContext) -> ParagraphStyle
             ctx.rng,
         )
     )
-    pixel_size = max(1, int(round(font_size_pt * dpi / 72.0)))
+    pixel_size = max(1, round(font_size_pt * dpi / 72.0))
     return ParagraphStyle(
         font_path=font.path,
         font_features=font.features,
@@ -238,10 +238,7 @@ def render_paragraph(
         )
     _validate_lines(lines)
 
-    if presampled is None:
-        style = sample_paragraph_style(recipe, ctx)
-    else:
-        style = presampled
+    style = sample_paragraph_style(recipe, ctx) if presampled is None else presampled
 
     font_path = style.font_path
     font_features = style.font_features
@@ -268,8 +265,8 @@ def render_paragraph(
     # natural unit for ``line_spacing``. We pull it from the freetype
     # face's size metrics (``height`` is in 26.6 fixed-point pixels
     # after ``set_pixel_sizes``).
-    line_height_px = max(1, int(round(handles.ft_face.size.height / 64.0)))
-    line_advance_px = max(1, int(round(line_height_px * spacing_mul)))
+    line_height_px = max(1, round(handles.ft_face.size.height / 64.0))
+    line_advance_px = max(1, round(line_height_px * spacing_mul))
 
     # Per-line shaped + composited fragments (no padding around each).
     # First pass: render every line at its **natural** width. For
@@ -489,14 +486,14 @@ class _LineFragment:
     """
 
     __slots__ = (
-        "image",
-        "width",
         "height",
+        "image",
         "inked_x0",
-        "inked_y0",
         "inked_x1",
+        "inked_y0",
         "inked_y1",
         "runs",
+        "width",
         "word_boxes",
     )
 
@@ -557,7 +554,7 @@ def _shape_and_composite_line(
         y_offset = pos.y_offset / 64.0
         x = pen_x + x_offset + bm["left"]
         y = pen_y - y_offset - bm["top"]
-        placements.append((bm, int(round(x)), int(round(y)), info.cluster))
+        placements.append((bm, round(x), round(y), info.cluster))
         pen_x += pos.x_advance / 64.0
         pen_y += pos.y_advance / 64.0
 

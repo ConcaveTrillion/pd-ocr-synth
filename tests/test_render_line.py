@@ -13,6 +13,7 @@ present (e.g. fresh checkout that hasn't run
 from __future__ import annotations
 
 import io
+import itertools
 from pathlib import Path
 
 import pytest
@@ -132,9 +133,7 @@ def test_render_line_word_boxes_are_left_to_right_and_disjoint(tmp_path: Path) -
     boxes = sample.word_boxes
     assert len(boxes) == 3
     # Strictly increasing x0; previous x1 not greater than next x0.
-    # ``strict=False`` because ``boxes[1:]`` is one shorter than ``boxes``
-    # by construction; we want the (n-1) consecutive pairs.
-    for prev, curr in zip(boxes, boxes[1:], strict=False):
+    for prev, curr in itertools.pairwise(boxes):
         assert prev.bbox[0] < curr.bbox[0], f"x0 not increasing: {prev=} {curr=}"
         assert prev.bbox[2] <= curr.bbox[0], (
             f"word bboxes overlap on x: {prev.text!r}{prev.bbox} vs {curr.text!r}{curr.bbox}"

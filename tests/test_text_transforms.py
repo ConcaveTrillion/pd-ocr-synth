@@ -169,7 +169,7 @@ def test_tironian_et_probability_is_deterministic() -> None:
 
 def test_long_s_medial_replaces_internal_s() -> None:
     out = long_s_medial("usual", {"probability": 1.0}, random.Random(0))
-    assert out == "uſual"
+    assert out == "u\u017fual"  # U+017F LATIN SMALL LETTER LONG S
 
 
 def test_long_s_medial_skips_word_final() -> None:
@@ -181,19 +181,19 @@ def test_long_s_medial_skips_before_s_or_h() -> None:
     out_ss = long_s_medial("possess", {"probability": 1.0}, random.Random(0))
     out_sh = long_s_medial("ashes", {"probability": 1.0}, random.Random(0))
     # 'possess': both internal 'ss' pairs left alone; trailing 's' word-final.
-    assert "ſſ" not in out_ss
+    assert "\u017f\u017f" not in out_ss
     # 'ashes': 'sh' preserved.
-    assert "ſh" not in out_sh
+    assert "\u017fh" not in out_sh
 
 
 def test_long_s_medial_word_initial_allowed() -> None:
     out = long_s_medial("sun", {"probability": 1.0}, random.Random(0))
-    assert out.startswith("ſ")
+    assert out.startswith("\u017f")  # U+017F LATIN SMALL LETTER LONG S
 
 
 def test_long_s_medial_uppercase_left_alone() -> None:
     out = long_s_medial("Substance Subdued", {"probability": 1.0}, random.Random(0))
-    # 'S' uppercase remains S; lowercase internal 's' becomes ſ where eligible.
+    # 'S' uppercase remains S; lowercase internal 's' becomes long-s (U+017F) where eligible.
     assert "S" in out
 
 

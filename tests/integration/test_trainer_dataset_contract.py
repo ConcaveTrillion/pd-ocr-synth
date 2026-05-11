@@ -488,9 +488,9 @@ def test_truthy_set_matches_publish_live_helper() -> None:
     confusing — a developer who sets ``PD_OCR_SYNTH_*=yes`` for one
     suite would expect the other to honor it too."""
 
-    from tests.integration.test_publish_live_hf import _TRUTHY as publish_truthy
+    from tests.integration.test_publish_live_hf import _TRUTHY as _PUBLISH_TRUTHY
 
-    assert _TRUTHY == publish_truthy, (
+    assert _PUBLISH_TRUTHY == _TRUTHY, (
         "integration tests should agree on what counts as a truthy "
         "env-var value; update both helpers together"
     )

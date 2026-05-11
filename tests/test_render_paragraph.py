@@ -12,6 +12,7 @@ present (e.g. fresh checkout that hasn't run
 from __future__ import annotations
 
 import io
+import itertools
 from pathlib import Path
 
 import pytest
@@ -192,7 +193,7 @@ def test_render_paragraph_lines_are_top_to_bottom_and_disjoint(tmp_path: Path) -
 
     boxes = sample.line_boxes
     assert len(boxes) == 3
-    for prev, curr in zip(boxes, boxes[1:], strict=False):
+    for prev, curr in itertools.pairwise(boxes):
         # y0 strictly increasing (next line lower on canvas).
         assert prev.bbox[1] < curr.bbox[1], (
             f"line y0 not increasing: prev={prev.bbox} curr={curr.bbox}"
@@ -1222,11 +1223,10 @@ def test_render_paragraph_alignment_justify_word_boxes_distribute_slack_evenly(
 
     deltas = [j.bbox[0] - lf.bbox[0] for j, lf in zip(line0_just, line0_left, strict=True)]
     # Word 0 unshifted; subsequent words shifted by an accumulating
-    # offset. With 3 inter-word gaps and slack S, deltas are
-    # [0, per_gap + r0, 2*per_gap + r0+r1, 3*per_gap + r0+r1+r2]
-    # where r_i is 1 for the first ``S % 3`` gaps and 0 otherwise.
-    # So: monotonic, deltas[0] == 0, deltas grow by either ``per_gap``
-    # or ``per_gap + 1`` each step.
+    # offset. With 3 inter-word gaps and slack S, each delta is
+    # i*per_gap + sum(r_k for k<i) where r_k is 1 for the first
+    # S%3 gaps and 0 otherwise. So: monotonic, deltas[0]==0,
+    # each step grows by either per_gap or per_gap+1.
     assert deltas[0] == 0
     assert deltas[1] >= deltas[0]
     assert deltas[2] >= deltas[1]
@@ -1318,7 +1318,7 @@ def test_render_paragraph_alignment_justify_word_boxes_remain_disjoint(
             (wb for wb in sample.word_boxes if ly0 <= wb.bbox[1] and wb.bbox[3] <= ly1),
             key=lambda w: w.bbox[0],
         )
-        for prev, curr in zip(line_words, line_words[1:], strict=False):
+        for prev, curr in itertools.pairwise(line_words):
             assert curr.bbox[0] >= prev.bbox[2], (
                 f"justified words overlap on line {line_box.text!r}: "
                 f"{prev.text!r} {prev.bbox} vs {curr.text!r} {curr.bbox}"

@@ -12,6 +12,7 @@ fetch the same data share a single cache slot.
 
 from __future__ import annotations
 
+import contextlib
 import datetime as _dt
 import hashlib
 import json
@@ -193,10 +194,8 @@ class CacheStore:
             # Clean up tmp leftovers if rename never happened.
             for tmp in (text_tmp, meta_tmp):
                 if tmp.exists():
-                    try:
+                    with contextlib.suppress(OSError):
                         tmp.unlink()
-                    except OSError:
-                        pass
         return meta
 
     # ----- delete / list -----

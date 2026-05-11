@@ -13,6 +13,7 @@ present (e.g. fresh checkout that hasn't run
 from __future__ import annotations
 
 import io
+import itertools
 from pathlib import Path
 
 import pytest
@@ -165,7 +166,7 @@ def test_render_page_line_boxes_flatten_paragraphs_in_order(tmp_path: Path) -> N
     # y0s strictly increasing top-to-bottom.
     y0s = [lb.bbox[1] for lb in sample.line_boxes]
     assert y0s == sorted(y0s)
-    for prev_y0, curr_y0 in zip(y0s, y0s[1:], strict=False):
+    for prev_y0, curr_y0 in itertools.pairwise(y0s):
         assert curr_y0 > prev_y0
 
 
@@ -288,7 +289,7 @@ def test_render_page_paragraph_bboxes_are_top_to_bottom_and_disjoint(
 
     boxes = sample.paragraph_boxes
     assert len(boxes) == 3
-    for prev, curr in zip(boxes, boxes[1:], strict=False):
+    for prev, curr in itertools.pairwise(boxes):
         assert prev.bbox[1] < curr.bbox[1]
         assert prev.bbox[3] <= curr.bbox[1], (
             f"paragraph bboxes overlap on y: prev={prev.bbox} curr={curr.bbox}"
@@ -711,7 +712,7 @@ def test_split_page_into_paragraph_lines_passes_indent_to_wrap_fitter(
     could change line 0's word count).
     """
 
-    from pd_ocr_synth.render.context import RenderContext as _RC
+    from pd_ocr_synth.render.context import RenderContext as _RenderCtx
     from pd_ocr_synth.render.page import sample_page_style
     from pd_ocr_synth.render.run import _split_page_into_paragraph_lines
 
@@ -761,11 +762,11 @@ def test_split_page_into_paragraph_lines_passes_indent_to_wrap_fitter(
     recipe_no = _build_recipe(tmp_path / "recipe-no.yaml", None)
     recipe_in = _build_recipe(tmp_path / "recipe-in.yaml", 80)
 
-    ctx_no = _RC.for_seed(recipe_no.seed)
+    ctx_no = _RenderCtx.for_seed(recipe_no.seed)
     ctx_no.reseed_for_sample(0)
     page_style_no = sample_page_style(recipe_no, ctx_no)
 
-    ctx_in = _RC.for_seed(recipe_in.seed)
+    ctx_in = _RenderCtx.for_seed(recipe_in.seed)
     ctx_in.reseed_for_sample(0)
     page_style_in = sample_page_style(recipe_in, ctx_in)
 

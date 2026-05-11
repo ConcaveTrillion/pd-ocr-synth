@@ -180,8 +180,8 @@ def test_field_path_round_trip_caches_separately(tmp_path: Path) -> None:
         "parser": "json",
         "field_path": "$.title",
     }
-    out_a = list(WebProvider().fetch(ctx, options_a))[0]
-    out_b = list(WebProvider().fetch(ctx, options_b))[0]
+    out_a = next(iter(WebProvider().fetch(ctx, options_a)))
+    out_b = next(iter(WebProvider().fetch(ctx, options_b)))
     assert "alpha" in out_a and "beta" in out_a
     assert "T" in out_b
     # Both must be independently cached.

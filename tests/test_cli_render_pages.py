@@ -24,6 +24,7 @@ disk (e.g. fresh checkout that hasn't run
 
 from __future__ import annotations
 
+import itertools
 import json
 from pathlib import Path
 
@@ -252,9 +253,9 @@ def test_render_pages_lines_appear_in_reading_order(
     # 4 lines = 2 paragraphs * 2 lines each. Sequential y-coordinates
     # must strictly increase across the page.
     ys = [(ln["bbox"][1], ln["bbox"][3]) for ln in lines]
-    for prev, nxt in zip(ys, ys[1:], strict=False):
-        prev_top, prev_bottom = prev
-        nxt_top, nxt_bottom = nxt
+    for prev, nxt in itertools.pairwise(ys):
+        _prev_top, prev_bottom = prev
+        nxt_top, _nxt_bottom = nxt
         assert nxt_top >= prev_bottom - 1, (
             f"line at y={nxt_top} overlaps previous line ending at y={prev_bottom}"
         )
@@ -443,7 +444,7 @@ def test_render_pages_wrap_fitter_splits_inside_each_paragraph(
 
     With two long paragraphs and a tight budget, the page should
     surface ``> 2`` lines: each paragraph wraps to multiple lines.
-    The total line count is at minimum 4 (2 paragraphs × 2 lines)
+    The total line count is at minimum 4 (2 paragraphs x 2 lines)
     but typically more. The joined word stream must recover every
     seed word in reading order.
     """

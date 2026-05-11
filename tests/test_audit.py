@@ -250,18 +250,18 @@ def test_append_audit_entry_closes_file_when_serialization_raises(
 
     audit_path = tmp_path / AUDIT_FILENAME
 
-    class _Boom(Exception):
+    class _BoomError(Exception):
         pass
 
     class _BadEntry:
         """AuditEntry-shaped stand-in whose serializer raises."""
 
-        def to_jsonl(self) -> str:  # noqa: D401 — test stub
-            raise _Boom("serialization failure")
+        def to_jsonl(self) -> str:
+            raise _BoomError("serialization failure")
 
     with _warnings.catch_warnings():
         _warnings.simplefilter("error", ResourceWarning)
-        with pytest.raises(_Boom):
+        with pytest.raises(_BoomError):
             append_audit_entry(audit_path, _BadEntry())  # type: ignore[arg-type]
         # Force the GC: an unclosed file would trip ResourceWarning
         # only on finalization, which CPython runs eagerly for

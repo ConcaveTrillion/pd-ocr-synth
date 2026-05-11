@@ -93,7 +93,7 @@ def render_word_crop(
         raise MissingGlyphError(text, font.path, missing)
 
     handles = ctx.font_handles(font.path)
-    pixel_size = max(1, int(round(font_size_pt * dpi / 72.0)))
+    pixel_size = max(1, round(font_size_pt * dpi / 72.0))
     handles.ft_face.set_pixel_sizes(pixel_size, pixel_size)
 
     info_glyphs, positions = _shape(handles.hb_face, text, pixel_size, font.features)
@@ -234,7 +234,7 @@ def _composite(
         # baseline-to-top distance, so glyph top edge is pen_y -
         # bitmap_top (with HarfBuzz y-offsets in font coords).
         y = pen_y - y_offset - bm["top"]
-        placements.append((bm, int(round(x)), int(round(y)), info.cluster))
+        placements.append((bm, round(x), round(y), info.cluster))
         pen_x += pos.x_advance / 64.0
         pen_y += pos.y_advance / 64.0
 

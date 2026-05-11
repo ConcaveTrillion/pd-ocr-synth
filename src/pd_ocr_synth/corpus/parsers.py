@@ -147,5 +147,5 @@ def get_parser(name: str) -> ParserFn:
         return PARSERS[name]
     except KeyError as exc:
         raise ProviderError(
-            f"unknown parser '{name}'. Known: {sorted(PARSERS) + ['json']}"
+            f"unknown parser '{name}'. Known: {[*sorted(PARSERS), 'json']}"
         ) from exc

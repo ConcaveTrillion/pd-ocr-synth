@@ -487,7 +487,7 @@ def test_implemented_shaping_engines_subset_of_model_literal() -> None:
     from pd_ocr_synth.validation import _IMPLEMENTED_SHAPING_ENGINES
 
     model_literal = frozenset(get_args(Rendering.model_fields["shaping_engine"].annotation))
-    assert _IMPLEMENTED_SHAPING_ENGINES <= model_literal, (
+    assert model_literal >= _IMPLEMENTED_SHAPING_ENGINES, (
         f"implemented engines {sorted(_IMPLEMENTED_SHAPING_ENGINES - model_literal)} "
         "are missing from Rendering.shaping_engine literal"
     )
@@ -2031,7 +2031,7 @@ def test_schema_version_unsupported_emission_is_defensive(
 # ---------------------------------------------------------------------------
 
 
-def test_VALIDATION_CODES_covers_every_emission_site() -> None:
+def test_VALIDATION_CODES_covers_every_emission_site() -> None:  # noqa: N802
     """Every ``code="..."`` in validation.py must appear in VALIDATION_CODES.
 
     Static scan of the source: walks every ``code="..."`` assignment
@@ -2059,7 +2059,7 @@ def test_VALIDATION_CODES_covers_every_emission_site() -> None:
     )
 
 
-def test_VALIDATION_CODES_no_stale_entries() -> None:
+def test_VALIDATION_CODES_no_stale_entries() -> None:  # noqa: N802
     """Every code in ``VALIDATION_CODES`` must have an emission site.
 
     Inverse of the previous test: walks ``src/pd_ocr_synth/validation.py``

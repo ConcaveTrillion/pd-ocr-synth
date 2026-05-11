@@ -259,7 +259,7 @@ def _argparse_subparsers(parser: argparse.ArgumentParser) -> dict[str, argparse.
     is designed to catch.
     """
 
-    for action in parser._actions:  # noqa: SLF001 — argparse-internal but stable
+    for action in parser._actions:
         if isinstance(action, argparse._SubParsersAction):
             return dict(action.choices)
     raise AssertionError("build_parser() has no subparsers action")
@@ -274,7 +274,7 @@ def _argparse_flags(subparser: argparse.ArgumentParser) -> set[str]:
     """
 
     flags: set[str] = set()
-    for action in subparser._actions:  # noqa: SLF001
+    for action in subparser._actions:
         for opt in action.option_strings:
             flags.add(opt)
     return flags
@@ -516,7 +516,7 @@ def _spec_lint_codes(spec_text: str) -> set[str]:
     return codes
 
 
-def test_spec_01_lint_codes_match_LINT_CODES() -> None:
+def test_spec_01_lint_codes_match_LINT_CODES() -> None:  # noqa: N802
     """The Lint codes table in spec 01 must equal ``LINT_CODES``.
 
     Both directions checked in one assertion:
@@ -592,7 +592,7 @@ def _spec_validation_codes(spec_text: str) -> set[str]:
     return codes
 
 
-def test_spec_01_validation_codes_match_VALIDATION_CODES() -> None:
+def test_spec_01_validation_codes_match_VALIDATION_CODES() -> None:  # noqa: N802
     """The Validation codes table in spec 01 must equal ``VALIDATION_CODES``.
 
     Both directions checked in one assertion:
@@ -717,7 +717,7 @@ _FONT_VALIDATOR_CODES_TODAY: frozenset[str] = frozenset(
 )
 
 
-def test_font_validator_codes_today_are_in_VALIDATION_CODES() -> None:
+def test_font_validator_codes_today_are_in_VALIDATION_CODES() -> None:  # noqa: N802
     """``_FONT_VALIDATOR_CODES_TODAY`` must be a subset of ``VALIDATION_CODES``.
 
     Sanity-check the list this test file uses to identify font-related
@@ -825,7 +825,7 @@ def _spec_audit_fields(spec_text: str) -> set[str]:
     return fields
 
 
-def test_spec_01_audit_schema_matches_AuditEntry() -> None:
+def test_spec_01_audit_schema_matches_AuditEntry() -> None:  # noqa: N802
     """The Audit log schema table in spec 01 must equal ``AuditEntry`` fields.
 
     Both directions checked in one assertion:
@@ -1091,7 +1091,7 @@ def test_corpus_model_types_documented_in_spec_04() -> None:
 #     ``web_list`` — that provider is roadmap-deferred, has no
 #     pydantic model, and the spec lists keys we'll need when it
 #     ships).
-#   - Assert ``provider_keys_in_spec ⊆ model_field_names ∪
+#   - Assert ``provider_keys_in_spec ⊆ model_field_names ∪  # noqa: RUF003
 #     ALLOWED_RUNTIME_KEYS``. A key in the spec but missing from both
 #     is real drift — exactly the iter-96 bug class.
 #
@@ -1530,7 +1530,7 @@ def test_every_argparse_dest_is_read_by_dispatch() -> None:
 
     drift: list[str] = []
     for sub_name, sub_parser in sub_map.items():
-        for action in sub_parser._actions:  # noqa: SLF001
+        for action in sub_parser._actions:
             dest = action.dest
             if dest in _DEST_READ_EXEMPT:
                 continue

@@ -1081,10 +1081,7 @@ def _parse_audit_timestamp(raw: str) -> str | None:
     # the writer's ``...Z`` form. ``astimezone(UTC)`` shifts an
     # ``+05:00`` instant to its UTC counterpart; a naive datetime
     # (date-only input) is bound to UTC verbatim.
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    else:
-        parsed = parsed.astimezone(UTC)
+    parsed = parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
     iso = parsed.isoformat()
     return iso.replace("+00:00", "Z")
 
@@ -1135,15 +1132,15 @@ def _summarize_audit_entries(entries: list[dict]) -> dict[str, Any]:
     for entry in entries:
         # Defensive ints: an audit row hand-edited to a string would
         # otherwise crash the summary. We coerce, falling back to 0.
-        try:
+        try:  # noqa: SIM105
             total_count += int(entry.get("count", 0) or 0)
         except (TypeError, ValueError):
             pass
-        try:
+        try:  # noqa: SIM105
             total_rendered += int(entry.get("rendered", 0) or 0)
         except (TypeError, ValueError):
             pass
-        try:
+        try:  # noqa: SIM105
             total_skipped += int(entry.get("skipped", 0) or 0)
         except (TypeError, ValueError):
             pass
@@ -1451,7 +1448,7 @@ def _cmd_audit(
         runtime = entry.get("runtime_seconds")
         runtime_text = f"{runtime:>10.2f}" if isinstance(runtime, int | float) else f"{'-':>10}"
         print(
-            f"{str(entry.get('timestamp', '')):<20}  {sha_short:<8}  {name:<24}  "
+            f"{entry.get('timestamp', '')!s:<20}  {sha_short:<8}  {name:<24}  "
             f"{int(entry.get('count', 0)):>6}  {int(entry.get('rendered', 0)):>8}  "
             f"{int(entry.get('skipped', 0)):>7}  {int(entry.get('seed', 0)):>6}  "
             f"{runtime_text}"

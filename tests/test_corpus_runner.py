@@ -109,7 +109,7 @@ layout:
     out = collect_corpus_text(recipe, ctx=ctx)
     assert "⁊" in out
     assert "ḃ" in out
-    assert "ſ" in out
+    assert "\u017f" in out  # U+017F LATIN SMALL LETTER LONG S
     assert "agus" not in out
 
 
