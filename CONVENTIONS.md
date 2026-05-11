@@ -1,0 +1,84 @@
+# Conventions — pd-ocr-synth
+
+<!-- workspace-conventions:start -->
+
+## Rule: No comments explaining what code does
+
+**The rule.** Don't add comments that restate what the code does;
+well-named identifiers already do that. Only add a comment when the
+WHY is non-obvious: a hidden constraint, a subtle invariant, or a
+workaround for a specific bug.
+
+**Why.** Comments rot when code changes and become misleading. The rule
+also applies to docstrings — one short line max; no multi-paragraph
+docstrings and no multi-line comment blocks.
+
+**Common high-confidence violations** (bot auto-fix candidates)
+
+- One-line summary comment immediately above a function that restates its name.
+- `# returns the X` or `# sets the Y` before a return/assignment statement.
+- Multi-line docstrings that explain every parameter with no non-obvious WHY.
+- Section divider blocks: `# ---…---` / `# ===…===` multi-line banners used as
+  navigation headers in test files — class names and blank lines already
+  provide structure; remove the banner, keep the blank lines.
+- Multi-paragraph module or class docstrings with a "Focus on:" / "Covers:"
+  section — collapse to a single-line summary.
+
+**Common judgment-call violations** (bot flags, CT decides)
+
+- Comments that reference the PR, issue, or task that introduced the code — belongs in commit message, not source.
+- Multi-line preamble that mixes WHY (worth keeping) with WHAT (worth removing).
+
+## Rule: Unicode escape sequences for ruff-flagged ambiguous characters
+
+**The rule.** Characters ruff flags under RUF001/002/003 (ambiguous Unicode —
+curly quotes, en-dashes, em-dashes, multiplication signs, non-breaking spaces,
+etc.) must be written as `\uXXXX` escape sequences in string and docstring
+literals. In comments, replace with the plain ASCII equivalent. In every case
+include a short inline comment naming the character, e.g.
+`"""  # LEFT DOUBLE QUOTATION MARK`.
+
+**Why.** Literal curly quotes and dashes are visually indistinguishable from
+ASCII equivalents in most editors and diff views, making string comparisons and
+grep silently fragile. Escape sequences make intent explicit and are safe across
+all encodings. `# noqa: RUF00x` masks the problem instead of fixing it.
+
+**Common high-confidence violations** (bot auto-fix candidates)
+
+- A string literal containing `"hello – world"` written with the literal
+  `–` character instead of the escape sequence.
+- `# noqa: RUF001`, `# noqa: RUF002`, or `# noqa: RUF003` suppressions instead
+  of escape sequences.
+- `RUF002` or `RUF003` added to `[tool.ruff.lint] ignore` in `pyproject.toml`
+  to paper over ambiguous characters.
+
+**Common judgment-call violations** (bot flags, CT decides)
+
+- Test strings that intentionally exercise curly-quote round-trip through the
+  OCR pipeline and must contain the literal character — keep the literal with an
+  explicit `# noqa: RUF001  # intentional: testing curly-quote round-trip`
+  comment that names the character and states the reason.
+
+## Rule: Use `uv run` for all Python and tool invocation
+
+**The rule.** Invoke Python, pytest, ruff, mypy/pyright, and any project-local
+CLI through `uv run`. Never call bare `python`, `python3`, `pytest`, or
+`pre-commit` from a Makefile target, CI step, or hook.
+
+**Why.** Direct invocation skips the project's `.venv` and the lockfile-pinned
+toolchain; tests pass locally and fail in CI (or vice versa) because the bare
+interpreter sees different installed package versions. `uv run` is uniformly
+fast (<200 ms warm) and always selects the project venv.
+
+**Common high-confidence violations** (bot auto-fix candidates)
+
+- `python -m pytest` or `python3 script.py` in any `Makefile`, `*.sh`,
+  `.github/workflows/*.yml`, or `.pre-commit-config.yaml` hook.
+- `pre-commit run` (bare) instead of `uv run pre-commit run` in CI or scripts.
+- `ruff check` or `pyright` (bare) in scripts that don't activate a venv first.
+
+**Common judgment-call violations** (bot flags, CT decides)
+
+- One-off REPL commands typed in CT's interactive shell — out of scope for this rule.
+
+<!-- workspace-conventions:end -->
