@@ -178,7 +178,7 @@ def _greedy_pack(
     current: list[str] = []
 
     for word in words:
-        trial = " ".join(current + [word])
+        trial = " ".join([*current, word])
         trial_width = _measure_width_px(
             trial,
             handles=handles,

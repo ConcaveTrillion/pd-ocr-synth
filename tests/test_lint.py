@@ -493,7 +493,7 @@ degradation:
 # ---------------------------------------------------------------------------
 
 
-def test_every_emitted_lint_code_is_in_LINT_CODES(
+def test_every_emitted_lint_code_is_in_lint_codes(
     tmp_path: Path, writable_font_bytes: bytes
 ) -> None:
     """A recipe that fails every check must only emit codes from LINT_CODES.
@@ -546,7 +546,7 @@ degradation:
     )
 
 
-def test_LINT_CODES_has_no_dead_entries(tmp_path: Path, writable_font_bytes: bytes) -> None:
+def test_lint_codes_has_no_dead_entries(tmp_path: Path, writable_font_bytes: bytes) -> None:
     """Every code in LINT_CODES must be reachable by at least one recipe.
 
     Combines the union of codes emitted by every "this lint fires"

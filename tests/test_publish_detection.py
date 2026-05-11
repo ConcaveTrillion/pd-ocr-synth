@@ -313,7 +313,7 @@ def test_detection_staging_raises_on_missing_labels(tmp_path: Path) -> None:
     (local / "images").mkdir()
     staging = tmp_path / "staging"
 
-    with pytest.raises(StagingError, match="labels.json"):
+    with pytest.raises(StagingError, match=r"labels\.json"):
         build_detection_staging(local, staging)
 
 

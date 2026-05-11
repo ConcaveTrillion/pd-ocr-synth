@@ -409,7 +409,7 @@ def test_wikisource_requires_titles_or_category(write_recipe) -> None:
         "  - type: local\n    path: ./seed.txt\n",
         ("  - type: local\n    path: ./seed.txt\n  - type: wikisource\n    language: ga\n"),
     )
-    with pytest.raises(ValidationError, match="titles.*category|category.*titles"):
+    with pytest.raises(ValidationError, match=r"titles.*category|category.*titles"):
         load_recipe(write_recipe(yaml_text))
 
 

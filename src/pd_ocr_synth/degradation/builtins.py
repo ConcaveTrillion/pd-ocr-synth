@@ -73,7 +73,7 @@ def _draw(value: Any, rng: Random) -> float:
 
 
 def _draw_int(value: Any, rng: Random) -> int:
-    return int(round(_draw(value, rng)))
+    return round(_draw(value, rng))
 
 
 def _to_rgb(image: Image.Image) -> Image.Image:
@@ -114,8 +114,8 @@ def _blur(image: Image.Image, options: dict[str, Any], rng: Random) -> Image.Ima
         dx = float(np.cos(rad))
         dy = float(np.sin(rad))
         for t in range(-center, center + 1):
-            x = int(round(center + t * dx))
-            y = int(round(center + t * dy))
+            x = round(center + t * dx)
+            y = round(center + t * dy)
             if 0 <= x < ksize and 0 <= y < ksize:
                 kernel[y, x] = 1.0
         if kernel.sum() == 0:
@@ -302,8 +302,8 @@ def _paper_texture(image: Image.Image, options: dict[str, Any], rng: Random) -> 
     # Optionally scale + rotate the texture before tiling onto the
     # render-sized canvas.
     if scale != 1.0:
-        tw = max(1, int(round(tex.width * scale)))
-        th = max(1, int(round(tex.height * scale)))
+        tw = max(1, round(tex.width * scale))
+        th = max(1, round(tex.height * scale))
         tex = tex.resize((tw, th), resample=Image.Resampling.BILINEAR)
     if rotate_deg != 0.0:
         tex = tex.rotate(
@@ -362,7 +362,7 @@ def _foxing(image: Image.Image, options: dict[str, Any], rng: Random) -> Image.I
         cx = rng.randint(0, iw - 1)
         cy = rng.randint(0, ih - 1)
         radius = max(1, _draw_int(options.get("radius_px", 4), rng))
-        intensity = int(round(255 * _draw(options.get("opacity", 0.3), rng)))
+        intensity = round(255 * _draw(options.get("opacity", 0.3), rng))
         draw.ellipse(
             (cx - radius, cy - radius, cx + radius, cy + radius),
             fill=intensity,
@@ -442,11 +442,6 @@ def _grayscale(image: Image.Image, options: dict[str, Any], rng: Random) -> Imag
     return Image.fromarray(out, mode="RGB")
 
 
-# ---------------------------------------------------------------------------
-# Geometry-aware (skew)
-# ---------------------------------------------------------------------------
-
-
 def _skew(sample: RenderedSample, options: dict[str, Any], rng: Random) -> RenderedSample:
     """Affine rotation around the image center; updates every bbox collection.
 
@@ -498,10 +493,10 @@ def _skew(sample: RenderedSample, options: dict[str, Any], rng: Random) -> Rende
             rotated_ys.append(ry)
         # Axis-aligned bbox of the rotated quad.
         return (
-            int(round(min(rotated_xs))),
-            int(round(min(rotated_ys))),
-            int(round(max(rotated_xs))),
-            int(round(max(rotated_ys))),
+            round(min(rotated_xs)),
+            round(min(rotated_ys)),
+            round(max(rotated_xs)),
+            round(max(rotated_ys)),
         )
 
     new_bbox = _rotate_box(sample.bbox)

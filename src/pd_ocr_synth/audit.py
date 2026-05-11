@@ -194,9 +194,7 @@ def should_emit_audit(*, audit: bool, env: dict[str, str] | None = None) -> bool
         return False
     environ = os.environ if env is None else env
     raw = environ.get(AUDIT_DISABLE_ENV, "").strip().lower()
-    if raw in {"1", "true", "yes", "on"}:
-        return False
-    return True
+    return raw not in {"1", "true", "yes", "on"}
 
 
 def should_emit_global_audit(*, audit: bool, env: dict[str, str] | None = None) -> bool:
@@ -221,9 +219,7 @@ def should_emit_global_audit(*, audit: bool, env: dict[str, str] | None = None) 
         return False
     environ = os.environ if env is None else env
     raw = environ.get(GLOBAL_AUDIT_DISABLE_ENV, "").strip().lower()
-    if raw in {"1", "true", "yes", "on"}:
-        return False
-    return True
+    return raw not in {"1", "true", "yes", "on"}
 
 
 def default_global_audit_path(env: dict[str, str] | None = None) -> Path:
@@ -258,10 +254,7 @@ def default_global_audit_path(env: dict[str, str] | None = None) -> Path:
     # log is conceptually upstream of corpora.
     environ = os.environ if env is None else env
     raw = environ.get("PD_OCR_SYNTH_CACHE")
-    if raw:
-        cache_root = Path(raw).expanduser()
-    else:
-        cache_root = Path.home() / ".cache" / "pd-ocr-synth"
+    cache_root = Path(raw).expanduser() if raw else Path.home() / ".cache" / "pd-ocr-synth"
     return cache_root / GLOBAL_AUDIT_FILENAME
 
 

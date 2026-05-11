@@ -230,10 +230,7 @@ def _front_matter(inputs: DatasetCardInputs) -> dict[str, Any]:
     # writing a blank ``license:`` to the front matter.
     override = (inputs.license_override or "").strip()
     license_value: Any
-    if override:
-        license_value = override
-    else:
-        license_value = publish.get("license")
+    license_value = override or publish.get("license")
     if license_value:
         fm["license"] = str(license_value)
 
@@ -406,7 +403,7 @@ def _stats_section(stats: dict[str, Any] | None, recipe: Mapping[str, Any]) -> s
             lines.append(f"- Paragraphs: {paragraphs_total}")
         wall = stats.get("wall_time_seconds")
         if isinstance(wall, (int, float)) and wall > 0:
-            lines.append(f"- Render time: {int(round(float(wall)))}s")
+            lines.append(f"- Render time: {round(float(wall))}s")
 
     if not lines:
         return None

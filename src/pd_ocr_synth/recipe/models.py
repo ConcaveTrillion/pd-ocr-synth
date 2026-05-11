@@ -392,11 +392,6 @@ class PublishBlock(_Frozen):
     hf_dataset: HFDatasetPublishConfig | None = None
 
 
-# ---------------------------------------------------------------------------
-# Recipe (top-level)
-# ---------------------------------------------------------------------------
-
-
 class Recipe(_Frozen):
     schema_version: int
     name: str
