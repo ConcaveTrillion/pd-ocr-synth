@@ -185,7 +185,7 @@ def _live_repo() -> Iterator[str]:
         from huggingface_hub import HfApi
 
         HfApi(token=token).delete_repo(repo_id, repo_type="dataset", missing_ok=True)
-    except Exception:  # noqa: BLE001 — cleanup is best-effort
+    except Exception:
         # Intentionally silent: a failed cleanup is a manual janitor
         # job, not a test failure. The repo is small + named so it's
         # easy to spot in the namespace if it lingers.

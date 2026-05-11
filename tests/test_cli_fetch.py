@@ -149,14 +149,14 @@ def test_fetch_parser_flag_surface_is_minimal() -> None:
     fetch_subparser = None
     import argparse as _argparse
 
-    for action in parser._actions:  # noqa: SLF001
+    for action in parser._actions:
         if isinstance(action, _argparse._SubParsersAction):
             fetch_subparser = action.choices.get("fetch")
             break
     assert fetch_subparser is not None, "fetch subparser missing from build_parser()"
 
     flags: set[str] = set()
-    for action in fetch_subparser._actions:  # noqa: SLF001
+    for action in fetch_subparser._actions:
         for opt in action.option_strings:
             flags.add(opt)
 

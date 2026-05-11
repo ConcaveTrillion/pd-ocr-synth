@@ -250,13 +250,13 @@ def test_append_audit_entry_closes_file_when_serialization_raises(
 
     audit_path = tmp_path / AUDIT_FILENAME
 
-    class _Boom(Exception):
+    class _Boom(Exception):  # noqa: N818
         pass
 
     class _BadEntry:
         """AuditEntry-shaped stand-in whose serializer raises."""
 
-        def to_jsonl(self) -> str:  # noqa: D401 — test stub
+        def to_jsonl(self) -> str:
             raise _Boom("serialization failure")
 
     with _warnings.catch_warnings():

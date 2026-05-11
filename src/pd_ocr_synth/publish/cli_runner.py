@@ -447,7 +447,7 @@ def cmd_publish(
         render_callable = render_first_callable or _default_render_first
         try:
             render_callable(path, local_output, None)
-        except Exception as exc:  # noqa: BLE001 — render exceptions are diverse
+        except Exception as exc:
             print(f"error: render failed before publish: {exc}", file=sys.stderr)
             return PUBLISH_RENDER_EXIT
 
