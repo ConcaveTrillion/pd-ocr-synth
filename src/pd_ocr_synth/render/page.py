@@ -35,7 +35,7 @@ What this primitive *does* enforce:
   the same single-font invariant that ``render_paragraph`` enforces
   within a paragraph, lifted to the page level.
 - ``layout.paragraph_spacing`` (a recipe scalar / range / weighted
-  choice with units of "× the font's nominal line height") drives the
+  choice with units of "\u00d7 the font's nominal line height") drives the
   vertical gap *between* paragraphs. Sampled once per page so the gap
   is uniform across the page. Defaults to ``1.0`` when the recipe
   field is unset — one extra line height between paragraphs, which
@@ -112,7 +112,7 @@ if TYPE_CHECKING:
 # Default multiplier when ``layout.paragraph_spacing`` is not set on
 # the recipe. ``1.0`` means "one extra nominal line height of gap
 # between paragraphs", which matches typical body-text typography
-# (a blank line between paragraphs). The unit is "× the font's
+# (a blank line between paragraphs). The unit is "x the font's
 # nominal line height", same as ``line_spacing``.
 _DEFAULT_PARAGRAPH_SPACING_MULTIPLIER = 1.0
 
@@ -224,10 +224,7 @@ def render_page(
 
     _validate_paragraphs(paragraphs)
 
-    if presampled is None:
-        style = sample_page_style(recipe, ctx)
-    else:
-        style = presampled
+    style = sample_page_style(recipe, ctx) if presampled is None else presampled
 
     para_style = style.paragraph_style
     padding = para_style.padding_px
@@ -244,13 +241,13 @@ def render_page(
         raise MissingGlyphError(flat_text, para_style.font_path, missing)
 
     # Compute the page-level paragraph_spacing in pixels. The
-    # multiplier is in units of "× nominal line height", same as
+    # multiplier is in units of "x nominal line height", same as
     # line_spacing. We use the paragraph style's pixel size to
     # derive line height the same way render_paragraph does.
     handles = ctx.font_handles(para_style.font_path)
     handles.ft_face.set_pixel_sizes(para_style.pixel_size, para_style.pixel_size)
-    line_height_px = max(1, int(round(handles.ft_face.size.height / 64.0)))
-    paragraph_gap_px = max(0, int(round(line_height_px * style.paragraph_spacing_multiplier)))
+    line_height_px = max(1, round(handles.ft_face.size.height / 64.0))
+    paragraph_gap_px = max(0, round(line_height_px * style.paragraph_spacing_multiplier))
 
     # Render each paragraph with zero padding so the page wraps the
     # whole thing in padding exactly once, not once per paragraph.

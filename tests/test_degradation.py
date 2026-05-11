@@ -257,7 +257,7 @@ def test_pipeline_probability_one_always_applies() -> None:
 def test_pipeline_probability_honored_across_many_seeds() -> None:
     """Empirical: at p=0.5 across 1000 seeds the apply rate is ~50%.
 
-    Tolerance is generous (40 %–60 %) because the seeds are arbitrary
+    Tolerance is generous (40 %\u201360 %) because the seeds are arbitrary
     and we don't want a flaky test, just one that catches a stage that
     silently always applies or always skips.
     """
@@ -718,7 +718,7 @@ def test_skew_propagates_to_every_box_collection() -> None:
     # axis-aligned bbox of a rotated rectangle is strictly larger than
     # the rotated rectangle itself, so child boxes can spill past their
     # parents' axis-aligned hulls by a few pixels at small angles. Six
-    # pixels is a generous upper bound for 6° on a 128 × 64 canvas.
+    # pixels is a generous upper bound for 6° on a 128 x 64 canvas.
     margin = 6
     paragraph_bbox = out.paragraph_boxes[0].bbox
 

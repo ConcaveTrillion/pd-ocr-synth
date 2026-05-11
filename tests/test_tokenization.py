@@ -36,9 +36,9 @@ def test_word_crops_drops_pure_punctuation_tokens() -> None:
 
 
 def test_word_crops_handles_unicode_apostrophe() -> None:
-    out = tokenize("d’fhág na fir", mode="word_crops")
+    out = tokenize("d\u2019fhág na fir", mode="word_crops")
     # The fancy apostrophe is internal and stays attached to its word.
-    assert "d’fhág" in out
+    assert "d\u2019fhág" in out
 
 
 def test_word_crops_skips_empty_input() -> None:
@@ -194,10 +194,10 @@ def test_unicode_line_separators_split_lines_but_not_paragraphs() -> None:
     Unicode-aware paragraph splitter is a deliberate change.
     """
     # Two U+2028 LINE SEPARATORs do split lines.
-    text = "p1  p2"
+    text = "p1\u2028\u2028p2"  # U+2028 LINE SEPARATOR
     assert tokenize(text, mode="lines") == ["p1", "p2"]
     # ...but they do NOT count as a paragraph boundary.
-    assert tokenize(text, mode="paragraphs") == ["p1  p2"]
+    assert tokenize(text, mode="paragraphs") == ["p1\u2028\u2028p2"]
 
 
 def test_word_crops_treats_nbsp_as_separator() -> None:
@@ -206,7 +206,7 @@ def test_word_crops_treats_nbsp_as_separator() -> None:
     Recipe authors who want NBSPs glued to their tokens must strip
     them in a text transform first.
     """
-    text = "word1 word2 word3"
+    text = "word1\u00a0word2\u00a0word3"  # U+00A0 NO-BREAK SPACE
     assert tokenize(text, mode="word_crops") == ["word1", "word2", "word3"]
 
 
