@@ -133,3 +133,6 @@ recipes/**/.overrides.yaml
 # /workspaces/ocr-container/.claude/agent-memory/, not per-repo. If you
 # see a .claude/ tree here, it is leakage; clean it up.
 .claude/
+
+# Hourly-regenerated spec-chain dashboard — workspace-only artifact, not source.
+docs/spec-chain-report.md
