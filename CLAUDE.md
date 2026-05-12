@@ -40,3 +40,9 @@ Full spec set in `docs/specs/00-N.md` (read in order). Roadmap milestones in `do
 
 - `../pd-ocr-trainer/` — consumes synth output; defines the profile directory layout this repo must match.
 - `../pd-book-tools/` — shared OCR/image primitives (potential future dependency).
+
+## Spec lifecycle
+
+Design spec files (`docs/specs/<date>-<topic>-design.md`) live in `docs/specs/` while the
+milestone's chore issues are open. When the last chore closes and the implementation ships,
+move the file to `docs/architecture/` and commit. See workspace `docs/conventions.md`.
