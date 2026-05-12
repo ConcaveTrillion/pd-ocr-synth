@@ -81,4 +81,32 @@ fast (<200 ms warm) and always selects the project venv.
 
 - One-off REPL commands typed in CT's interactive shell — out of scope for this rule.
 
+## Rule: Design spec files live in `docs/specs/` until the milestone ships
+
+**The rule.** A design spec file produced by `/spec-from-issue` lives at
+`docs/specs/<date>-<topic>-design.md` while the milestone's chore issues are open.
+When the milestone's last chore closes and the implementation lands, move the file to
+`docs/architecture/` in a housekeeping commit:
+
+```bash
+git mv docs/specs/<date>-<topic>-design.md docs/architecture/
+git commit -m "docs: promote <topic> spec to architecture/ (milestone shipped)"
+```
+
+Update any `Spec: docs/specs/...` pointers in still-open issues after the move.
+
+**Why.** `docs/specs/` is the active working area — implementing agents follow `Spec:`
+pointers to find their instructions. `docs/architecture/` is the permanent design record
+for shipped features. Mixing shipped and in-progress specs in one directory makes it
+unclear which specs are still authoritative for ongoing work.
+
+**Common high-confidence violations** (bot auto-fix candidates)
+
+- A spec file remaining in `docs/specs/` after its milestone's last chore issue closes.
+
+**Common judgment-call violations** (bot flags, CT decides)
+
+- A milestone with one chore still open but all substantive work done — CT decides
+  whether to move the spec early or wait for the final chore to close.
+
 <!-- workspace-conventions:end -->
