@@ -154,6 +154,8 @@ ignore = [
 # line-height multipliers; replacing with 'x' would be less precise.
 "src/pd_ocr_synth/render/paragraph.py" = ["RUF002", "RUF003"]
 "tests/integration/test_trainer_dataset_contract.py" = ["RUF002"]
+# CLI scripts and fixture scripts — print() is the output mechanism
+"scripts/*.py" = ["T201"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["pd_ocr_synth"]

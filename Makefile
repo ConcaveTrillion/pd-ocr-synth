@@ -1,3 +1,17 @@
+AI ?=
+LOG := .ci-ai.log
+
+ifdef AI
+_goals := $(or $(MAKECMDGOALS),ci)
+.PHONY: $(_goals)
+$(_goals):
+	@rm -f $(LOG)
+	@$(MAKE) --no-print-directory AI= $@ > $(LOG) 2>&1 \
+		&& echo "✅ $@ passed (log: $(LOG))" \
+		|| (echo "❌ $@ failed:"; uv run scripts/ai-filter-log.py $(LOG); echo "(full log: $(LOG))"; exit 1)
+
+else
+
 .PHONY: setup install uninstall remove-venv reset reset-full upgrade-deps \
 	test test-verbose test-single test-k coverage \
 	lint py-lint md-lint lint-fix py-lint-fix md-lint-fix format \
@@ -191,3 +205,5 @@ _do-release:
 .DEFAULT_GOAL := help
 
 -include Makefile.local
+
+endif
