@@ -1,4 +1,4 @@
-name: CI
+name: ci
 
 on:
   push:
@@ -6,26 +6,19 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   ci:
+    name: ci
     runs-on: ubuntu-latest
+    env:
+      UV_PYTHON: "3.13"
+      CUDA_VISIBLE_DEVICES: ""
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
+      - uses: astral-sh/setup-uv@v4
         with:
-          version: "latest"
-
-      - name: Set up dev environment
-        run: make setup
-
-      - name: Run CI pipeline
-        run: make ci
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: distribution-packages
-          path: dist/
-          retention-days: 30
+          version: latest
+      - run: make ci
