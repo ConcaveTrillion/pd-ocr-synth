@@ -10,23 +10,23 @@ Architecture: `docs/specs/00-overview.md`.
 
 | target | does |
 |---|---|
-| `make setup` | `uv sync` + pre-commit hooks |
-| `make test` | `uv run pytest -n auto` |
-| `make lint` / `make lint-fix` | ruff + markdownlint via pre-commit (with auto-fix) |
-| `make format` | ruff format then lint |
-| `make ci` | setup → pre-commit → test → build |
-| `make schema` | regenerate `docs/specs/recipe.schema.json` from pydantic models |
+| `make setup AI=1` | `uv sync` + pre-commit hooks |
+| `make test AI=1` | `uv run pytest -n auto` |
+| `make lint AI=1` / `make lint-fix AI=1` | ruff + markdownlint via pre-commit (with auto-fix) |
+| `make format AI=1` | ruff format then lint |
+| `make ci AI=1` | setup → pre-commit → test → build |
+| `make schema AI=1` | regenerate `docs/specs/recipe.schema.json` from pydantic models |
 | `make fetch-fonts` | download Gaelic fonts (interactive — do not run non-interactively) |
-| `make gaelic-preview` | render 50 preview samples for the Gaelic recipe (requires M07) |
-| `make build` | wheel + sdist into `dist/` |
+| `make gaelic-preview AI=1` | render 50 preview samples for the Gaelic recipe (requires M07) |
+| `make build AI=1` | wheel + sdist into `dist/` |
 
-Always pass `AI=1` to make targets: `make ci AI=1`, `make test AI=1`, etc.
-This captures verbose output to `.ci-ai.log` and prints only `✅ <target>
-passed` on success or filtered failure sections on error. Remove `AI=1` only
-if you need full verbose output for debugging.
+`AI=1` captures verbose output to `.ci-ai.log`; stdout shows `✅` on pass or
+filtered failure sections on error. Remove `AI=1` only if you need full verbose
+output for debugging.
 
 ## Rules
 
+- Always run `make ci AI=1` before committing.
 - Make targets first; fall back to `uv run …` only when no target exists.
 - Never `python -m pytest`. Always `uv run pytest -n auto` or `make test`.
   Bare `python`/`python3`/`.venv/bin/python` miss the venv.
