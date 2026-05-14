@@ -20,6 +20,11 @@ Architecture: `docs/specs/00-overview.md`.
 | `make gaelic-preview` | render 50 preview samples for the Gaelic recipe (requires M07) |
 | `make build` | wheel + sdist into `dist/` |
 
+Append `AI=1` to any target for agent-friendly output — verbose output is
+captured to `.ci-ai.log`; stdout shows `✅ <target> passed` on success or
+filtered failure sections on error. Works for every target: `make ci AI=1`,
+`make test AI=1`, etc.
+
 ## Rules
 
 - Make targets first; fall back to `uv run …` only when no target exists.
