@@ -63,6 +63,7 @@ lint = [
     "ruff>=0.13",
     "pre-commit>=4.3",
     "basedpyright>=1.39.4",
+    "gitlint>=0.19.1",
 ]
 dev = [
     {include-group = "test"},
