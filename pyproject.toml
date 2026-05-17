@@ -100,13 +100,24 @@ Issues = "https://github.com/ConcaveTrillion/pd-ocr-synth/issues"
 packages = ["src/pd_ocr_synth"]
 
 [tool.pytest.ini_options]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--cov=pd_ocr_synth",
+    "--cov-branch",
+    "--cov-report=term-missing:skip-covered",
+]
 testpaths = ["tests"]
-addopts = "-ra --strict-markers"
-pythonpath = ["src"]
+pythonpath = ["src"]   # KEEP — src-layout requires this
 markers = [
     "unit: fast in-process tests",
     "integration: tests touching disk / network",
     "slow: long-running tests",
+]
+filterwarnings = [
+    "error",
+    # Add ignores below as new warnings surface — each with a comment.
 ]
 
 [tool.coverage.run]
