@@ -1,30 +1,65 @@
+default_install_hook_types: [pre-commit, commit-msg]
+
 repos:
-  - repo: https://github.com/pre-commit/pre-commit-hooks
+-   repo: https://gitlab.com/vojko.pribudic.foss/pre-commit-update
+    rev: v0.9.0
+    hooks:
+    -   id: pre-commit-update
+-   repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
-      - id: trailing-whitespace
-      - id: end-of-file-fixer
-      - id: check-yaml
-      - id: check-json
-      - id: check-added-large-files
-        args: ["--maxkb=512"]
-      - id: check-merge-conflict
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.12
+    -   id: trailing-whitespace
+    -   id: end-of-file-fixer
+    -   id: check-yaml
+    -   id: check-json
+    -   id: check-toml
+    -   id: check-added-large-files
+        args: [--maxkb=1000]
+    -   id: debug-statements      # catches leftover pdb/ipdb/breakpoint()
+    -   id: check-merge-conflict
+-   repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
     hooks:
-      # Run the linter for imports
-      - id: ruff-check
+    -   id: gitleaks
+-   repo: https://github.com/astral-sh/ruff-pre-commit
+  # Ruff version.
+    rev: v0.15.13
+    hooks:
+    # Run the linter for imports
+    -   id: ruff-check
         args: [--select, I, --fix]
-      # Lint + autofix
-      - id: ruff-check
+    # Automatically fix issues.
+    -   id: ruff-check
         args: [--fix]
-      # Formatter
-      - id: ruff-format
-  - repo: https://github.com/DavidAnson/markdownlint-cli2
+    # Run the formatter.
+    -   id: ruff-format
+-   repo: https://github.com/DavidAnson/markdownlint-cli2
     rev: v0.22.1
     hooks:
-      - id: markdownlint-cli2
-      - id: markdownlint-cli2
+    -   id: markdownlint-cli2
+    -   id: markdownlint-cli2
         alias: markdownlint-cli2-fix
         args: [--fix]
         stages: [manual]
+-   repo: local
+    hooks:
+    -   id: uv-lock-check
+        name: uv.lock is in sync with pyproject.toml
+        entry: uv lock --check
+        language: system
+        stages: [pre-commit]
+        pass_filenames: false
+        files: ^(pyproject\.toml|uv\.lock)$
+
+    -   id: basedpyright
+        name: basedpyright type check (recommended mode; workspace canonical)
+        entry: uv run basedpyright src/pd_ocr_synth --level error
+        language: system
+        stages: [pre-commit]
+        pass_filenames: false
+        files: ^src/pd_ocr_synth/.*\.py$
+-   repo: https://github.com/jorisroovers/gitlint
+    rev: v0.19.1
+    hooks:
+    -   id: gitlint
+        stages: [commit-msg]
