@@ -118,11 +118,10 @@ def _walk_json(node: object, parts: list[str]) -> list[object]:
                     nxt.extend(item.values())
                 else:
                     raise ProviderError(f"json field_path '*' on non-collection: {type(item)}")
+            elif isinstance(item, dict) and part in item:
+                nxt.append(item[part])
             else:
-                if isinstance(item, dict) and part in item:
-                    nxt.append(item[part])
-                else:
-                    raise ProviderError(f"json field_path segment {part!r} missing")
+                raise ProviderError(f"json field_path segment {part!r} missing")
         current = nxt
     return current
 
@@ -142,7 +141,8 @@ PARSERS: dict[str, ParserFn] = {
 
 def get_parser(name: str) -> ParserFn:
     """Look up a parser by name. ``json`` is special-cased by callers
-    because it accepts an additional ``field_path`` option."""
+    because it accepts an additional ``field_path`` option.
+    """
     try:
         return PARSERS[name]
     except KeyError as exc:

@@ -60,7 +60,7 @@ test = [
     "pytest-cov>=7.0",
 ]
 lint = [
-    "ruff>=0.13",
+    "ruff>=0.15.13",
     "pre-commit>=4.3",
     "basedpyright>=1.39.4",
     "gitlint>=0.19.1",
@@ -126,38 +126,183 @@ target-version = "py313"
 
 [tool.ruff.lint]
 select = [
-    "E",    # pycodestyle errors
-    "W",    # pycodestyle warnings
-    "F",    # pyflakes
-    "I",    # isort
-    "N",    # pep8-naming
-    "B",    # flake8-bugbear
-    "C4",   # flake8-comprehensions
-    "SIM",  # flake8-simplify
-    "UP",   # pyupgrade
-    "RUF",  # ruff-specific rules
-    "ERA",  # eradicate (commented-out code)
-    "T20",  # flake8-print
+    # Current baseline
+    "E", "W",       # pycodestyle errors/warnings
+    "F",            # pyflakes
+    "I",            # isort (replaces standalone isort)
+    "N",            # pep8-naming
+    "B",            # flake8-bugbear — mutable defaults, broad excepts, etc.
+    "SIM",          # flake8-simplify
+    "UP",           # pyupgrade
+    "RUF",          # ruff-specific rules
+    "ERA",          # eradicate — commented-out code
+    "T20",          # flake8-print
+    # Added per 2026-05-17 strict-linting decisions
+    "ANN",          # flake8-annotations — force type hints on all sigs
+    "S",            # flake8-bandit — security rules
+    "C4",           # flake8-comprehensions
+    "PERF",         # perflint — performance anti-patterns
+    "TC",           # flake8-type-checking — move type-only imports to TYPE_CHECKING
+    "TID",          # flake8-tidy-imports
+    "PT",           # flake8-pytest-style
+    "RET",          # flake8-return
+    "PL",           # pylint subset (PLC + PLE + PLR + PLW)
+    "D",            # pydocstyle
+    # Added per 2026-05-17 guidelines audit (BLE/TRY/LOG/G)
+    "BLE",          # flake8-blind-except
+    "TRY",          # tryceratops — TRY400 enforces log.exception over log.error in except
+    "LOG",          # flake8-logging — proper log.* usage
+    "G",            # flake8-logging-format — lazy formatting in log calls
 ]
 ignore = [
-    "E501",  # line too long (handled by formatter)
+    # Line length: many long docstrings, error messages, and URLs; enforcing
+    # 88-char wrapping everywhere adds noise without improving readability.
+    "E501",
+    # Docstring style: D203 (1-blank-before-class-docstring) conflicts with
+    # D211 (no-blank-before-class-docstring); D212 (multi-line-summary-first-line)
+    # conflicts with D213 (multi-line-summary-second-line). Pick one of each pair.
+    "D203",
+    "D212",
+    # Missing docstrings on public modules/packages/magic-methods: large
+    # existing codebase; add incrementally, not in a single lint sweep.
+    "D100",
+    "D104",
+    "D107",
+    # ANN101/ANN102 (self/cls annotations) deprecated and removed in ruff >= 0.2.
+    # Keep entries to avoid errors if running older ruff versions.
+    # "ANN101",  # removed
+    # "ANN102",  # removed
+    # PLR0913 (too-many-arguments): render/corpus functions legitimately need many
+    # params; enforcing here would require invasive config-object refactors.
+    "PLR0913",
+    # PLR2004 (magic-value-comparison): common in OCR geometry/threshold code.
+    "PLR2004",
+    # TRY003 (long-message-outside-exception-class): too noisy for a library
+    # that uses f-string error messages everywhere.
+    "TRY003",
+    # COM812 (missing-trailing-comma): conflicts with ruff formatter auto-style.
+    "COM812",
+    # PLC0415 (import-not-at-top-level): deferred imports are a legitimate
+    # pattern here — used to avoid loading optional-heavy modules (uharfbuzz,
+    # freetype-py, pillow) until needed. Suppressing globally.
+    "PLC0415",
+    # PLR complexity rules: render pipeline functions legitimately have high
+    # branch/return counts; enforcing these would require invasive refactors
+    # not warranted by the linting rollout.
+    "PLR0912",  # too-many-branches
+    "PLR0911",  # too-many-return-statements
+    "PLR0915",  # too-many-statements
+    # ANN401 (dynamically-typed-expressions): some functions legitimately
+    # accept/return Any (e.g. recipe-value samplers, degradation dispatch).
+    "ANN401",
+    # D205 (1-blank-line-required-between-summary-and-description): enforcing
+    # this across the entire docstring backlog is too noisy for one commit.
+    "D205",
+    # D105 (missing-docstring-in-magic-method): __repr__, __eq__, etc. are
+    # self-documenting; require incrementally on new code only.
+    "D105",
+    # D202 (no-blank-lines-after-docstring): large existing codebase with
+    # this style; autofix would touch 200+ locations. Defer.
+    "D202",
+    # D413 (missing-blank-line-after-last-section): large backlog; defer.
+    "D413",
+    # D102 (missing-docstring-in-public-method): large backlog; add incrementally.
+    "D102",
+    # D103 (missing-docstring-in-public-function): large backlog; add incrementally.
+    "D103",
+    # D101 (missing-docstring-in-public-class): large backlog; defer.
+    "D101",
 ]
 
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
 [tool.ruff.lint.per-file-ignores]
-# CLI and render runner use print() as the primary user-facing output mechanism.
-"src/pd_ocr_synth/cli.py" = ["T201"]
-"src/pd_ocr_synth/publish/cli_runner.py" = ["T201"]
-"src/pd_ocr_synth/render/run.py" = ["T201"]
-# Utility script — print to stderr is expected.
-"scripts/generate-paper-textures.py" = ["T201"]
-# E2E visual-regression tests compare rendered output; print is intentional debug output.
-"tests/test_render_visual_regression*.py" = ["T201"]
+# Tests: assert is the idiom (S101); magic numbers common (PLR2004); no
+# annotations required (ANN); no docstrings required (D); security rules
+# relaxed (S105/S106/S311 — hardcoded passwords/random are test fixtures);
+# pytest.raises match= not required for every test (PT011);
+# /tmp paths are fine in tests (S108); trivial comparisons can be intentional (PLR0133);
+# loop-var reassignment as pattern (PLW2901); list-building loops in tests are fine (PERF401).
+"tests/**/*.py" = ["S101", "S105", "S106", "S311", "T201", "ANN", "D", "PLR2004", "PT011", "PT018", "PT019", "S108", "PLR0133", "PLR1714", "PLW2901", "PERF401", "TRY", "BLE", "RET", "TC", "G", "PLC0206", "S110", "S112"]
+"tests/*.py" = ["S101", "S105", "S106", "S311", "T201", "ANN", "D", "PLR2004", "PT011", "PT018", "PT019", "S108", "PLR0133", "PLR1714", "PLW2901", "PERF401", "TRY", "BLE", "RET", "TC", "G", "PLC0206", "S110", "S112"]
+# Scripts: print() is the output mechanism; no docstrings required; S607 partial
+# executable path is idiomatic when invoking system tools (uv, git, etc.)
+"scripts/*.py" = ["T201", "D", "S607", "ANN", "BLE", "TRY", "RET", "TC"]
+# __init__.py: re-exports without docstrings; F401 used for public API surface.
+"**/__init__.py" = ["D104", "F401", "TC"]
+# Private modules: internal convention, no docstrings required.
+"**/_*.py" = ["D"]
 # Typography docs use × (MULTIPLICATION SIGN) as the standard unit notation for
 # line-height multipliers; replacing with 'x' would be less precise.
-"src/pd_ocr_synth/render/paragraph.py" = ["RUF002", "RUF003"]
+"src/pd_ocr_synth/render/paragraph.py" = ["RUF002", "RUF003", "ANN", "D", "G", "BLE", "TRY", "TC"]
 "tests/integration/test_trainer_dataset_contract.py" = ["RUF002"]
-# CLI scripts and fixture scripts — print() is the output mechanism
-"scripts/*.py" = ["T201"]
+# --- ANN/D/BLE/TRY/G/TC deferred backlog (2026-05-17 rollout) ---
+# Large existing codebase with annotation, docstring, and type-import debt.
+# Each category group below should get focused follow-on commits.
+# TC (flake8-type-checking) suppressed across all src: 37 files have imports
+# that should move to TYPE_CHECKING blocks. Deferred — mechanical fix for
+# a future cleanup commit.
+# CLI/runner files: print() is the primary output mechanism (T201 preserved).
+# render/run.py: S101 (assert in worker), S311 (rng not crypto)
+"src/pd_ocr_synth/render/run.py" = ["T201", "ANN", "D", "G", "BLE", "TRY", "TC", "PERF401", "PLW0603", "S108", "S101", "S311"]
+"src/pd_ocr_synth/publish/cli_runner.py" = ["T201", "ANN", "D", "G", "BLE", "TRY", "TC", "PERF401"]
+"src/pd_ocr_synth/cli.py" = ["T201", "ANN", "D", "G", "BLE", "TRY", "TC"]
+"src/pd_ocr_synth/render/word_crop.py" = ["ANN", "D", "G", "BLE", "TRY", "TC"]
+"src/pd_ocr_synth/render/line.py" = ["ANN", "D", "G", "BLE", "TRY", "TC"]
+"src/pd_ocr_synth/render/page.py" = ["ANN", "D", "G", "BLE", "TRY", "TC"]
+# render/context.py: S311 (random is intentional for visual sampling, not crypto)
+"src/pd_ocr_synth/render/context.py" = ["ANN", "D", "G", "BLE", "TRY", "TC", "S311"]
+"src/pd_ocr_synth/render/sampling.py" = ["ANN", "D", "TC"]
+"src/pd_ocr_synth/render/sample.py" = ["D", "TC"]
+# render/preview.py: PLW0603 (worker-init globals), S101/S311 patterns
+"src/pd_ocr_synth/render/preview.py" = ["ANN", "D", "G", "BLE", "TRY", "TC", "PLW0603", "S101", "S311"]
+"src/pd_ocr_synth/publish/dataset_card.py" = ["ANN", "D", "G", "BLE", "TRY", "TC", "PERF401"]
+# publish/summary.py|recognition.py: PLW2901 (loop var reassignment is intentional)
+"src/pd_ocr_synth/publish/summary.py" = ["ANN", "D", "G", "BLE", "TRY", "TC", "PLW2901"]
+"src/pd_ocr_synth/publish/recognition.py" = ["ANN", "D", "G", "BLE", "TRY", "TC", "PLW2901"]
+"src/pd_ocr_synth/publish/detection.py" = ["ANN", "D", "G", "BLE", "TRY", "TC"]
+"src/pd_ocr_synth/publish/hf_hub_transport.py" = ["ANN", "D", "G", "BLE", "TRY", "TC"]
+# publish/auth.py: S105 (env var name strings are not passwords)
+"src/pd_ocr_synth/publish/auth.py" = ["ANN", "D", "G", "BLE", "TRY", "TC", "S105"]
+"src/pd_ocr_synth/publish/idempotency.py" = ["ANN", "D", "G", "BLE", "TRY", "TC"]
+"src/pd_ocr_synth/publish/orchestrator.py" = ["ANN", "D", "G", "BLE", "TRY", "TC"]
+"src/pd_ocr_synth/publish/preflight.py" = ["ANN", "D", "G", "BLE", "TRY", "TC"]
+"src/pd_ocr_synth/publish/transport.py" = ["ANN", "D", "G", "BLE", "TRY", "TC"]
+"src/pd_ocr_synth/publish/commit_message.py" = ["ANN", "D", "G", "BLE", "TRY", "TC"]
+"src/pd_ocr_synth/publish/content_sha.py" = ["ANN", "D", "G", "BLE", "TRY", "TC"]
+"src/pd_ocr_synth/publish/redaction.py" = ["ANN", "D", "G", "BLE", "TRY", "TC"]
+"src/pd_ocr_synth/publish/sdk_transport.py" = ["ANN", "D", "G", "BLE", "TRY", "TC"]
+# output/: PLW2901/PERF401/RET504 patterns
+"src/pd_ocr_synth/output/detection.py" = ["ANN", "D", "G", "BLE", "TRY", "TC", "PERF401", "PLW2901"]
+"src/pd_ocr_synth/output/recognition.py" = ["ANN", "D", "G", "BLE", "TRY", "TC", "PLW2901", "RET504"]
+"src/pd_ocr_synth/output/snapshot.py" = ["ANN", "D", "G", "BLE", "TRY", "TC", "PERF401"]
+"src/pd_ocr_synth/corpus/context.py" = ["ANN", "D", "TC"]
+"src/pd_ocr_synth/corpus/parsers.py" = ["ANN", "D", "G", "BLE", "TRY", "TC"]
+"src/pd_ocr_synth/corpus/filters.py" = ["ANN", "D", "G", "BLE", "TRY", "TC"]
+"src/pd_ocr_synth/corpus/http.py" = ["ANN", "D", "G", "BLE", "TRY", "TC", "S"]
+"src/pd_ocr_synth/corpus/wikisource.py" = ["ANN", "D", "G", "BLE", "TRY", "TC"]
+"src/pd_ocr_synth/corpus/hf_dataset.py" = ["ANN", "D", "G", "BLE", "TRY", "TC"]
+"src/pd_ocr_synth/corpus/web.py" = ["ANN", "D", "G", "BLE", "TRY", "TC"]
+"src/pd_ocr_synth/corpus/providers/local.py" = ["ANN", "D", "G", "BLE", "TRY", "TC"]
+"src/pd_ocr_synth/corpus/providers/web.py" = ["ANN", "D", "G", "BLE", "TRY", "TC", "TRY300"]
+"src/pd_ocr_synth/corpus/providers/wikisource.py" = ["ANN", "D", "G", "BLE", "TRY", "TC"]
+"src/pd_ocr_synth/corpus/registry.py" = ["ANN", "D", "G", "BLE", "TRY", "TC", "S", "PLW0603", "PLW2901"]
+"src/pd_ocr_synth/corpus/runner.py" = ["ANN", "D", "G", "BLE", "TRY", "TC"]
+"src/pd_ocr_synth/degradation/pipeline.py" = ["ANN", "D", "G", "BLE", "TRY", "TC", "PLW0603"]
+"src/pd_ocr_synth/degradation/builtins.py" = ["ANN", "D", "G", "BLE", "TRY", "TC", "S311"]
+"src/pd_ocr_synth/validation.py" = ["ANN", "D", "G", "BLE", "TRY", "TC"]
+"src/pd_ocr_synth/lint.py" = ["ANN", "D", "G", "BLE", "TRY", "TC"]
+"src/pd_ocr_synth/fonts.py" = ["ANN", "D", "G", "BLE", "TRY", "TC"]
+"src/pd_ocr_synth/tokenization.py" = ["ANN", "D", "TC"]
+"src/pd_ocr_synth/recipe/models.py" = ["TC"]
+"src/pd_ocr_synth/recipe_search.py" = ["ANN", "D", "G", "BLE", "TRY", "TC", "PLW2901"]
+"src/pd_ocr_synth/recipe_init.py" = ["ANN", "D", "G", "BLE", "TRY", "TC"]
+"src/pd_ocr_synth/audit.py" = ["ANN", "D", "G", "BLE", "TRY", "TC"]
+"src/pd_ocr_synth/text_transforms/builtins.py" = ["ANN", "D", "G", "BLE", "TRY", "TC"]
+"src/pd_ocr_synth/text_transforms/pipeline.py" = ["ANN", "D", "G", "BLE", "TRY", "TC", "S311"]
+"src/pd_ocr_synth/text_transforms/registry.py" = ["ANN", "D", "G", "BLE", "TRY", "TC", "PLW0603", "S112"]
+"src/pd_ocr_synth/publish/__init__.py" = ["D104", "F401", "TC", "ANN"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["pd_ocr_synth"]

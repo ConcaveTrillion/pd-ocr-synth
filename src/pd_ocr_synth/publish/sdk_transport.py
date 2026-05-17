@@ -64,12 +64,12 @@ def make_default_transport(token: str) -> HfTransport:
         into ``HfApi(token=...)`` by the adapter so per-call ``token=``
         plumbing isn't needed.
 
-    Returns
+    Returns:
     -------
     HfTransport
         The production SDK-backed transport.
 
-    Raises
+    Raises:
     ------
     SdkUnavailableError
         ``huggingface_hub`` cannot be imported (the ``[publish]``

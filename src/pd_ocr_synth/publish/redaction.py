@@ -91,14 +91,14 @@ def redact_token(text: str) -> str:
         ``HfHubHTTPError`` we just caught, or the wrapper string we
         are about to ``raise TransportError(...)`` with.
 
-    Returns
+    Returns:
     -------
     str
         Same string with every ``hf_<...>`` / ``api_org_<...>`` run
         of 20+ alphanumeric characters replaced by
         :data:`REDACTED_SENTINEL`.
 
-    Examples
+    Examples:
     --------
     >>> redact_token("401 Unauthorized: bad token hf_AAAAAAAAAAAAAAAAAAAAAA")
     '401 Unauthorized: bad token [redacted-hf-token]'

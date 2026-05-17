@@ -47,7 +47,7 @@ def default_commit_message(recipe_sha: str | None) -> str:
         "is this staging dir publishable"; the formatter does not
         re-litigate that decision.
 
-    Returns
+    Returns:
     -------
     str
         The formatted commit message. Single-line; no trailing newline.
@@ -55,7 +55,7 @@ def default_commit_message(recipe_sha: str | None) -> str:
         bodies, but the spec's example is a single line and matching
         it keeps the grep-target simple.
 
-    Examples
+    Examples:
     --------
     >>> default_commit_message("a" * 64)
     'pd-ocr-synth render @aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
@@ -95,7 +95,7 @@ def resolve_commit_message(
         Forwarded to :func:`default_commit_message` if the override
         is missing.
 
-    Returns
+    Returns:
     -------
     str
         The commit message the orchestrator should use.

@@ -135,12 +135,12 @@ def compute_content_sha(staging_dir: Path) -> str:
         README, but typically does (call this *after*
         ``build_recognition_staging``).
 
-    Returns
+    Returns:
     -------
     str
         Lower-case hex digest, 64 characters.
 
-    Raises
+    Raises:
     ------
     ContentShaError
         If ``staging_dir`` doesn't exist or isn't a directory.
@@ -206,12 +206,12 @@ def apply_content_sha_to_readme(staging_dir: Path, content_sha: str) -> Path:
         The hex digest to record. Stored verbatim; callers should
         pass the output of :func:`compute_content_sha`.
 
-    Returns
+    Returns:
     -------
     Path
         The README path that was rewritten.
 
-    Raises
+    Raises:
     ------
     ContentShaError
         If ``<staging_dir>/README.md`` doesn't exist. The publish
