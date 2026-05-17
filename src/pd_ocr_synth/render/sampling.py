@@ -35,7 +35,7 @@ def _draw_range[T: (int, float)](r: Range[T], rng: Random) -> T:
     return rng.uniform(float(r.min), float(r.max))
 
 
-def weighted_choice(choices: list[WeightedChoice], rng: Random):
+def weighted_choice(choices: list[WeightedChoice[int | float]], rng: Random):
     """Pick one ``WeightedChoice.value`` honoring the weights."""
 
     if not choices:

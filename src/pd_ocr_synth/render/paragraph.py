@@ -59,7 +59,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from PIL import Image
 
@@ -112,7 +112,7 @@ class ParagraphStyle:
     """
 
     font_path: Path
-    font_features: dict | None
+    font_features: dict[str, Any] | None
     font_size_pt: float
     dpi: int
     ink_color: tuple[int, int, int]
@@ -548,7 +548,7 @@ def _shape_and_composite_line(
     # Place each glyph relative to a (0, 0) pen origin.
     pen_x = 0.0
     pen_y = 0.0
-    placements: list[tuple[dict, int, int, int]] = []
+    placements: list[tuple[dict[str, Any], int, int, int]] = []
     for bm, pos, info in zip(bitmaps, positions, info_glyphs, strict=True):
         x_offset = pos.x_offset / 64.0
         y_offset = pos.y_offset / 64.0

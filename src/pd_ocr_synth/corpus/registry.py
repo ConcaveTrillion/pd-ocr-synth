@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import ClassVar, Protocol, runtime_checkable
+from typing import Any, ClassVar, Protocol, runtime_checkable
 
 from pd_ocr_synth.corpus.context import ProviderContext
 from pd_ocr_synth.corpus.exceptions import ProviderError
@@ -21,9 +21,9 @@ class Provider(Protocol):
     type_name: ClassVar[str]
     schema_version: ClassVar[int]
 
-    def fetch(self, ctx: ProviderContext, options: dict) -> Iterable[str]: ...
+    def fetch(self, ctx: ProviderContext, options: dict[str, Any]) -> Iterable[str]: ...
 
-    def cache_key(self, options: dict) -> str: ...
+    def cache_key(self, options: dict[str, Any]) -> str: ...
 
 
 class Registry:
@@ -104,5 +104,5 @@ def default_registry() -> Registry:
         registry.register(LocalProvider())
         registry.register(WebProvider())
         registry.register(WikisourceProvider())
-        _DEFAULT_REGISTRY = registry
+        _DEFAULT_REGISTRY = registry  # pyright: ignore[reportConstantRedefinition]
     return _DEFAULT_REGISTRY

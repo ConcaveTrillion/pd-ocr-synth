@@ -337,17 +337,6 @@ typeCheckingMode = "recommended"
 # as runtime ImportErrors.
 reportImportCycles = "none"
 
-# NOTE: reportMissingTypeArgument deferred — large existing codebase uses bare
-# dict/list in many function signatures. Annotation debt will be addressed in
-# focused follow-on commits. Suppress at recommended mode; --level error will
-# still catch hard type errors (reportArgumentType, reportAttributeAccessIssue).
-reportMissingTypeArgument = "none"
-
-# NOTE: reportConstantRedefinition deferred — module-level global worker vars
-# (e.g. _WORKER_RECIPE, _DEFAULT_REGISTRY) are uppercase by convention but
-# reassigned by worker-init functions. Suppressed to avoid renaming ~11 globals.
-reportConstantRedefinition = "none"
-
 # Tell basedpyright where the venv is so it finds third-party stubs.
 venvPath = "."
 venv = ".venv"

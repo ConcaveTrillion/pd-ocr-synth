@@ -102,6 +102,7 @@ import warnings
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 # Per-output-dir filename. Underscore-prefix mirrors the project's
 # convention of writer-internal sidecars (``_snapshot.json``,
@@ -323,7 +324,7 @@ def append_audit_entry(audit_path: Path, entry: AuditEntry) -> None:
         fh.write("\n")
 
 
-def read_audit_entries(audit_path: Path) -> list[dict]:
+def read_audit_entries(audit_path: Path) -> list[dict[str, Any]]:
     """Parse the audit JSONL back into a list of dicts.
 
     Convenience for tests + the ``pd-ocr-synth audit`` subcommand.
@@ -368,7 +369,7 @@ def read_audit_entries(audit_path: Path) -> list[dict]:
 
     if not audit_path.is_file():
         return []
-    out: list[dict] = []
+    out: list[dict[str, Any]] = []
     unknown_versions: dict[object, int] = {}
     for raw in audit_path.read_text(encoding="utf-8").splitlines():
         if not raw.strip():

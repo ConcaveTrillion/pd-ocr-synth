@@ -149,4 +149,4 @@ def _ensure_builtins_registered() -> None:
 
     from pd_ocr_synth.degradation import builtins  # noqa: F401
 
-    _BUILTINS_REGISTERED = True
+    _BUILTINS_REGISTERED = True  # pyright: ignore[reportConstantRedefinition]

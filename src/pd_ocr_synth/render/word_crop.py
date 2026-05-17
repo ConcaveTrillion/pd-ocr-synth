@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from random import Random
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import freetype
 import uharfbuzz as hb
@@ -165,7 +165,7 @@ def _shape(
     hb_face: hb.Face,  # pyright: ignore[reportAttributeAccessIssue]
     text: str,
     pixel_size: int,
-    feature_overrides: dict | None,
+    feature_overrides: dict[str, Any] | None,
 ) -> tuple[list[hb.GlyphInfo], list[hb.GlyphPosition]]:  # pyright: ignore[reportAttributeAccessIssue]
     hb_font = hb.Font(hb_face)  # pyright: ignore[reportAttributeAccessIssue]
     hb_font.scale = (pixel_size * 64, pixel_size * 64)

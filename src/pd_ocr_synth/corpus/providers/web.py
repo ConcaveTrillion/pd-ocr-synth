@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Iterable
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import httpx
 
@@ -25,7 +25,7 @@ class WebProvider:
     type_name: ClassVar[str] = "web"
     schema_version: ClassVar[int] = 1
 
-    def cache_key(self, options: dict) -> str:
+    def cache_key(self, options: dict[str, Any]) -> str:
         url = str(options["url"])
         parser = options.get("parser") or "plain"
         # ``field_path`` selects which JSON sub-tree the parser returns,
@@ -37,7 +37,7 @@ class WebProvider:
         digest = hashlib.sha256(material.encode()).hexdigest()[:16]
         return f"web-{digest}"
 
-    def fetch(self, ctx: ProviderContext, options: dict) -> Iterable[str]:
+    def fetch(self, ctx: ProviderContext, options: dict[str, Any]) -> Iterable[str]:
         url = str(options["url"])
         parser_name = options.get("parser") or "plain"
         cache_enabled = options.get("cache", True)
@@ -76,7 +76,7 @@ class WebProvider:
         yield text
 
 
-def _http_get(ctx: ProviderContext, url: str, options: dict) -> str:
+def _http_get(ctx: ProviderContext, url: str, options: dict[str, Any]) -> str:
     """Issue an HTTP GET via the context client (or build one)."""
 
     retries = int(options.get("retries", DEFAULT_RETRIES))
@@ -100,7 +100,7 @@ def _http_get(ctx: ProviderContext, url: str, options: dict) -> str:
             client.close()
 
 
-def _apply_parser(body: str, parser_name: str, options: dict) -> str:
+def _apply_parser(body: str, parser_name: str, options: dict[str, Any]) -> str:
     if parser_name == "json":
         field_path = options.get("field_path")
         return parse_json(body, field_path=field_path)

@@ -18,7 +18,7 @@ from __future__ import annotations
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pd_ocr_synth.corpus.context import ProviderContext
 from pd_ocr_synth.corpus.filters import apply_filter
@@ -86,7 +86,7 @@ def run_providers(
         )
 
 
-def _options_for(entry: object) -> dict:
+def _options_for(entry: object) -> dict[str, Any]:
     """Convert a typed corpus entry to a plain dict for the provider.
 
     Pydantic v2's ``model_dump(mode='python')`` keeps Path objects as

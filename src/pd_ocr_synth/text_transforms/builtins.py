@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from random import Random
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Generic transforms
@@ -28,7 +29,7 @@ _BLANK_LINE_RUN_RE = re.compile(r"\n{3,}")
 _TRAILING_WS_RE = re.compile(r"[ \t]+$", re.MULTILINE)
 
 
-def normalize_whitespace(text: str, options: dict, rng: Random) -> str:
+def normalize_whitespace(text: str, options: dict[str, Any], rng: Random) -> str:
     """Collapse whitespace while preserving paragraph breaks.
 
     Steps:
@@ -43,37 +44,37 @@ def normalize_whitespace(text: str, options: dict, rng: Random) -> str:
     return out.strip("\n") + "\n" if out else ""
 
 
-def lowercase(text: str, options: dict, rng: Random) -> str:
+def lowercase(text: str, options: dict[str, Any], rng: Random) -> str:
     _ = options, rng
     return text.lower()
 
 
-def uppercase(text: str, options: dict, rng: Random) -> str:
+def uppercase(text: str, options: dict[str, Any], rng: Random) -> str:
     _ = options, rng
     return text.upper()
 
 
-def strip_punctuation(text: str, options: dict, rng: Random) -> str:
+def strip_punctuation(text: str, options: dict[str, Any], rng: Random) -> str:
     _ = options, rng
     return "".join(ch for ch in text if not unicodedata.category(ch).startswith("P"))
 
 
-def nfc(text: str, options: dict, rng: Random) -> str:
+def nfc(text: str, options: dict[str, Any], rng: Random) -> str:
     _ = options, rng
     return unicodedata.normalize("NFC", text)
 
 
-def nfd(text: str, options: dict, rng: Random) -> str:
+def nfd(text: str, options: dict[str, Any], rng: Random) -> str:
     _ = options, rng
     return unicodedata.normalize("NFD", text)
 
 
-def nfkc(text: str, options: dict, rng: Random) -> str:
+def nfkc(text: str, options: dict[str, Any], rng: Random) -> str:
     _ = options, rng
     return unicodedata.normalize("NFKC", text)
 
 
-def nfkd(text: str, options: dict, rng: Random) -> str:
+def nfkd(text: str, options: dict[str, Any], rng: Random) -> str:
     _ = options, rng
     return unicodedata.normalize("NFKD", text)
 
@@ -88,7 +89,7 @@ _REGEX_FLAG_MAP = {
 }
 
 
-def regex_replace(text: str, options: dict, rng: Random) -> str:
+def regex_replace(text: str, options: dict[str, Any], rng: Random) -> str:
     _ = rng
     pattern = options.get("pattern")
     replacement = options.get("replacement", "")
@@ -102,7 +103,7 @@ def regex_replace(text: str, options: dict, rng: Random) -> str:
     return re.sub(pattern, replacement, text, flags=flags)
 
 
-def keep_only(text: str, options: dict, rng: Random) -> str:
+def keep_only(text: str, options: dict[str, Any], rng: Random) -> str:
     _ = rng
     chars = options.get("chars")
     if not chars:
@@ -111,7 +112,7 @@ def keep_only(text: str, options: dict, rng: Random) -> str:
     return "".join(ch for ch in text if ch in allowed)
 
 
-def min_token_length(text: str, options: dict, rng: Random) -> str:
+def min_token_length(text: str, options: dict[str, Any], rng: Random) -> str:
     _ = rng
     min_len = int(options.get("min", options.get("length", 0)))
     if min_len <= 0:
@@ -119,7 +120,7 @@ def min_token_length(text: str, options: dict, rng: Random) -> str:
     return _filter_tokens(text, lambda token: len(token) >= min_len)
 
 
-def max_token_length(text: str, options: dict, rng: Random) -> str:
+def max_token_length(text: str, options: dict[str, Any], rng: Random) -> str:
     _ = rng
     max_len = int(options.get("max", options.get("length", 0)))
     if max_len <= 0:
@@ -173,7 +174,7 @@ _LENITION_PATTERN = re.compile(r"([bcdfgmpstBCDFGMPST])h")
 _VOWELS = set("aeiouáéíóúAEIOUÁÉÍÓÚ")
 
 
-def apply_lenition_dots(text: str, options: dict, rng: Random) -> str:
+def apply_lenition_dots(text: str, options: dict[str, Any], rng: Random) -> str:
     """Convert ``Xh`` digraphs to dotted ``Ẋ`` consonants.
 
     options:
@@ -211,12 +212,12 @@ _DOTTED_TO_DIGRAPH = {dotted: prefix + "h" for prefix, dotted in _LENITION_MAP.i
 _DOTTED_PATTERN = re.compile("|".join(re.escape(c) for c in _DOTTED_TO_DIGRAPH))
 
 
-def dot_to_seimhiu(text: str, options: dict, rng: Random) -> str:
+def dot_to_seimhiu(text: str, options: dict[str, Any], rng: Random) -> str:
     _ = options, rng
     return _DOTTED_PATTERN.sub(lambda m: _DOTTED_TO_DIGRAPH[m.group(0)], text)
 
 
-def tironian_et(text: str, options: dict, rng: Random) -> str:
+def tironian_et(text: str, options: dict[str, Any], rng: Random) -> str:
     """Replace selected words with the Tironian sign ``⁊``.
 
     options:
@@ -243,7 +244,7 @@ def tironian_et(text: str, options: dict, rng: Random) -> str:
 _LONG_S_TOKEN_RE = re.compile(r"\S+", flags=re.UNICODE)
 
 
-def long_s_medial(text: str, options: dict, rng: Random) -> str:
+def long_s_medial(text: str, options: dict[str, Any], rng: Random) -> str:
     """Replace ``s`` with ``\u017f`` in non-final positions, never before s/h.
 
     Per spec: word-medial only (i.e. not the last character of a

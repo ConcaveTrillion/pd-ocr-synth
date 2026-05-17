@@ -31,7 +31,7 @@ many words fit; in this chunk the caller is expected to hand
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from PIL import Image
 
@@ -156,7 +156,7 @@ def _composite_line(
 
     pen_x = 0.0
     pen_y = 0.0
-    placements: list[tuple[dict, int, int, int]] = []  # (bm, x_int, y_int, cluster)
+    placements: list[tuple[dict[str, Any], int, int, int]] = []  # (bm, x_int, y_int, cluster)
 
     for bm, pos, info in zip(bitmaps, positions, glyphs, strict=True):
         x_offset = pos.x_offset / 64.0

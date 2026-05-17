@@ -16,7 +16,7 @@ import hashlib
 import json
 import urllib.parse
 from collections.abc import Iterable
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import httpx
 
@@ -37,7 +37,7 @@ class WikisourceProvider:
     type_name: ClassVar[str] = "wikisource"
     schema_version: ClassVar[int] = 1
 
-    def cache_key(self, options: dict) -> str:
+    def cache_key(self, options: dict[str, Any]) -> str:
         language = options["language"]
         titles = options.get("titles") or []
         category = options.get("category")
@@ -48,7 +48,7 @@ class WikisourceProvider:
         digest = hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
         return f"wikisource-{language}-{digest}"
 
-    def fetch(self, ctx: ProviderContext, options: dict) -> Iterable[str]:
+    def fetch(self, ctx: ProviderContext, options: dict[str, Any]) -> Iterable[str]:
         if options.get("category"):
             raise ProviderError(
                 "wikisource: category-based lookup is not yet implemented; use 'titles:' instead."

@@ -40,7 +40,7 @@ for the empty result themselves — same convention as
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pd_ocr_synth.render.word_crop import _shape
 
@@ -54,7 +54,7 @@ def fit_lines(
     max_width_px: int,
     handles: _FontHandles,
     pixel_size: int,
-    features: dict | None = None,
+    features: dict[str, Any] | None = None,
     first_line_indent_px: int = 0,
 ) -> list[str]:
     """Greedy wrap ``text`` into lines that each fit ``max_width_px``.
@@ -155,7 +155,7 @@ def _greedy_pack(
     max_width_px: int,
     handles: _FontHandles,
     pixel_size: int,
-    features: dict | None,
+    features: dict[str, Any] | None,
     first_line_budget_px: int | None = None,
 ) -> list[str]:
     """Pack ``words`` left-to-right into lines that each fit the budget.
@@ -208,7 +208,7 @@ def _measure_width_px(
     *,
     handles: _FontHandles,
     pixel_size: int,
-    features: dict | None,
+    features: dict[str, Any] | None,
 ) -> float:
     """Sum a shaped line's per-glyph ``x_advance`` in pixels.
 

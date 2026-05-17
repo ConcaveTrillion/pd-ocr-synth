@@ -70,7 +70,7 @@ import time
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pd_ocr_synth.audit import (
     AUDIT_FILENAME,
@@ -144,7 +144,7 @@ class RunPlan:
     corpus_entries: int
     corpus_total_chars: int
 
-    def as_dict(self) -> dict:
+    def as_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
@@ -773,9 +773,9 @@ def _worker_init(recipe_path: str, seed: int) -> None:
     from pd_ocr_synth.recipe import load_recipe
 
     global _WORKER_RECIPE, _WORKER_CTX, _WORKER_SEED
-    _WORKER_RECIPE = load_recipe(recipe_path)
-    _WORKER_CTX = RenderContext.for_seed(seed)
-    _WORKER_SEED = seed
+    _WORKER_RECIPE = load_recipe(recipe_path)  # pyright: ignore[reportConstantRedefinition]
+    _WORKER_CTX = RenderContext.for_seed(seed)  # pyright: ignore[reportConstantRedefinition]
+    _WORKER_SEED = seed  # pyright: ignore[reportConstantRedefinition]
 
 
 def _worker_render(payload: tuple[int, str]) -> tuple[int, dict[str, object]]:
@@ -877,7 +877,7 @@ def _drive_parallel(
 
 
 def _write_parallel_rendered(
-    writer: RecognitionWriter | DetectionWriter, index: int, payload: dict
+    writer: RecognitionWriter | DetectionWriter, index: int, payload: dict[str, Any]
 ) -> None:
     """Decode the worker's pickled PNG bytes back into a sample stub.
 

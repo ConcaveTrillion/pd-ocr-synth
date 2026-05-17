@@ -11,6 +11,7 @@ from __future__ import annotations
 import random
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from typing import Any
 
 from pd_ocr_synth.text_transforms.registry import Registry, default_registry
 
@@ -20,7 +21,7 @@ class PipelineStep:
     """One entry in a transforms pipeline."""
 
     name: str
-    options: dict = field(default_factory=dict)
+    options: dict[str, Any] = field(default_factory=dict)
 
 
 def _step_seed(base_seed: int, index: int) -> int:
@@ -36,7 +37,7 @@ def _step_seed(base_seed: int, index: int) -> int:
 
 def apply_pipeline(
     text: str,
-    steps: Iterable[PipelineStep | dict],
+    steps: Iterable[PipelineStep | dict[str, Any]],
     *,
     seed: int = 0,
     registry: Registry | None = None,

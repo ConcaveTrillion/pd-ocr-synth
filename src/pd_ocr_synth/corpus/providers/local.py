@@ -18,7 +18,7 @@ import hashlib
 import re
 from collections.abc import Iterable
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from pd_ocr_synth.corpus.context import ProviderContext
 from pd_ocr_synth.corpus.exceptions import ProviderError
@@ -32,13 +32,13 @@ class LocalProvider:
     type_name: ClassVar[str] = "local"
     schema_version: ClassVar[int] = 1
 
-    def cache_key(self, options: dict) -> str:
+    def cache_key(self, options: dict[str, Any]) -> str:
         path = str(options["path"])
         parser = options.get("parser") or "plain"
         digest = hashlib.sha256(f"{parser}|{path}".encode()).hexdigest()[:16]
         return f"local-{digest}"
 
-    def fetch(self, ctx: ProviderContext, options: dict) -> Iterable[str]:
+    def fetch(self, ctx: ProviderContext, options: dict[str, Any]) -> Iterable[str]:
         raw_path = str(options["path"])
         explicit_parser = options.get("parser")
 

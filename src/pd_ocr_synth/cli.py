@@ -1086,7 +1086,7 @@ def _parse_audit_timestamp(raw: str) -> str | None:
     return iso.replace("+00:00", "Z")
 
 
-def _summarize_audit_entries(entries: list[dict]) -> dict[str, Any]:
+def _summarize_audit_entries(entries: list[dict[str, Any]]) -> dict[str, Any]:
     """Aggregate a filtered audit-entry list into a summary dict.
 
     Computed fields (always present so a downstream JSON consumer can
@@ -1354,7 +1354,7 @@ def _cmd_audit(
         # have I done so far?" — the answer "none" is a valid answer.
         audit_path = default_global_audit_path()
         if not audit_path.is_file():
-            entries: list[dict] = []
+            entries: list[dict[str, Any]] = []
         else:
             entries = read_audit_entries(audit_path)
     elif audit_file is not None:

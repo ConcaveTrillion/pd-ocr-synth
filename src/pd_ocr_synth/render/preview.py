@@ -40,7 +40,7 @@ import random
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pd_ocr_synth.corpus import CacheStore, ProviderContext, default_cache_root
 from pd_ocr_synth.corpus.runner import collect_corpus_text
@@ -95,7 +95,7 @@ class PreviewStats:
     skip_reasons: dict[str, int] = field(default_factory=dict)
     output_dir: str = ""
 
-    def as_dict(self) -> dict:
+    def as_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
@@ -221,9 +221,9 @@ def _render_serial(
     images_dir: Path,
     seed: int,
     apply_degrade: bool,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     render_ctx = RenderContext.for_seed(seed)
-    out: list[dict] = []
+    out: list[dict[str, Any]] = []
     for index, token in enumerate(chosen):
         render_ctx.reseed_for_sample(index)
         out.append(
@@ -274,14 +274,14 @@ def _worker_init(recipe_path: str, seed: int, images_dir: str, apply_degrade: bo
     from pd_ocr_synth.recipe import load_recipe
 
     global _WORKER_RECIPE, _WORKER_CTX, _WORKER_IMAGES_DIR, _WORKER_SEED, _WORKER_APPLY_DEGRADE
-    _WORKER_RECIPE = load_recipe(recipe_path)
-    _WORKER_CTX = RenderContext.for_seed(seed)
-    _WORKER_IMAGES_DIR = Path(images_dir)
-    _WORKER_SEED = seed
-    _WORKER_APPLY_DEGRADE = apply_degrade
+    _WORKER_RECIPE = load_recipe(recipe_path)  # pyright: ignore[reportConstantRedefinition]
+    _WORKER_CTX = RenderContext.for_seed(seed)  # pyright: ignore[reportConstantRedefinition]
+    _WORKER_IMAGES_DIR = Path(images_dir)  # pyright: ignore[reportConstantRedefinition]
+    _WORKER_SEED = seed  # pyright: ignore[reportConstantRedefinition]
+    _WORKER_APPLY_DEGRADE = apply_degrade  # pyright: ignore[reportConstantRedefinition]
 
 
-def _worker_render(payload: tuple[int, str]) -> tuple[int, dict]:
+def _worker_render(payload: tuple[int, str]) -> tuple[int, dict[str, Any]]:
     index, token = payload
     assert _WORKER_RECIPE is not None
     assert _WORKER_CTX is not None
@@ -308,11 +308,11 @@ def _render_parallel(
     seed: int,
     workers: int,
     apply_degrade: bool,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     payloads = list(enumerate(chosen))
     # Per-record slot keyed by sample index, so we can write the
     # manifest in deterministic order regardless of completion order.
-    results: list[dict | None] = [None] * len(payloads)
+    results: list[dict[str, Any] | None] = [None] * len(payloads)
 
     # Use ``fork`` where available (Linux) — it's both faster and lets
     # the child see any module-level state the parent already set up.
@@ -352,7 +352,7 @@ def _render_one(
     images_dir: Path,
     seed: int,
     apply_degrade: bool,
-) -> dict:
+) -> dict[str, Any]:
     image_name = f"{seed:08x}_{index:06d}.png"
     image_path = images_dir / image_name
     try:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from random import Random
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -16,7 +16,7 @@ class Transform(Protocol):
     ``rng`` so the recipe seed propagates.
     """
 
-    def __call__(self, text: str, options: dict, rng: Random) -> str: ...
+    def __call__(self, text: str, options: dict[str, Any], rng: Random) -> str: ...
 
 
 class UnknownTransformError(KeyError):
@@ -86,5 +86,5 @@ def default_registry() -> Registry:
         from pd_ocr_synth.text_transforms.builtins import register_builtins
 
         register_builtins(registry)
-        _DEFAULT_REGISTRY = registry
+        _DEFAULT_REGISTRY = registry  # pyright: ignore[reportConstantRedefinition]
     return _DEFAULT_REGISTRY
