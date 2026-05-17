@@ -1,0 +1,23 @@
+# .editorconfig — workspace canonical
+# Establishes file conventions editors respect before any formatter runs.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+indent_size = 4
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+[*.{ts,tsx,js,jsx,json,yaml,yml,toml,md}]
+indent_size = 2
+
+[*.{rs}]
+indent_size = 4
+
+[Makefile]
+indent_style = tab
+
+[*.md]
+trim_trailing_whitespace = false
