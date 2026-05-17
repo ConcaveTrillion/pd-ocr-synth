@@ -805,19 +805,19 @@ def _worker_render(payload: tuple[int, str]) -> tuple[int, dict[str, object]]:
     from io import BytesIO
 
     buf = BytesIO()
-    sample.image.save(buf, format="PNG")
+    sample.image.save(buf, format="PNG")  # type: ignore[union-attr]
     return index, {
         "status": "rendered",
         "text": token,
         "png_bytes": buf.getvalue(),
-        "font_path": str(sample.font_path),
-        "font_size_pt": float(sample.font_size_pt),
-        "dpi": int(sample.dpi),
-        "ink_color": list(sample.ink_color),
-        "background_color": list(sample.background_color),
-        "size": list(sample.size),
-        "bbox": list(sample.bbox),
-        "word_boxes": [{"text": wb.text, "bbox": list(wb.bbox)} for wb in sample.word_boxes],
+        "font_path": str(sample.font_path),  # type: ignore[union-attr]
+        "font_size_pt": float(sample.font_size_pt),  # type: ignore[union-attr]
+        "dpi": int(sample.dpi),  # type: ignore[union-attr]
+        "ink_color": list(sample.ink_color),  # type: ignore[union-attr]
+        "background_color": list(sample.background_color),  # type: ignore[union-attr]
+        "size": list(sample.size),  # type: ignore[union-attr]
+        "bbox": list(sample.bbox),  # type: ignore[union-attr]
+        "word_boxes": [{"text": wb.text, "bbox": list(wb.bbox)} for wb in sample.word_boxes],  # type: ignore[union-attr]
         # ``line_boxes`` ride alongside ``word_boxes`` so the parent
         # process can rebuild a paragraph-shaped sample shim for the
         # detection writer. Empty for layouts that don't emit line GT
@@ -869,7 +869,7 @@ def _drive_parallel(
                     index,
                     reason=str(payload["reason"]),
                     text=str(payload.get("text") or ""),
-                    details=dict(payload.get("details") or {}),
+                    details=dict(payload.get("details") or {}),  # type: ignore[arg-type,call-overload]
                 )
             else:
                 _write_parallel_rendered(writer, index, payload)

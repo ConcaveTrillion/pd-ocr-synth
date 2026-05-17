@@ -67,9 +67,9 @@ def _draw(value: Any, rng: Random) -> float:
         for choice, weight in zip(value, weights, strict=True):
             acc += weight
             if pick <= acc:
-                return float(choice["value"])
-        return float(value[-1]["value"])
-    return float(value)
+                return float(choice["value"])  # type: ignore[arg-type]
+        return float(value[-1]["value"])  # type: ignore[arg-type]
+    return float(value)  # type: ignore[arg-type]
 
 
 def _draw_int(value: Any, rng: Random) -> int:

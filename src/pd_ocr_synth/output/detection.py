@@ -419,9 +419,9 @@ class DetectionWriter:
         img_bytes = path.read_bytes()
         img_hash = _hash_image_bytes(img_bytes)
 
-        line_boxes = tuple(getattr(sample, "line_boxes", ()) or ())
-        word_boxes = tuple(getattr(sample, "word_boxes", ()) or ())
-        paragraph_boxes = tuple(getattr(sample, "paragraph_boxes", ()) or ())
+        line_boxes: tuple[Any, ...] = tuple(getattr(sample, "line_boxes", ()) or ())
+        word_boxes: tuple[Any, ...] = tuple(getattr(sample, "word_boxes", ()) or ())
+        paragraph_boxes: tuple[Any, ...] = tuple(getattr(sample, "paragraph_boxes", ()) or ())
 
         # Build per-line entries (rich GT). Assign each word_box to
         # the line whose bbox contains the word's vertical center;
@@ -446,7 +446,7 @@ class DetectionWriter:
                 {
                     "text": line.text,
                     "bbox": list(line_bbox),
-                    "polygon": bbox_to_polygon(line_bbox),
+                    "polygon": bbox_to_polygon(line_bbox),  # type: ignore[arg-type]
                     "words": line_words,
                 }
             )
@@ -484,7 +484,7 @@ class DetectionWriter:
                 {
                     "text": pb.text,
                     "bbox": [int(v) for v in pb.bbox],
-                    "polygon": bbox_to_polygon(tuple(int(v) for v in pb.bbox)),
+                    "polygon": bbox_to_polygon(tuple(int(v) for v in pb.bbox)),  # type: ignore[arg-type]
                 }
                 for pb in paragraph_boxes
             ]

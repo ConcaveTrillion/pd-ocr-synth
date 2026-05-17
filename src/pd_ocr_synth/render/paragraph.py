@@ -135,13 +135,13 @@ def sample_paragraph_style(recipe: Recipe, ctx: RenderContext) -> ParagraphStyle
     """
 
     font = _pick_font(recipe, ctx.rng)
-    font_size_pt = float(sample_value(recipe.rendering.font_size_pt, ctx.rng))
-    dpi = int(sample_value(recipe.rendering.dpi, ctx.rng))
+    font_size_pt = float(sample_value(recipe.rendering.font_size_pt, ctx.rng))  # type: ignore[arg-type]
+    dpi = int(sample_value(recipe.rendering.dpi, ctx.rng))  # type: ignore[arg-type]
     ink = sample_color(recipe.rendering.ink_color, ctx.rng)
     bg = sample_color(recipe.rendering.background_color, ctx.rng)
-    padding = int(sample_value(recipe.layout.padding_px or 0, ctx.rng))
+    padding = int(sample_value(recipe.layout.padding_px or 0, ctx.rng))  # type: ignore[arg-type]
     spacing_mul = float(
-        sample_value(
+        sample_value(  # type: ignore[arg-type]
             recipe.layout.line_spacing
             if recipe.layout.line_spacing is not None
             else _DEFAULT_LINE_SPACING_MULTIPLIER,

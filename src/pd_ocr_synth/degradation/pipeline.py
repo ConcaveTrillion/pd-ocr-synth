@@ -124,12 +124,12 @@ def apply_degradation(
         options: dict[str, Any] = dict(stage_cfg.model_extra or {})
         if entry.shape == "pixel":
             new_image = entry.fn(current.image, options, rng)  # type: ignore[arg-type]
-            if new_image is current.image:
+            if new_image is current.image:  # type: ignore[union-attr]
                 continue
-            current = replace(current, image=new_image)
+            current = replace(current, image=new_image)  # type: ignore[arg-type]
         else:
-            current = entry.fn(current, options, rng)  # type: ignore[arg-type]
-    return current
+            current = entry.fn(current, options, rng)  # type: ignore[arg-type,return-value]
+    return current  # type: ignore[return-value]
 
 
 _BUILTINS_REGISTERED = False

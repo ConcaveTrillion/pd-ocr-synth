@@ -47,6 +47,7 @@ network-free and self-contained.
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -183,8 +184,6 @@ def load_card_inputs(
     stats: dict[str, Any] | None = None
     if stats_path.is_file():
         try:
-            import json
-
             loaded_stats = json.loads(stats_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             # Corrupt stats shouldn't block card generation. The Stats

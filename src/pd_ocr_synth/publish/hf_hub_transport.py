@@ -198,8 +198,8 @@ class HfHubTransport:
         # changes the shape.
         to_dict = getattr(card, "to_dict", None)
         if callable(to_dict):
-            return dict(to_dict())
-        return dict(card)
+            return dict(to_dict())  # type: ignore[return-value,call-arg]
+        return dict(card)  # type: ignore[call-overload]
 
     def upload_folder(
         self,

@@ -85,11 +85,11 @@ def render_line(
         raise RenderError(f"render_line requires non-empty, non-whitespace text; got {text!r}")
 
     font = _pick_font(recipe, ctx.rng)
-    font_size_pt = float(sample_value(recipe.rendering.font_size_pt, ctx.rng))
-    dpi = int(sample_value(recipe.rendering.dpi, ctx.rng))
+    font_size_pt = float(sample_value(recipe.rendering.font_size_pt, ctx.rng))  # type: ignore[arg-type]
+    dpi = int(sample_value(recipe.rendering.dpi, ctx.rng))  # type: ignore[arg-type]
     ink = sample_color(recipe.rendering.ink_color, ctx.rng)
     bg = sample_color(recipe.rendering.background_color, ctx.rng)
-    padding = int(sample_value(recipe.layout.padding_px or 0, ctx.rng))
+    padding = int(sample_value(recipe.layout.padding_px or 0, ctx.rng))  # type: ignore[arg-type]
 
     # Coverage check excludes whitespace: a missing space glyph would
     # render as nothing, which is also what we want (just an advance).

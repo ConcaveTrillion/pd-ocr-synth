@@ -42,6 +42,7 @@ the resolved token string.
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -209,7 +210,7 @@ def _normalize(value: str | None) -> str | None:
     return stripped or None
 
 
-def _resolve_token_file(env: dict[str, str], home: Path | None) -> Path:
+def _resolve_token_file(env: Mapping[str, str], home: Path | None) -> Path:
     """Compute the path to the cached-token file.
 
     Honors ``$HF_HOME`` because the SDK does — keeping our resolver

@@ -80,11 +80,11 @@ def render_word_crop(
     """
 
     font = _pick_font(recipe, ctx.rng)
-    font_size_pt = float(sample_value(recipe.rendering.font_size_pt, ctx.rng))
-    dpi = int(sample_value(recipe.rendering.dpi, ctx.rng))
+    font_size_pt = float(sample_value(recipe.rendering.font_size_pt, ctx.rng))  # type: ignore[arg-type]
+    dpi = int(sample_value(recipe.rendering.dpi, ctx.rng))  # type: ignore[arg-type]
     ink = sample_color(recipe.rendering.ink_color, ctx.rng)
     bg = sample_color(recipe.rendering.background_color, ctx.rng)
-    padding = int(sample_value(recipe.layout.padding_px or 0, ctx.rng))
+    padding = int(sample_value(recipe.layout.padding_px or 0, ctx.rng))  # type: ignore[arg-type]
 
     # Codepoint-coverage check before we spin up shaping. Cheaper to
     # skip a missing-glyph sample here than to render a row of tofu.
@@ -162,23 +162,23 @@ def _pick_font(recipe: Recipe, rng: Random):
 
 
 def _shape(
-    hb_face: hb.Face,
+    hb_face: hb.Face,  # type: ignore[attr-defined]
     text: str,
     pixel_size: int,
     feature_overrides: dict | None,
-) -> tuple[list[hb.GlyphInfo], list[hb.GlyphPosition]]:
-    hb_font = hb.Font(hb_face)
+) -> tuple[list[hb.GlyphInfo], list[hb.GlyphPosition]]:  # type: ignore[attr-defined]
+    hb_font = hb.Font(hb_face)  # type: ignore[attr-defined]
     hb_font.scale = (pixel_size * 64, pixel_size * 64)
-    hb.ot_font_set_funcs(hb_font)
+    hb.ot_font_set_funcs(hb_font)  # type: ignore[attr-defined]
 
-    buf = hb.Buffer()
+    buf = hb.Buffer()  # type: ignore[attr-defined]
     buf.add_str(text)
     buf.guess_segment_properties()
 
     features = dict(_DEFAULT_FEATURES)
     if feature_overrides:
         features.update(feature_overrides)
-    hb.shape(hb_font, buf, features)
+    hb.shape(hb_font, buf, features)  # type: ignore[attr-defined]
 
     return list(buf.glyph_infos), list(buf.glyph_positions)
 
@@ -188,12 +188,12 @@ def _shape(
 # ---------------------------------------------------------------------------
 
 
-def _rasterize_glyphs(face: freetype.Face, glyphs: list[hb.GlyphInfo]):
+def _rasterize_glyphs(face: freetype.Face, glyphs: list[hb.GlyphInfo]):  # type: ignore[attr-defined]
     """Return a list of (bitmap_array, left, top, width, height) tuples."""
 
     out = []
     for info in glyphs:
-        face.load_glyph(info.codepoint, freetype.FT_LOAD_RENDER)
+        face.load_glyph(info.codepoint, freetype.FT_LOAD_RENDER)  # type: ignore[attr-defined]
         bmp = face.glyph.bitmap
         out.append(
             {
