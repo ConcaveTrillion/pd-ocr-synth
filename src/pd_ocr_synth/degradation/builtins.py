@@ -67,9 +67,9 @@ def _draw(value: Any, rng: Random) -> float:
         for choice, weight in zip(value, weights, strict=True):
             acc += weight
             if pick <= acc:
-                return float(choice["value"])  # type: ignore[arg-type]
-        return float(value[-1]["value"])  # type: ignore[arg-type]
-    return float(value)  # type: ignore[arg-type]
+                return float(choice["value"])  # pyright: ignore[reportArgumentType]
+        return float(value[-1]["value"])  # pyright: ignore[reportArgumentType]
+    return float(value)  # pyright: ignore[reportArgumentType]
 
 
 def _draw_int(value: Any, rng: Random) -> int:
@@ -521,7 +521,7 @@ def _skew(sample: RenderedSample, options: dict[str, Any], rng: Random) -> Rende
 
 def _resolve_fill(fill: Any, sample: RenderedSample) -> tuple[int, int, int]:
     if fill == "background":
-        return tuple(int(c) for c in sample.background_color)  # type: ignore[return-value]
+        return tuple(int(c) for c in sample.background_color)  # pyright: ignore[reportReturnType]
     if fill == "white":
         return (255, 255, 255)
     if fill == "black":

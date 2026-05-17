@@ -319,12 +319,40 @@ convention = "google"
 known-first-party = ["pd_ocr_synth"]
 
 [tool.basedpyright]
+# Include source, tests, and scripts. Match the layout this repo uses.
 include = ["src", "tests", "scripts"]
 exclude = ["**/__pycache__", "**/.venv", "**/node_modules"]
-typeCheckingMode = "standard"
+
+# "recommended" is the workspace-canonical strict mode per 2026-05-17 decisions.
+# Catches unannotated functions, inferred-Any propagation, untyped decorators,
+# and missing return types that "standard" mode skips.
+typeCheckingMode = "recommended"
+# NOTE: failOnWarnings deferred — recommended mode surfaces warnings from
+# uharfbuzz / freetype-py / pillow stubs that lag runtime. Enable
+# incrementally as stub coverage improves.
+# failOnWarnings = true
+
+# Import cycles are structural and resolved via TYPE_CHECKING guards.
+# Suppress the per-file error here; actual import order issues would surface
+# as runtime ImportErrors.
+reportImportCycles = "none"
+
+# NOTE: reportMissingTypeArgument deferred — large existing codebase uses bare
+# dict/list in many function signatures. Annotation debt will be addressed in
+# focused follow-on commits. Suppress at recommended mode; --level error will
+# still catch hard type errors (reportArgumentType, reportAttributeAccessIssue).
+reportMissingTypeArgument = "none"
+
+# NOTE: reportConstantRedefinition deferred — module-level global worker vars
+# (e.g. _WORKER_RECIPE, _DEFAULT_REGISTRY) are uppercase by convention but
+# reassigned by worker-init functions. Suppressed to avoid renaming ~11 globals.
+reportConstantRedefinition = "none"
+
+# Tell basedpyright where the venv is so it finds third-party stubs.
 venvPath = "."
 venv = ".venv"
 
+# Per-execution-environment overrides: tests and scripts get more leniency.
 [[tool.basedpyright.executionEnvironments]]
 root = "tests"
 

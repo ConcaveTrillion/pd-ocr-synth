@@ -446,7 +446,7 @@ class DetectionWriter:
                 {
                     "text": line.text,
                     "bbox": list(line_bbox),
-                    "polygon": bbox_to_polygon(line_bbox),  # type: ignore[arg-type]
+                    "polygon": bbox_to_polygon(line_bbox),  # pyright: ignore[reportArgumentType]
                     "words": line_words,
                 }
             )
@@ -484,7 +484,7 @@ class DetectionWriter:
                 {
                     "text": pb.text,
                     "bbox": [int(v) for v in pb.bbox],
-                    "polygon": bbox_to_polygon(tuple(int(v) for v in pb.bbox)),  # type: ignore[arg-type]
+                    "polygon": bbox_to_polygon(tuple(int(v) for v in pb.bbox)),  # pyright: ignore[reportArgumentType]
                 }
                 for pb in paragraph_boxes
             ]

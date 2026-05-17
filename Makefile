@@ -15,7 +15,7 @@ else
 .PHONY: setup install uninstall remove-venv reset reset-full upgrade-deps \
 	test test-verbose test-single test-k coverage \
 	lint py-lint md-lint lint-fix py-lint-fix md-lint-fix format \
-	pre-commit-check ci build clean clean-cache \
+	pre-commit-check typecheck ci build clean clean-cache \
 	fetch-fonts gaelic-preview \
 	release-patch release-minor release-major _do-release help
 
@@ -135,10 +135,14 @@ pre-commit-check: ## Run pre-commit on all files
 	@echo "🪝 Running pre-commit on all files..."
 	uv run pre-commit run --all-files
 
-ci: ## Run complete CI pipeline (setup, pre-commit, test, build)
+typecheck: ## Run basedpyright at recommended mode (workspace canonical)
+	uv run basedpyright src/pd_ocr_synth --level error
+
+ci: ## Run complete CI pipeline (setup, pre-commit, typecheck, test, build)
 	@echo "🚀 Running complete CI pipeline..."
 	@$(MAKE) --no-print-directory setup
 	@$(MAKE) --no-print-directory pre-commit-check
+	@$(MAKE) --no-print-directory typecheck
 	@$(MAKE) --no-print-directory test
 	@$(MAKE) --no-print-directory build
 	@echo "✅ CI pipeline complete!"

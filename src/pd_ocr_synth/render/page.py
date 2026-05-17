@@ -164,7 +164,7 @@ def sample_page_style(recipe: Recipe, ctx: RenderContext) -> PageStyle:
 
     paragraph_style = sample_paragraph_style(recipe, ctx)
     paragraph_spacing_mul = float(
-        sample_value(  # type: ignore[arg-type]
+        sample_value(  # pyright: ignore[reportArgumentType]
             recipe.layout.paragraph_spacing
             if recipe.layout.paragraph_spacing is not None
             else _DEFAULT_PARAGRAPH_SPACING_MULTIPLIER,

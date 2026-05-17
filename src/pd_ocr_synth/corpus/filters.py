@@ -36,7 +36,7 @@ class CorpusFilter:
             return None
         drop = _compile(options.get("drop_lines_matching"))
         keep = _compile(options.get("keep_only_lines_matching"))
-        min_chars = int(options.get("min_line_chars", 0) or 0)  # type: ignore[arg-type]
+        min_chars = int(options.get("min_line_chars", 0) or 0)  # pyright: ignore[reportArgumentType]
         if drop is None and keep is None and min_chars <= 0:
             return None
         return cls(

@@ -93,7 +93,7 @@ def _options_for(entry: object) -> dict:
     Path (which providers expect) and unwraps any nested submodels.
     """
 
-    return entry.model_dump(mode="python")  # type: ignore[attr-defined]
+    return entry.model_dump(mode="python")  # pyright: ignore[reportAttributeAccessIssue]
 
 
 def collect_corpus_text(

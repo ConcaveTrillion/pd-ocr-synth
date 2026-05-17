@@ -261,7 +261,7 @@ def run_publish_dry_run(
             visibility="private" if private else "public",
             file_count=file_count,
             total_bytes=total_bytes,
-            content_sha=result.content_sha or "",  # type: ignore[union-attr]
+            content_sha=result.content_sha or "",  # pyright: ignore[reportAttributeAccessIssue]
             front_matter_preview=front_matter_preview,
             summary_block=summary_block,
             token_source=token_source,

@@ -58,7 +58,7 @@ def sample_color(spec: ColorSpec, rng: Random) -> tuple[int, int, int]:
     """Draw an (R, G, B) triple from a ``ColorSpec``."""
 
     return (
-        int(sample_value(spec.r, rng)),  # type: ignore[arg-type]
-        int(sample_value(spec.g, rng)),  # type: ignore[arg-type]
-        int(sample_value(spec.b, rng)),  # type: ignore[arg-type]
+        int(sample_value(spec.r, rng)),  # pyright: ignore[reportArgumentType]
+        int(sample_value(spec.g, rng)),  # pyright: ignore[reportArgumentType]
+        int(sample_value(spec.b, rng)),  # pyright: ignore[reportArgumentType]
     )

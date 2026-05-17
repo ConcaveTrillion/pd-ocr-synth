@@ -123,13 +123,13 @@ def apply_degradation(
         # ``probability``. That's the stage's options dict.
         options: dict[str, Any] = dict(stage_cfg.model_extra or {})
         if entry.shape == "pixel":
-            new_image = entry.fn(current.image, options, rng)  # type: ignore[arg-type]
-            if new_image is current.image:  # type: ignore[union-attr]
+            new_image = entry.fn(current.image, options, rng)  # pyright: ignore[reportArgumentType,reportAttributeAccessIssue]
+            if new_image is current.image:  # pyright: ignore[reportAttributeAccessIssue]
                 continue
-            current = replace(current, image=new_image)  # type: ignore[arg-type]
+            current = replace(current, image=new_image)  # pyright: ignore[reportArgumentType]
         else:
-            current = entry.fn(current, options, rng)  # type: ignore[arg-type,return-value]
-    return current  # type: ignore[return-value]
+            current = entry.fn(current, options, rng)  # pyright: ignore[reportArgumentType,reportReturnType]
+    return current  # pyright: ignore[reportReturnType]
 
 
 _BUILTINS_REGISTERED = False

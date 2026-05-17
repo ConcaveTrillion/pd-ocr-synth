@@ -166,7 +166,7 @@ class HFDatasetCorpus(_CorpusBase):
 
 class WikisourceCorpus(_CorpusBase):
     type: Literal["wikisource"]
-    language: str  # type: ignore[assignment]  # required field narrows base str | None
+    language: str  # pyright: ignore[reportIncompatibleVariableOverride,reportGeneralTypeIssues]  # required field narrows base str | None
     # Spec 04 ``wikisource`` block documents two YAML examples: one
     # with ``titles:``, one with ``category:``. The pre-iter-N model
     # required ``titles`` even when ``category:`` was the supplied
