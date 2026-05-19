@@ -12,6 +12,6 @@ require choosing between fundamentally different approaches.
 Use /triage to route a feature-request here if needed.
 -->
 
-Decision: <!-- docs/superpowers/decisions/YYYY-MM-DD-slug.md -->
+Decision: <!-- docs/decisions/YYYY-MM-DD-slug.md -->
 Spawns: <!-- #N, #M — spec issues created from this decision -->
 Status: open while deliberating; close when doc is written
