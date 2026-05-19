@@ -7,7 +7,7 @@ name = "pd-ocr-synth"
 version = "0.0.1"
 description = "Synthetic OCR training-data generator (recipe-driven)."
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.13,<3.14"
 license = "Unlicense"
 authors = [
     { name = "ConcaveTrillion", email = "ConcaveTrillion@gmail.com" },
